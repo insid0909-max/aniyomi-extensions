@@ -1,3 +1,4 @@
+
 name: CI
 
 on:
@@ -27,7 +28,7 @@ jobs:
 
       - name: Prepare signing key
         run: |
-          keytool -genkey -v -keystore signing-key.jks -alias aniyomi -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=aniyomi, OU=aniyomi, O=aniyomi, L=Unknown, S=Unknown, C=Unknown"
+          keytool -genkey -v -keystore "$GITHUB_WORKSPACE/signing-key.jks" -alias aniyomi -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=aniyomi, OU=aniyomi, O=aniyomi, L=Unknown, S=Unknown, C=Unknown"
 
       - name: Build extensions
         env:
@@ -37,8 +38,8 @@ jobs:
           CI_SIGNING_KEY_ALIAS: aniyomi
           CI_SIGNING_KEY_PASSWORD: password
           CI_SIGNING_STORE_PASSWORD: password
-          GRADLE_OPTS: "-Dhttp.agent=Mozilla/5.0 -Dorg.gradle.internal.http.socketTimeout=60000 -Dorg.gradle.internal.http.connectionTimeout=60000"
         run: |
+          cp "$GITHUB_WORKSPACE/signing-key.jks" src/ko/tvroom/signing-key.jks || true
           ./gradlew :src:ko:tvroom:assembleRelease --stacktrace
 
       - name: Prepare repo and index
