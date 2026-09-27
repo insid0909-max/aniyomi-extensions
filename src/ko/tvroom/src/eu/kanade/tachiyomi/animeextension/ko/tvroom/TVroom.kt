@@ -11,6 +11,7 @@ import okhttp3.Request
 import okhttp3.Response
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import org.jsoup.Jsoup
 
 class TVroom : ParsedAnimeHttpSource() {
 
@@ -74,7 +75,7 @@ class TVroom : ParsedAnimeHttpSource() {
 
     // ================= 비디오 주소 추출 =================
     override fun videoListParse(response: Response): List<Video> {
-        val document = response.asJsoup()
+        val document = Jsoup.parse(response.body.string())
         val videoList = mutableListOf<Video>()
         val iframeUrl = document.select("iframe").attr("abs:src")
         if (iframeUrl.isNotEmpty()) {
