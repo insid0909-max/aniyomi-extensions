@@ -17,6 +17,12 @@ repositories {
     maven { url = uri("https://jitpack.io") }
 }
 
+configurations.all {
+    resolutionStrategy {
+        force("com.github.inorichi.injekt:injekt-core:fa375f82b2")
+    }
+}
+
 android {
     namespace = "eu.kanade.tachiyomi.animeextension.ko.tvroom"
 }
