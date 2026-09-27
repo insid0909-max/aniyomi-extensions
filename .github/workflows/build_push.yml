@@ -28,9 +28,9 @@ jobs:
     steps:
       - name: Clone repo
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4
-        with:
-          ref: master
-          token: ${{ secrets.ANIYOMIORG_BOT_PAT }}
+       with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Find lib changes
         id: modified-libs
