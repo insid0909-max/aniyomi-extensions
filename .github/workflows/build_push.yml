@@ -28,7 +28,6 @@ jobs:
 
       - name: Prepare signing key
         run: |
-          touch signing-key.jks
           keytool -genkey -v -keystore signing-key.jks -alias aniyomi -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=aniyomi, OU=aniyomi, O=aniyomi, L=Unknown, S=Unknown, C=Unknown"
 
       - name: Build extensions
