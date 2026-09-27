@@ -9,9 +9,9 @@ import eu.kanade.tachiyomi.network.GET
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import org.jsoup.Jsoup
 
 class TVroom : ParsedAnimeHttpSource() {
 
@@ -34,10 +34,10 @@ class TVroom : ParsedAnimeHttpSource() {
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         title = element.select("span.title, a.title").text()
         thumbnail_url = element.select("img").attr("abs:src")
-        setUrlWithoutDomain(element.select("a").first()?.attr("href") ?: "")
+        setUrlWithoutDomain(element.select("a").first()?.attr("href").orEmpty())
     }
 
-    override fun popularAnimeNextPageSelector(): String = "a.next, li.next a"
+    override fun popularAnimeNextPageSelector(): String = "a.next, .pagination-next"
 
     override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/movie/page/$page")
 
@@ -60,7 +60,7 @@ class TVroom : ParsedAnimeHttpSource() {
     // ================= 상세 페이지 =================
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
         title = document.select("h1.entry-title, .title").text()
-        description = document.select(".description, .entry-content p").text()
+        description = document.select(".description, .entry-content").text()
         genre = document.select(".genres a").joinToString(", ") { it.text() }
         status = SAnime.UNKNOWN
     }
@@ -75,7 +75,8 @@ class TVroom : ParsedAnimeHttpSource() {
 
     // ================= 비디오 주소 추출 =================
     override fun videoListParse(response: Response): List<Video> {
-        val document = Jsoup.parse(response.body.string())
+        val bodyString = response.body?.string().orEmpty()
+        val document = Jsoup.parse(bodyString)
         val videoList = mutableListOf<Video>()
         val iframeUrl = document.select("iframe").attr("abs:src")
         if (iframeUrl.isNotEmpty()) {
@@ -84,7 +85,7 @@ class TVroom : ParsedAnimeHttpSource() {
         return videoList
     }
 
-    override fun videoListSelector(): String = throw UnsupportedOperationException()
-    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
-    override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
+    override fun videoListSelector(): String = throw UnsupportedOperationException("Not used")
+    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException("Not used")
+    override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException("Not used")
 }
