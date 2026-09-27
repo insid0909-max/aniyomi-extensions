@@ -15,13 +15,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: 17
-          distribution: adopt
+          distribution: temurin
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
@@ -32,23 +31,21 @@ jobs:
 
       - name: Build extensions
         env:
-          CI_CHUNK_NUM: 0
-          CI_CHUNK_SIZE: 1
           CI_SIGNING_KEY: signing-key.jks
           CI_SIGNING_KEY_ALIAS: aniyomi
           CI_SIGNING_KEY_PASSWORD: password
           CI_SIGNING_STORE_PASSWORD: password
-        run: ./gradlew assembleRelease --continue || true
+        run: |
+          ./gradlew :src:ko:tvroom:assembleRelease --stacktrace
 
       - name: Prepare repo and index
         run: |
           mkdir -p repo/apk
-          # 빌드된 tvroom APK를 repo/apk 폴더로 복사
-          find . -name "*.apk" -type f ! -path "./repo/*" -exec cp {} repo/apk/ \;
-          
-          # Aniyomi 공식 규격에 맞는 index.min.json 직접 생성
+          find . -name "*.apk" -type f ! -path "./repo/*" -exec cp -v {} repo/apk/ \;
+          ls -la repo/apk/
+
           cat << 'EOF' > generate_index.py
-          import os, json, hashlib
+          import os, json
 
           repo_dir = "repo"
           apk_dir = os.path.join(repo_dir, "apk")
@@ -56,12 +53,9 @@ jobs:
 
           if os.path.exists(apk_dir):
               for f in os.listdir(apk_dir):
-                  if f.endswith(".apk") and "tvroom" in f:
-                      apk_path = os.path.join(apk_dir, f)
-                      with open(apk_path, "rb") as fp:
-                          digest = hashlib.sha256(fp.read()).hexdigest()
+                  if f.endswith(".apk"):
                       extensions.append({
-                          "name": "Aniyomi: Movie",
+                          "name": "영화",
                           "pkg": "eu.kanade.tachiyomi.animeextension.ko.tvroom",
                           "apk": f"apk/{f}",
                           "lang": "ko",
@@ -80,12 +74,12 @@ jobs:
                       })
 
           with open(os.path.join(repo_dir, "index.min.json"), "w", encoding="utf-8") as fp:
-              json.dump(extensions, fp, ensure_ascii=False)
+              json.dump(extensions, fp, ensure_ascii=False, indent=2)
+          print(f"Generated index with {len(extensions)} extensions")
           EOF
 
           python3 generate_index.py
-          ls -la repo/
-          ls -la repo/apk/ || true
+          cat repo/index.min.json
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
