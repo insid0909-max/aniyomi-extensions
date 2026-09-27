@@ -4,7 +4,7 @@ plugins {
 }
 
 ext {
-    set("appName", "Aniyomi: Movie")
+    set("extName", "영화")
     set("extClass", ".TVroom")
     set("extVersionCode", 1)
 }
