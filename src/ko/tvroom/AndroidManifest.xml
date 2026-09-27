@@ -3,6 +3,6 @@
     <application>
         <meta-data
             android:name="tachiyomi.animeextension.class"
-            android:value=".TVroom" />
+            android:value="eu.kanade.tachiyomi.animeextension.ko.tvroom.TVroom" />
     </application>
 </manifest>
