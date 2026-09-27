@@ -11,6 +11,12 @@ ext {
 
 apply(from = "$rootDir/common.gradle")
 
+repositories {
+    mavenCentral()
+    google()
+    maven { url = uri("https://jitpack.io") }
+}
+
 android {
     namespace = "eu.kanade.tachiyomi.animeextension.ko.tvroom"
 }
