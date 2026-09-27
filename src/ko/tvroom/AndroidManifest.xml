@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
     <application>
         <meta-data
             android:name="tachiyomi.animeextension.class"
-            android:value="eu.kanade.tachiyomi.animeextension.ko.tvroom.TVroom" />
+            android:value="eu.kanade.tachiyomi.animeextension.ko.tvroom.TVroom"
+            tools:replace="android:value" />
     </application>
 </manifest>
