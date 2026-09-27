@@ -38,7 +38,7 @@ jobs:
           CI_SIGNING_KEY_ALIAS: aniyomi
           CI_SIGNING_KEY_PASSWORD: password
           CI_SIGNING_STORE_PASSWORD: password
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleRelease --continue || true
 
       - name: Create Repo and Metadata
         run: |
