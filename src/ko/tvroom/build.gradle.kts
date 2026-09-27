@@ -14,19 +14,18 @@ apply(from = "$rootDir/common.gradle")
 repositories {
     mavenCentral()
     google()
-    maven { url = uri("https://jitpack.io") }
-}
-
-configurations.all {
-    resolutionStrategy {
-        force("com.github.inorichi.injekt:injekt-core:fa375f82b2")
-    }
 }
 
 android {
     namespace = "eu.kanade.tachiyomi.animeextension.ko.tvroom"
 }
 
+configurations.all {
+    exclude(group = "com.github.inorichi.injekt")
+}
+
 dependencies {
-    implementation(project(":core"))
+    implementation(project(":core")) {
+        exclude(group = "com.github.inorichi.injekt")
+    }
 }
