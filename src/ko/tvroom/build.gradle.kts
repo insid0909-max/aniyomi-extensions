@@ -1,20 +1,89 @@
-plugins {
-    id("com.android.application")
-    id("kotlin-android")
-}
+name: CI
 
-ext {
-    set("extName", "TVroom")
-    set("extClass", ".TVroom")
-    set("extVersionCode", 1)
-}
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
 
-apply(from = "$rootDir/common.gradle")
+jobs:
+  build:
+    name: Build Extensions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout master branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-android {
-    namespace = "eu.kanade.tachiyomi.animeextension.ko.tvroom"
-}
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
 
-dependencies {
-    implementation(project(":core"))
-}
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Prepare signing key
+        run: |
+          keytool -genkey -v -keystore signing-key.jks -alias aniyomi -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=aniyomi, OU=aniyomi, O=aniyomi, L=Unknown, S=Unknown, C=Unknown"
+
+      - name: Build extensions
+        env:
+          CI_SIGNING_KEY: signing-key.jks
+          CI_SIGNING_KEY_ALIAS: aniyomi
+          CI_SIGNING_KEY_PASSWORD: password
+          CI_SIGNING_STORE_PASSWORD: password
+        run: |
+          ./gradlew :src:ko:tvroom:assembleRelease --stacktrace
+
+      - name: Prepare repo and index
+        run: |
+          mkdir -p repo/apk
+          find . -name "*.apk" -type f ! -path "./repo/*" -exec cp -v {} repo/apk/ \;
+          ls -la repo/apk/
+
+          cat << 'EOF' > generate_index.py
+          import os, json
+
+          repo_dir = "repo"
+          apk_dir = os.path.join(repo_dir, "apk")
+          extensions = []
+
+          if os.path.exists(apk_dir):
+              for f in os.listdir(apk_dir):
+                  if f.endswith(".apk"):
+                      extensions.append({
+                          "name": "영화",
+                          "pkg": "eu.kanade.tachiyomi.animeextension.ko.tvroom",
+                          "apk": f"apk/{f}",
+                          "lang": "ko",
+                          "code": 1,
+                          "version": "14.1",
+                          "nsfw": 0,
+                          "sources": [
+                              {
+                                  "name": "영화",
+                                  "lang": "ko",
+                                  "id": "2135778533207260895",
+                                  "baseUrl": "https://tvwiki51.net",
+                                  "versionId": 1
+                              }
+                          ]
+                      })
+
+          with open(os.path.join(repo_dir, "index.min.json"), "w", encoding="utf-8") as fp:
+              json.dump(extensions, fp, ensure_ascii=False, indent=2)
+          print(f"Generated index with {len(extensions)} extensions")
+          EOF
+
+          python3 generate_index.py
+          cat repo/index.min.json
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./repo
+          publish_branch: gh-pages
