@@ -1,4 +1,3 @@
-
 name: CI
 
 on:
@@ -28,18 +27,18 @@ jobs:
 
       - name: Prepare signing key
         run: |
-          keytool -genkey -v -keystore "$GITHUB_WORKSPACE/signing-key.jks" -alias aniyomi -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=aniyomi, OU=aniyomi, O=aniyomi, L=Unknown, S=Unknown, C=Unknown"
+          keytool -genkey -v -keystore "$GITHUB_WORKSPACE/signingkey.jks" -alias aniyomi -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=aniyomi, OU=aniyomi, O=aniyomi, L=Unknown, S=Unknown, C=Unknown"
+          cp "$GITHUB_WORKSPACE/signingkey.jks" src/ko/tvroom/signingkey.jks || true
 
       - name: Build extensions
         env:
           CI_CHUNK_NUM: 0
           CI_CHUNK_SIZE: 1
-          CI_SIGNING_KEY: signing-key.jks
+          CI_SIGNING_KEY: signingkey.jks
           CI_SIGNING_KEY_ALIAS: aniyomi
           CI_SIGNING_KEY_PASSWORD: password
           CI_SIGNING_STORE_PASSWORD: password
         run: |
-          cp "$GITHUB_WORKSPACE/signing-key.jks" src/ko/tvroom/signing-key.jks || true
           ./gradlew :src:ko:tvroom:assembleRelease --stacktrace
 
       - name: Prepare repo and index
