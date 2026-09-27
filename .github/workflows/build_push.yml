@@ -38,8 +38,20 @@ jobs:
           CI_SIGNING_KEY_ALIAS: aniyomi
           CI_SIGNING_KEY_PASSWORD: password
           CI_SIGNING_STORE_PASSWORD: password
+          SIGNING_STORE_PASSWORD: password
+          SIGNING_KEY_PASSWORD: password
+          SIGNING_KEY_ALIAS: aniyomi
         run: |
-          ./gradlew :src:ko:tvroom:assembleRelease --stacktrace
+          ./gradlew :src:ko:tvroom:assembleRelease \
+            -PsigningStorePassword=password \
+            -PsigningKeyPassword=password \
+            -PsigningKeyAlias=aniyomi \
+            -PsigningStoreFile="$GITHUB_WORKSPACE/signingkey.jks" \
+            -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/signingkey.jks" \
+            -Pandroid.injected.signing.store.password=password \
+            -Pandroid.injected.signing.key.alias=aniyomi \
+            -Pandroid.injected.signing.key.password=password \
+            --stacktrace
 
       - name: Prepare repo and index
         run: |
