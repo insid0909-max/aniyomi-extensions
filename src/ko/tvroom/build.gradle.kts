@@ -11,11 +11,6 @@ ext {
 
 apply(from = "$rootDir/common.gradle")
 
-repositories {
-    mavenCentral()
-    google()
-}
-
 android {
     namespace = "eu.kanade.tachiyomi.animeextension.ko.tvroom"
 }
