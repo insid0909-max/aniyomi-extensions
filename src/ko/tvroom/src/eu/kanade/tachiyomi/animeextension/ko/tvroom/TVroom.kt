@@ -65,13 +65,21 @@ class TVroom : ParsedAnimeHttpSource() {
 
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
-        val animeList = document.select(popularAnimeSelector())
-            .mapNotNull { runCatching { popularAnimeFromElement(it) }.getOrNull() }
-            .filter { it.url.isNotBlank() }
-            .distinctBy { it.url }
+        val elements = document.select(popularAnimeSelector())
+        val animeList = ArrayList<SAnime>()
 
+        for (el in elements) {
+            runCatching {
+                val anime = popularAnimeFromElement(el)
+                if (anime.url.isNotBlank()) {
+                    animeList.add(anime)
+                }
+            }
+        }
+
+        val uniqueList = animeList.distinctBy { it.url }
         val hasNextPage = popularAnimeNextPageSelector()?.let { document.selectFirst(it) } != null
-        return AnimesPage(animeList, hasNextPage)
+        return AnimesPage(uniqueList, hasNextPage)
     }
 
     // ============================== 최신 목록 ==============================
@@ -126,7 +134,7 @@ class TVroom : ParsedAnimeHttpSource() {
 
     // ============================== 회차(에피소드) 목록 ==============================
     override fun episodeListSelector(): String =
-        "a[href*='/view/'], a[href*='/watch/'], a[href*='/episode/'], div:has(> a[href*='view']) a, div[class*='ep'] a, a:has(span, h4, h5, p)"
+        "a[href*='/view/'], a[href*='/watch/'], a[href*='/episode/'], div[class*='ep'] a, div:has(> a[href*='view']) a"
 
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
         val link = if (element.tagName() == "a") element else element.selectFirst("a") ?: element
@@ -143,29 +151,37 @@ class TVroom : ParsedAnimeHttpSource() {
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = response.asJsoup()
-        val episodes = document.select(episodeListSelector())
-            .filter { it.attr("href").isNotBlank() }
-            .map { episodeFromElement(it) }
-            .distinctBy { it.url }
+        val elements = document.select(episodeListSelector())
+        val episodes = ArrayList<SEpisode>()
 
-        if (episodes.isEmpty()) {
+        for (el in elements) {
+            val href = el.attr("href")
+            if (href.isNotBlank()) {
+                episodes.add(episodeFromElement(el))
+            }
+        }
+
+        val uniqueEpisodes = episodes.distinctBy { it.url }
+
+        if (uniqueEpisodes.isEmpty()) {
             return listOf(
                 SEpisode.create().apply {
                     setUrlWithoutDomain(response.request.url.encodedPath)
-                    name = "영화 재생"
+                    name = "영상 재생"
                     episode_number = 1f
                 },
             )
         }
-        return episodes
+        return uniqueEpisodes
     }
 
     // ============================== 비디오 재생 파싱 ==============================
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
-        val videoList = mutableListOf<Video>()
+        val videoList = ArrayList<Video>()
 
-        document.select("iframe").forEach { iframe ->
+        val iframes = document.select("iframe")
+        for (iframe in iframes) {
             val src = iframe.attr("src")
             if (src.isNotBlank() && !src.contains("ads") && !src.contains("banner")) {
                 val streamUrl = if (src.startsWith("//")) "https:$src" else src
@@ -173,7 +189,8 @@ class TVroom : ParsedAnimeHttpSource() {
             }
         }
 
-        document.select("video source, video").forEach { video ->
+        val videos = document.select("video source, video")
+        for (video in videos) {
             val src = video.attr("src")
             if (src.isNotBlank()) {
                 val streamUrl = if (src.startsWith("//")) "https:$src" else src
