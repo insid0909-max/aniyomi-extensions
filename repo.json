@@ -2,7 +2,7 @@
   "meta": {
     "name": "TVroom Repository",
     "shortName": "TVroom",
-    "website": "https://github.com/insid0909-max/aniyomi-extensions",
-    "signingKeyFingerprint": "7a18287575809c11b3a67ad7fb5f4186607a3ba93499574faa567793c1d5c887"
+    "website": "https://aniyomi-extensions.pages.dev",
+    "signingKeyFingerprint": "0cc046b1bad2152454be5d485566b04e6b9c614556093d13aa59d1edaf0267ce"
   }
 }
