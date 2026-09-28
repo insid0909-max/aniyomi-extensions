@@ -95,7 +95,7 @@ jobs:
           with open(os.path.join(repo_dir, "anime", "repo.json"), "w", encoding="utf-8") as fp:
               json.dump(repo_data, fp, ensure_ascii=False, indent=2)
 
-          # 2. DC Toki와 1:1 일치하는 index.min.json 생성
+          # 2. DC Toki와 1:1 일치하는 index.min.json 생성 (id는 따옴표 없는 숫자형)
           extensions = [{
               "name": "Aniyomi: TVroom",
               "pkg": "eu.kanade.tachiyomi.animeextension.ko.tvroom",
@@ -108,7 +108,7 @@ jobs:
                   {
                       "name": "TVroom",
                       "lang": "ko",
-                      "id": "2135778533207260895",
+                      "id": 2135778533207260895,
                       "baseUrl": "https://tvwiki51.net",
                       "versionId": 1
                   }
@@ -120,11 +120,7 @@ jobs:
               with open(p, "w", encoding="utf-8") as fp:
                   json.dump(extensions, fp, ensure_ascii=False, separators=(',', ':'))
 
-          # 3. Aniyomi 0.18.x 전용 index.pb / anime/index.pb 동시 생성 (호환용)
-          for p in [os.path.join(repo_dir, "index.pb"), os.path.join(repo_dir, "anime", "index.pb")]:
-              shutil.copy2(os.path.join(repo_dir, "index.min.json"), p)
-
-          print("Generated index.min.json, repo.json, index.pb successfully.")
+          print("Generated index.min.json and repo.json successfully.")
           EOF
 
           python3 generate_index.py
