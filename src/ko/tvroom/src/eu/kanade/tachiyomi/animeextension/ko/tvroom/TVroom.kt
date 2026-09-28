@@ -33,7 +33,6 @@ class TVroom : ParsedAnimeHttpSource() {
     override fun popularAnimeRequest(page: Int): Request =
         GET("$baseUrl/popular?page=$page", headers)
 
-    // 카드 단위 요소를 잡거나 카드를 감싸는 부모를 타겟팅
     override fun popularAnimeSelector(): String =
         "div[class*='col'], div[class*='item'], div.card, a[href~=^/(movie|kor_movie|ani_movie|drama|ent)/\\d+]"
 
@@ -41,14 +40,12 @@ class TVroom : ParsedAnimeHttpSource() {
         val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
         setUrlWithoutDomain(link.attr("href"))
 
-        // 제목 추출 (h1~h5, alt, title, 텍스트 순차 검색)
         val img = element.selectFirst("img")
         title = element.selectFirst("h1, h2, h3, h4, h5, .title, .subject, .name")?.text()?.trim()
             ?: img?.attr("alt")?.trim()?.ifEmpty { null }
             ?: link.attr("title").trim().ifEmpty { null }
             ?: link.text().trim().ifEmpty { "제목 없음" }
 
-        // 썸네일 추출
         thumbnail_url = img?.let {
             val src = it.attr("data-src").ifEmpty {
                 it.attr("data-original").ifEmpty {
@@ -66,7 +63,6 @@ class TVroom : ParsedAnimeHttpSource() {
     override fun popularAnimeNextPageSelector(): String? =
         "a:contains(다음), a.next, a[rel=next], .pagination .active + li a"
 
-    // 중복 제거 (URL 기준 1개만 남김)
     override fun popularAnimeParse(response: Response): AnimesPage {
         val document = response.asJsoup()
         val animeList = document.select(popularAnimeSelector())
@@ -129,25 +125,22 @@ class TVroom : ParsedAnimeHttpSource() {
     }
 
     // ============================== 회차(에피소드) 목록 ==============================
-    // 스크린샷의 '전체회차' 리스트 및 단일 영화 재생 링크 대응
     override fun episodeListSelector(): String =
         "a[href*='/view/'], a[href*='/watch/'], a[href*='/episode/'], div:has(> a[href*='view']) a, div[class*='ep'] a, a:has(span, h4, h5, p)"
 
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
         val link = if (element.tagName() == "a") element else element.selectFirst("a") ?: element
         setUrlWithoutDomain(link.attr("href"))
-        
+
         val epTitle = link.text().trim().ifEmpty {
             link.attr("title").ifEmpty { "1화" }
         }
         name = epTitle
 
-        // 숫자 회차 추출 (예: 런닝맨 820화 -> 820f)
         val epMatch = Regex("(\\d+)\\s*화").find(epTitle)
         episode_number = epMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
     }
 
-    // 단일 영화(회차 목록이 따로 없는 경우) 본인 페이지를 1회차로 생성
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = response.asJsoup()
         val episodes = document.select(episodeListSelector())
@@ -155,7 +148,6 @@ class TVroom : ParsedAnimeHttpSource() {
             .map { episodeFromElement(it) }
             .distinctBy { it.url }
 
-        // 만약 회차 태그를 못 찾은 단편 영화일 경우
         if (episodes.isEmpty()) {
             return listOf(
                 SEpisode.create().apply {
@@ -173,7 +165,6 @@ class TVroom : ParsedAnimeHttpSource() {
         val document = response.asJsoup()
         val videoList = mutableListOf<Video>()
 
-        // 1. iframe 동영상 플레이어 추출
         document.select("iframe").forEach { iframe ->
             val src = iframe.attr("src")
             if (src.isNotBlank() && !src.contains("ads") && !src.contains("banner")) {
@@ -182,7 +173,6 @@ class TVroom : ParsedAnimeHttpSource() {
             }
         }
 
-        // 2. video 태그 추출
         document.select("video source, video").forEach { video ->
             val src = video.attr("src")
             if (src.isNotBlank()) {
