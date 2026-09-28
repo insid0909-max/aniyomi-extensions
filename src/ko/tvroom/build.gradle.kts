@@ -6,7 +6,7 @@ plugins {
 ext {
     set("extName", "TVroom")
     set("extClass", ".TVroom")
-    set("extVersionCode", 10)
+    set("extVersionCode", 11)
 }
 
 apply(from = "$rootDir/common.gradle")
