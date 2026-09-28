@@ -59,6 +59,10 @@ jobs:
           find . -name "*.apk" -type f ! -path "./repo/*" -exec cp -v {} repo/apk/ \;
           ls -la repo/apk/
 
+          if [ -f "repo.json" ]; then
+            cp repo.json repo/repo.json
+          fi
+
           cat << 'EOF' > generate_index.py
           import os, json
 
@@ -70,16 +74,16 @@ jobs:
               for f in os.listdir(apk_dir):
                   if f.endswith(".apk"):
                       extensions.append({
-                          "name": "영화",
+                          "name": "TVroom",
                           "pkg": "eu.kanade.tachiyomi.animeextension.ko.tvroom",
                           "apk": f"apk/{f}",
                           "lang": "ko",
-                          "code": 1,
-                          "version": "14.1",
+                          "code": 11,
+                          "version": "14.2",
                           "nsfw": 0,
                           "sources": [
                               {
-                                  "name": "영화",
+                                  "name": "TVroom",
                                   "lang": "ko",
                                   "id": "2135778533207260895",
                                   "baseUrl": "https://tvwiki51.net",
