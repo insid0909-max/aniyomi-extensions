@@ -1,4 +1,4 @@
-name: CI
+Name: CI
 
 on:
   push:
@@ -82,6 +82,8 @@ jobs:
                           "code": 11,
                           "version": "14.2",
                           "nsfw": 0,
+                          "hasReadme": 0,
+                          "hasChangelog": 0,
                           "sources": [
                               {
                                   "name": "TVroom",
