@@ -56,6 +56,7 @@ jobs:
       - name: Prepare repo and index
         run: |
           mkdir -p repo/apk
+          mkdir -p repo/anime
           find . -name "*.apk" -type f ! -path "./repo/*" -exec cp -v {} repo/apk/ \;
           ls -la repo/apk/
 
@@ -94,6 +95,10 @@ jobs:
 
           with open(os.path.join(repo_dir, "index.min.json"), "w", encoding="utf-8") as fp:
               json.dump(extensions, fp, ensure_ascii=False, indent=2)
+
+          with open(os.path.join(repo_dir, "anime", "index.min.json"), "w", encoding="utf-8") as fp:
+              json.dump(extensions, fp, ensure_ascii=False, indent=2)
+
           print(f"Generated index with {len(extensions)} extensions")
           EOF
 
