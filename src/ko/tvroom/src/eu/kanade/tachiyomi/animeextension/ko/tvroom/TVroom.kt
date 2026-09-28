@@ -14,6 +14,7 @@ import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.Headers
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -31,7 +32,6 @@ class TVroom : ParsedAnimeHttpSource() {
     override val lang = "ko"
     override val supportsLatest = true
 
-    // 세션 유지를 위한 인메모리 쿠키 저장소
     private val cookieStore = HashMap<String, MutableList<Cookie>>()
 
     override val client: OkHttpClient = network.client.newBuilder()
@@ -305,12 +305,11 @@ class TVroom : ParsedAnimeHttpSource() {
 
         val playlistUrl = fixUrl(hlsUrl)
 
-        // 저장된 전체 쿠키 문자열 조합 (PHPSESSID 등)
-        val baseHttpUrl = HttpUrl.parse(baseUrl)!!
-        val cookies = client.cookieJar.loadForRequest(baseHttpUrl)
+        // 쿠키 문자열 추출 (toHttpUrl 확장함수 사용)
+        val cookies = client.cookieJar.loadForRequest(baseUrl.toHttpUrl())
         val cookieHeader = cookies.joinToString("; ") { "${it.name}=${it.value}" }
 
-        // 웹뷰와 동일한 재생 헤더 구성
+        // 재생 헤더 구성
         val playHeadersBuilder = Headers.Builder()
             .add("User-Agent", userAgent)
             .add("Referer", "$baseUrl$episodePath")
