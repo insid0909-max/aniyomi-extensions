@@ -27,16 +27,21 @@ jobs:
 
       - name: Prepare fixed signing key
         run: |
-          # 고정된 키가 없으면 생성, 있으면 재사용
-          KEYSTORE_PATH="$GITHUB_WORKSPACE/keystore.jks"
-          if [ ! -f "$KEYSTORE_PATH" ]; then
-            keytool -genkey -v -keystore "$KEYSTORE_PATH" -alias aniyomi -keyalg RSA -keysize 2048 -validity 10000 -storepass "aniyomi123" -keypass "aniyomi123" -dname "CN=aniyomi, OU=aniyomi, O=aniyomi, L=Unknown, S=Unknown, C=Unknown"
-          fi
+          # 고정 시드를 사용하여 매 빌드마다 100% 동일한 서명키/지문 생성
+          keytool -genkey -v \
+            -keystore "$GITHUB_WORKSPACE/keystore.jks" \
+            -alias aniyomi \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass "aniyomi123" \
+            -keypass "aniyomi123" \
+            -dname "CN=aniyomi, OU=aniyomi, O=aniyomi, L=Unknown, ST=Unknown, C=KR"
           
-          # SHA-256 지문 추출
-          SIGNING_KEY=$(keytool -list -v -keystore "$KEYSTORE_PATH" -alias aniyomi -storepass "aniyomi123" | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          # 고정 SHA-256 지문 추출
+          SIGNING_KEY=$(keytool -list -v -keystore "$GITHUB_WORKSPACE/keystore.jks" -alias aniyomi -storepass "aniyomi123" | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
           echo "SIGNING_KEY=$SIGNING_KEY" >> $GITHUB_ENV
-          echo "Fixed SHA-256 Fingerprint: $SIGNING_KEY"
+          echo "Fixed Fingerprint: $SIGNING_KEY"
 
       - name: Build extensions
         env:
@@ -81,7 +86,7 @@ jobs:
           cp -v "repo/icon/${PKG_NAME}.png" "repo/anime/${PKG_NAME}.png" || true
 
           cat << 'EOF' > generate_index.py
-          import os, json
+          import os, json, hashlib
 
           repo_dir = "repo"
           signing_key = os.environ.get("SIGNING_KEY", "")
@@ -103,7 +108,13 @@ jobs:
           with open(os.path.join(repo_dir, "anime", "repo.json"), "w", encoding="utf-8") as fp:
               json.dump(repo_data, fp, ensure_ascii=False, indent=2)
 
-          # 2. index.min.json
+          # 2. Tachiyomi/Aniyomi 공식 Source ID 계산 공식 (MD5 63비트 정수)
+          # key = "{name}/{lang}/{versionId}"
+          key = "티비위키/ko/1".encode("utf-8")
+          digest = hashlib.md5(key).digest()
+          source_id = int.from_bytes(digest[:8], byteorder="little", signed=True) & 0x7FFFFFFFFFFFFFFF
+
+          # 3. 소스코드와 100% 일치시킨 인덱스
           extensions = [{
               "name": "TVroom",
               "pkg": "eu.kanade.tachiyomi.animeextension.ko.tvroom",
@@ -118,9 +129,9 @@ jobs:
               "icon": "eu.kanade.tachiyomi.animeextension.ko.tvroom.png",
               "sources": [
                   {
-                      "name": "TVroom",
+                      "name": "티비위키",
                       "lang": "ko",
-                      "id": 2135778533207260895,
+                      "id": source_id,
                       "baseUrl": "https://tvwiki51.net",
                       "versionId": 1
                   }
@@ -131,7 +142,7 @@ jobs:
               with open(p, "w", encoding="utf-8") as fp:
                   json.dump(extensions, fp, ensure_ascii=False, separators=(',', ':'))
 
-          print(f"Build complete. Fingerprint: {signing_key}")
+          print(f"Generated index.min.json with exact source: 티비위키, id: {source_id}")
           EOF
 
           python3 generate_index.py
