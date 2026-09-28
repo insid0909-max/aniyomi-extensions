@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.ko.tvroom
 
+import android.util.Base64
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -10,11 +11,7 @@ import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
-import okhttp3.Cookie
-import okhttp3.CookieJar
 import okhttp3.Headers
-import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -32,22 +29,9 @@ class TVroom : ParsedAnimeHttpSource() {
     override val lang = "ko"
     override val supportsLatest = true
 
-    private val cookieStore = HashMap<String, MutableList<Cookie>>()
+    override val client: OkHttpClient = network.client
 
-    override val client: OkHttpClient = network.client.newBuilder()
-        .cookieJar(object : CookieJar {
-            override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
-                val list = cookieStore.getOrPut(url.host) { ArrayList() }
-                list.removeAll { old -> cookies.any { it.name == old.name } }
-                list.addAll(cookies)
-            }
-
-            override fun loadForRequest(url: HttpUrl): List<Cookie> {
-                return cookieStore[url.host] ?: emptyList()
-            }
-        })
-        .build()
-
+    private val bridgeBaseUrl = "https://dc-toki-mangayomi-media.pages.dev"
     private val userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
@@ -250,7 +234,7 @@ class TVroom : ParsedAnimeHttpSource() {
         return uniqueList
     }
 
-    // ============================== 비디오 재생 파싱 ==============================
+    // ============================== 비디오 재생 파싱 (망가요미 동일 복호화/브릿지 이식) ==============================
     override fun videoListParse(response: Response): List<Video> {
         val episodePath = response.request.url.encodedPath
         val parts = episodePath.trim('/').split("/")
@@ -264,10 +248,11 @@ class TVroom : ParsedAnimeHttpSource() {
 
         // 1. 회차 메타데이터 호출
         val metaUrl = "$baseUrl/bbs/get_episode.php?bo_table=$boTable&wr_id=$wrId&ep_idx=$epIdx"
-        val metaHeaders = headersBuilder()
-            .set("Referer", "$baseUrl$episodePath")
-            .set("Accept", "application/json, text/javascript, */*; q=0.01")
-            .set("X-Requested-With", "XMLHttpRequest")
+        val metaHeaders = Headers.Builder()
+            .add("User-Agent", userAgent)
+            .add("Referer", "$baseUrl$episodePath")
+            .add("Accept", "application/json")
+            .add("X-Requested-With", "XMLHttpRequest")
             .build()
 
         val metaResponse = client.newCall(GET(metaUrl, metaHeaders)).execute()
@@ -277,52 +262,100 @@ class TVroom : ParsedAnimeHttpSource() {
         }
 
         val episodeObj = metaJson.getJSONObject("episode")
-        var hlsUrl = episodeObj.optString("hls_url")
-        val sessionData = episodeObj.opt("session_data1") ?: episodeObj.opt("session_data2")
+        val rawHlsUrl = episodeObj.optString("hls_url")
+        val sessionDataList = listOfNotNull(episodeObj.opt("session_data1"), episodeObj.opt("session_data2"))
 
-        // 2. 세션 API 호출
-        if (sessionData != null) {
+        // 2. 세션 발급 (브릿지 우선 -> 사이트 직접 시도)
+        var sessionJson: JSONObject? = null
+        for (payload in sessionDataList) {
+            val payloadStr = payload.toString()
+
+            // 2-1. 브릿지 세션 시도
             runCatching {
-                val directReqBody = sessionData.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
-                val directHeaders = headersBuilder()
-                    .set("Referer", "$baseUrl$episodePath")
-                    .set("Origin", baseUrl)
-                    .set("Content-Type", "application/json; charset=utf-8")
+                val bridgeReqObj = JSONObject().apply {
+                    put("baseUrl", baseUrl)
+                    put("episodePath", episodePath)
+                    put("sessionData", if (payloadStr.startsWith("{")) JSONObject(payloadStr) else payloadStr)
+                }
+                val bridgeHeaders = Headers.Builder()
+                    .add("User-Agent", userAgent)
+                    .add("Referer", "$bridgeBaseUrl/")
+                    .add("Content-Type", "application/json; charset=utf-8")
                     .build()
-
-                val sessionResponse = client.newCall(POST("$baseUrl/api/create_session.php", directHeaders, directReqBody)).execute()
-                val sessionJson = JSONObject(sessionResponse.body.string())
-                if (sessionJson.optBoolean("success", false)) {
-                    val streamUrl = sessionJson.optString("hls_url").ifEmpty {
-                        sessionJson.optString("url")
-                    }
-                    if (streamUrl.isNotBlank()) {
-                        hlsUrl = streamUrl
-                    }
+                val reqBody = bridgeReqObj.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+                val bridgeRes = client.newCall(POST("$bridgeBaseUrl/api/tvwiki-session", bridgeHeaders, reqBody)).execute()
+                val resJson = JSONObject(bridgeRes.body.string())
+                if (resJson.optBoolean("success", false) && resJson.has("player_url")) {
+                    sessionJson = resJson
                 }
             }
+            if (sessionJson != null) break
+
+            // 2-2. 사이트 직접 세션 시도
+            runCatching {
+                val directHeaders = Headers.Builder()
+                    .add("User-Agent", userAgent)
+                    .add("Referer", "$baseUrl$episodePath")
+                    .add("Origin", baseUrl)
+                    .add("Content-Type", "application/json; charset=utf-8")
+                    .build()
+                val reqBody = payloadStr.toRequestBody("application/json; charset=utf-8".toMediaType())
+                val directRes = client.newCall(POST("$baseUrl/api/create_session.php", directHeaders, reqBody)).execute()
+                val resJson = JSONObject(directRes.body.string())
+                if (resJson.optBoolean("success", false) && resJson.has("player_url")) {
+                    sessionJson = resJson
+                }
+            }
+            if (sessionJson != null) break
         }
 
-        val playlistUrl = fixUrl(hlsUrl)
+        if (sessionJson == null) {
+            return fallbackVideoParse(response)
+        }
 
-        // 쿠키 문자열 추출 (toHttpUrl 확장함수 사용)
-        val cookies = client.cookieJar.loadForRequest(baseUrl.toHttpUrl())
-        val cookieHeader = cookies.joinToString("; ") { "${it.name}=${it.value}" }
+        // 3. 토큰 결합 플레이어 URL & 플레이리스트 URL 완성
+        val rawPlayerUrl = sessionJson.getString("player_url")
+        val sep = if (rawPlayerUrl.contains("?")) "&" else "?"
+        val playerUrl = resolveAbsolute("$baseUrl$episodePath", rawPlayerUrl) +
+            "${sep}t=${URLEncoder.encode(sessionJson.optString("t"), "UTF-8")}&sig=${URLEncoder.encode(sessionJson.optString("sig"), "UTF-8")}"
 
-        // 재생 헤더 구성
-        val playHeadersBuilder = Headers.Builder()
+        val playlistUrl = resolveAbsolute(playerUrl, rawHlsUrl)
+
+        val playerOrigin = runCatching {
+            val u = okhttp3.HttpUrl.parse(playerUrl)
+            "${u?.scheme}://${u?.host}"
+        }.getOrDefault(baseUrl)
+
+        val streamHeaders = Headers.Builder()
             .add("User-Agent", userAgent)
-            .add("Referer", "$baseUrl$episodePath")
+            .add("Accept", "*/*")
+            .add("Referer", playerUrl)
+            .add("Origin", playerOrigin)
+            .build()
 
-        if (cookieHeader.isNotBlank()) {
-            playHeadersBuilder.add("Cookie", cookieHeader)
-        }
+        // 4. 플레이리스트 다운로드 및 EXT-X-KEY 암호화 키 확인
+        val playlistRes = client.newCall(GET(playlistUrl, streamHeaders)).execute()
+        val playlistContent = playlistRes.body.string()
 
-        val playHeaders = playHeadersBuilder.build()
-
+        val keyMatch = Regex("""#EXT-X-KEY:[^\r\n]*URI="([^"]+)"""", RegexOption.IGNORE_CASE).find(playlistContent)
         val videoList = ArrayList<Video>()
-        if (playlistUrl.isNotBlank() && playlistUrl != baseUrl) {
-            videoList.add(Video(playlistUrl, "고화질 스트리밍 (HLS)", playlistUrl, headers = playHeaders))
+
+        if (keyMatch != null) {
+            val keyUrl = resolveAbsolute(playlistUrl, keyMatch.groupValues[1])
+            val envelopeRes = client.newCall(GET(keyUrl, streamHeaders)).execute()
+            val envelope = envelopeRes.body.string()
+
+            val uParam = URLEncoder.encode(toBase64Url(playlistUrl), "UTF-8")
+            val rParam = URLEncoder.encode(toBase64Url(playerUrl), "UTF-8")
+            val xParam = URLEncoder.encode(toBase64Url(envelope), "UTF-8")
+            val common = "u=$uParam&r=$rParam&x=$xParam"
+
+            // 호환 중계 (403 100% 우회 스트림)
+            videoList.add(Video("$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=p&$common", "호환 재생 (중계)", "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=p&$common", headers = streamHeaders))
+            // CDN 직결
+            videoList.add(Video("$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=f&$common", "빠른 재생 (CDN 직접)", "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=f&$common", headers = streamHeaders))
+        } else {
+            videoList.add(Video(playlistUrl, "자동 (HLS)", playlistUrl, headers = streamHeaders))
         }
 
         return if (videoList.isNotEmpty()) videoList else fallbackVideoParse(response)
@@ -339,70 +372,23 @@ class TVroom : ParsedAnimeHttpSource() {
     }
 
     // ============================== 헬퍼 함수 ==============================
+    private fun toBase64Url(value: String): String {
+        return Base64.encodeToString(value.toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING).trim()
+    }
+
+    private fun resolveAbsolute(base: String, target: String): String {
+        val t = target.trim()
+        if (t.startsWith("http://") || t.startsWith("https://")) return t
+        if (t.startsWith("//")) return "https:$t"
+        return if (t.startsWith("/")) {
+            val baseUri = okhttp3.HttpUrl.parse(base)
+            "${baseUri?.scheme}://${baseUri?.host}$t"
+        } else {
+            val dir = base.substringBeforeLast('/')
+            "$dir/$t"
+        }
+    }
+
     private fun fixUrl(url: String): String = when {
         url.startsWith("//") -> "https:$url"
-        url.startsWith("/") -> "$baseUrl$url"
-        else -> url
-    }
-
-    private fun cleanSeriesTitle(raw: String): String =
-        raw.replace(Regex("""\s+\d+(?:[-.]\d+)?화(?:\s+다시보기)?\s*$"""), "")
-            .replace(Regex("""\s+다시보기(?:\s*-\s*티비위키)?\s*$"""), "")
-            .trim()
-
-    private fun formatEpisodeName(raw: String): String {
-        val trimmed = raw.trim()
-        val match = Regex("""(?:^|\s)(\d+(?:[-.]\d+)?화)""").find(trimmed)
-        return match?.groupValues?.get(1) ?: trimmed
-    }
-
-    override fun videoListSelector(): String = throw UnsupportedOperationException()
-    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
-    override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
-
-    // ============================== 필터 정의 ==============================
-    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        CategoryFilter(CATEGORIES),
-        PeriodFilter(PERIODS),
-        ModeFilter(MODES),
-    )
-
-    class CategoryFilter(categories: Array<Pair<String, String>>) :
-        AnimeFilter.Select<String>("카테고리", categories.map { it.first }.toTypedArray())
-
-    class PeriodFilter(periods: Array<Pair<String, String>>) :
-        AnimeFilter.Select<String>("기간 (인기탭)", periods.map { it.first }.toTypedArray())
-
-    class ModeFilter(modes: Array<Pair<String, String>>) :
-        AnimeFilter.Select<String>("정렬 방식", modes.map { it.first }.toTypedArray())
-
-    companion object {
-        private val CATEGORIES = arrayOf(
-            Pair("전체", "all"),
-            Pair("영화", "movie"),
-            Pair("한국영화", "kor_movie"),
-            Pair("드라마", "drama"),
-            Pair("예능프로그램", "ent"),
-            Pair("시사·다큐", "sisa"),
-            Pair("해외드라마", "world"),
-            Pair("해외 예능·다큐", "ott_ent"),
-            Pair("숏폼 드라마", "short_drama"),
-            Pair("극장판 애니", "ani_movie"),
-            Pair("일반 애니", "animation"),
-            Pair("추억의 예능", "old_ent"),
-            Pair("추억의 드라마", "old_drama"),
-        )
-
-        private val PERIODS = arrayOf(
-            Pair("일간", "d"),
-            Pair("주간", "w"),
-            Pair("월간", "m"),
-            Pair("전체 기간", "a"),
-        )
-
-        private val MODES = arrayOf(
-            Pair("최신순", "latest"),
-            Pair("인기순", "popular"),
-        )
-    }
-}
+        url.startsWith("/") -> "$baseUrl$url
