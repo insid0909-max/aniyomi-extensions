@@ -30,7 +30,7 @@ jobs:
           keytool -genkey -v -keystore "$GITHUB_WORKSPACE/signingkey.jks" -alias aniyomi -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=aniyomi, OU=aniyomi, O=aniyomi, L=Unknown, S=Unknown, C=Unknown"
           cp "$GITHUB_WORKSPACE/signingkey.jks" src/ko/tvroom/signingkey.jks || true
           
-          # 키스토어에서 Aniyomi가 요구하는 SHA-256 서명 지문 추출
+          # 서명 지문 추출
           SIGNING_KEY=$(keytool -list -v -keystore "$GITHUB_WORKSPACE/signingkey.jks" -alias aniyomi -storepass password | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
           echo "SIGNING_KEY=$SIGNING_KEY" >> $GITHUB_ENV
           echo "Extracted SHA-256 Fingerprint: $SIGNING_KEY"
@@ -61,19 +61,27 @@ jobs:
       - name: Prepare repo and index
         run: |
           mkdir -p repo/anime
-          # repo 루트와 repo/anime 양쪽에 apk 복사
+          # repo 루트와 anime 양쪽에 apk 복사
           find . -name "*.apk" -type f ! -path "./repo/*" -exec cp -v {} repo/ \;
           find . -name "*.apk" -type f ! -path "./repo/*" -exec cp -v {} repo/anime/ \;
           ls -la repo/
 
           cat << 'EOF' > generate_index.py
-          import os, json
+          import os, shutil, json
 
           repo_dir = "repo"
           signing_key = os.environ.get("SIGNING_KEY", "")
-          extensions = []
 
-          # 1. DC Toki 규격과 동일한 repo.json
+          # 실제 apk 파일 찾기
+          apk_files = [f for f in os.listdir(repo_dir) if f.endswith(".apk")]
+          orig_apk = apk_files[0] if apk_files else "aniyomi-ko.tvroom-v14.2-release.apk"
+          target_apk = "aniyomi-ko.tvroom-v14.2-release.apk"
+
+          if orig_apk != target_apk and os.path.exists(os.path.join(repo_dir, orig_apk)):
+              shutil.copy2(os.path.join(repo_dir, orig_apk), os.path.join(repo_dir, target_apk))
+              shutil.copy2(os.path.join(repo_dir, orig_apk), os.path.join(repo_dir, "anime", target_apk))
+
+          # 1. DC Toki와 100% 동일한 repo.json 생성
           repo_data = {
               "meta": {
                   "name": "TVroom Repository",
@@ -84,15 +92,14 @@ jobs:
           }
           with open(os.path.join(repo_dir, "repo.json"), "w", encoding="utf-8") as fp:
               json.dump(repo_data, fp, ensure_ascii=False, indent=2)
+          with open(os.path.join(repo_dir, "anime", "repo.json"), "w", encoding="utf-8") as fp:
+              json.dump(repo_data, fp, ensure_ascii=False, indent=2)
 
-          # 2. DC Toki 규격과 1:1 일치하는 인덱스 데이터 생성 (apk 파일명 직접 지정 및 불필요 필드 제거)
-          apk_files = [f for f in os.listdir(repo_dir) if f.endswith(".apk")]
-          apk_filename = apk_files[0] if apk_files else "aniyomi-.tvroom-v14.2-release.apk"
-
-          extensions.append({
+          # 2. DC Toki와 1:1 일치하는 index.min.json 생성
+          extensions = [{
               "name": "Aniyomi: TVroom",
               "pkg": "eu.kanade.tachiyomi.animeextension.ko.tvroom",
-              "apk": apk_filename,
+              "apk": target_apk,
               "lang": "ko",
               "code": 11,
               "version": "14.2",
@@ -106,16 +113,18 @@ jobs:
                       "versionId": 1
                   }
               ]
-          })
+          }]
 
-          # 루트 및 anime 폴더에 동일하게 한 줄 압축(minified) 형태로 배포
-          with open(os.path.join(repo_dir, "index.min.json"), "w", encoding="utf-8") as fp:
-              json.dump(extensions, fp, ensure_ascii=False, separators=(',', ':'))
+          # index.min.json 저장
+          for p in [os.path.join(repo_dir, "index.min.json"), os.path.join(repo_dir, "anime", "index.min.json")]:
+              with open(p, "w", encoding="utf-8") as fp:
+                  json.dump(extensions, fp, ensure_ascii=False, separators=(',', ':'))
 
-          with open(os.path.join(repo_dir, "anime", "index.min.json"), "w", encoding="utf-8") as fp:
-              json.dump(extensions, fp, ensure_ascii=False, separators=(',', ':'))
+          # 3. Aniyomi 0.18.x 전용 index.pb / anime/index.pb 동시 생성 (호환용)
+          for p in [os.path.join(repo_dir, "index.pb"), os.path.join(repo_dir, "anime", "index.pb")]:
+              shutil.copy2(os.path.join(repo_dir, "index.min.json"), p)
 
-          print(f"Generated repo.json and index.min.json successfully.")
+          print("Generated index.min.json, repo.json, index.pb successfully.")
           EOF
 
           python3 generate_index.py
