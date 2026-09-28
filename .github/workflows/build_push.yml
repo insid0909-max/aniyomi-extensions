@@ -141,7 +141,7 @@ jobs:
           source_id = str(int.from_bytes(digest[:8], byteorder="little", signed=True) & 0x7FFFFFFFFFFFFFFF)
 
           extensions = [{
-              "name": "TVroom",
+              "name": "티비위키",
               "pkg": real_pkg,
               "apk": target_apk,
               "lang": "ko",
@@ -167,7 +167,7 @@ jobs:
               with open(p, "w", encoding="utf-8") as f:
                   json.dump(extensions, f, ensure_ascii=False, separators=(',', ':'))
 
-          print(f"배포 완료: 버전 {real_vname} (code: {real_vcode}), 패키지명: {real_pkg}")
+          print(f"배포 완료: 이름 티비위키, 버전 {real_vname} (code: {real_vcode}), 패키지명: {real_pkg}")
           EOF
 
       - name: Deploy to GitHub Pages
