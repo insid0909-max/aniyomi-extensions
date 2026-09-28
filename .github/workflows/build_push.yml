@@ -22,24 +22,29 @@ jobs:
           java-version: 17
           distribution: temurin
 
+      - name: Set up Android SDK Build-Tools
+        run: |
+          echo "$ANDROID_HOME/build-tools/34.0.0" >> $GITHUB_PATH
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
 
       - name: Prepare fixed signing key
         run: |
-          # 고정 시드를 사용하여 매 빌드마다 100% 동일한 서명키/지문 생성
+          # 고정 keystore 생성 (동일 dname 및 속성)
+          KEYSTORE_PATH="$GITHUB_WORKSPACE/keystore.jks"
           keytool -genkey -v \
-            -keystore "$GITHUB_WORKSPACE/keystore.jks" \
+            -keystore "$KEYSTORE_PATH" \
             -alias aniyomi \
             -keyalg RSA \
             -keysize 2048 \
             -validity 10000 \
             -storepass "aniyomi123" \
             -keypass "aniyomi123" \
-            -dname "CN=aniyomi, OU=aniyomi, O=aniyomi, L=Unknown, ST=Unknown, C=KR"
+            -dname "CN=aniyomi, OU=aniyomi, O=aniyomi, L=Seoul, ST=Seoul, C=KR"
           
-          # 고정 SHA-256 지문 추출
-          SIGNING_KEY=$(keytool -list -v -keystore "$GITHUB_WORKSPACE/keystore.jks" -alias aniyomi -storepass "aniyomi123" | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          # SHA-256 지문 추출
+          SIGNING_KEY=$(keytool -list -v -keystore "$KEYSTORE_PATH" -alias aniyomi -storepass "aniyomi123" | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
           echo "SIGNING_KEY=$SIGNING_KEY" >> $GITHUB_ENV
           echo "Fixed Fingerprint: $SIGNING_KEY"
 
@@ -66,35 +71,56 @@ jobs:
             -Pandroid.injected.signing.key.password="aniyomi123" \
             --stacktrace
 
-      - name: Prepare repo, icon and index
+      - name: Prepare repo and auto-generate index
         run: |
           mkdir -p repo/anime repo/apk repo/icon
           
+          # 1. 빌드된 원본 APK 복사
           ORIG_APK=$(find . -name "*.apk" -type f ! -path "./repo/*" | head -n 1)
-          echo "Found original APK: $ORIG_APK"
+          echo "Found APK: $ORIG_APK"
           
-          TARGET_APK="aniyomi-ko.tvroom-v14.2-release.apk"
-          PKG_NAME="eu.kanade.tachiyomi.animeextension.ko.tvroom"
+          # AAPT2로 실제 빌드된 APK의 정확한 메타데이터 추출
+          BADGING=$(aapt dump badging "$ORIG_APK")
           
+          REAL_PKG=$(echo "$BADGING" | grep -oP "package: name='\K[^']+")
+          REAL_VCODE=$(echo "$BADGING" | grep -oP "versionCode='\K[^']+")
+          REAL_VNAME=$(echo "$BADGING" | grep -oP "versionName='\K[^']+")
+          
+          echo "Detected APK Package: $REAL_PKG"
+          echo "Detected APK VersionCode: $REAL_VCODE"
+          echo "Detected APK VersionName: $REAL_VNAME"
+          
+          TARGET_APK="aniyomi-ko.tvroom-v${REAL_VNAME}-release.apk"
           cp -v "$ORIG_APK" "repo/$TARGET_APK"
           cp -v "$ORIG_APK" "repo/anime/$TARGET_APK"
           cp -v "$ORIG_APK" "repo/apk/$TARGET_APK"
           
-          # 아이콘 복사
-          unzip -p "$ORIG_APK" "res/9w.png" > "repo/icon/${PKG_NAME}.png" || true
-          cp -v "repo/icon/${PKG_NAME}.png" "repo/${PKG_NAME}.png" || true
-          cp -v "repo/icon/${PKG_NAME}.png" "repo/anime/${PKG_NAME}.png" || true
+          # 아이콘 파일 추출
+          ICON_SRC=$(echo "$BADGING" | grep -oP "application-icon-[0-9]+:'\K[^']+" | tail -n 1)
+          if [ -z "$ICON_SRC" ]; then
+            ICON_SRC=$(echo "$BADGING" | grep -oP "application: label='.*?' icon='\K[^']+")
+          fi
+          
+          if [ -n "$ICON_SRC" ]; then
+            unzip -p "$ORIG_APK" "$ICON_SRC" > "repo/icon/${REAL_PKG}.png" || true
+            cp -v "repo/icon/${REAL_PKG}.png" "repo/${REAL_PKG}.png" || true
+            cp -v "repo/icon/${REAL_PKG}.png" "repo/anime/${REAL_PKG}.png" || true
+          fi
 
-          cat << 'EOF' > generate_index.py
+          # 파이썬으로 repo.json 및 index.min.json 동기화
+          python3 - << EOF
           import os, json, hashlib
 
           repo_dir = "repo"
           signing_key = os.environ.get("SIGNING_KEY", "")
-          target_apk = "aniyomi-ko.tvroom-v14.2-release.apk"
+          target_apk = "$TARGET_APK"
+          real_pkg = "$REAL_PKG"
+          real_vcode = int("$REAL_VCODE")
+          real_vname = "$REAL_VNAME"
           apk_path = os.path.join(repo_dir, target_apk)
           apk_size = os.path.getsize(apk_path) if os.path.exists(apk_path) else 0
 
-          # 1. repo.json
+          # repo.json
           repo_data = {
               "meta": {
                   "name": "TVroom Repository",
@@ -103,30 +129,28 @@ jobs:
                   "signingKeyFingerprint": signing_key
               }
           }
-          with open(os.path.join(repo_dir, "repo.json"), "w", encoding="utf-8") as fp:
-              json.dump(repo_data, fp, ensure_ascii=False, indent=2)
-          with open(os.path.join(repo_dir, "anime", "repo.json"), "w", encoding="utf-8") as fp:
-              json.dump(repo_data, fp, ensure_ascii=False, indent=2)
+          with open(os.path.join(repo_dir, "repo.json"), "w", encoding="utf-8") as f:
+              json.dump(repo_data, f, ensure_ascii=False, indent=2)
+          with open(os.path.join(repo_dir, "anime", "repo.json"), "w", encoding="utf-8") as f:
+              json.dump(repo_data, f, ensure_ascii=False, indent=2)
 
-          # 2. Tachiyomi/Aniyomi 공식 Source ID 계산 공식 (MD5 63비트 정수)
-          # key = "{name}/{lang}/{versionId}"
+          # 공식 ID 해시 계산 (티비위키/ko/1)
           key = "티비위키/ko/1".encode("utf-8")
           digest = hashlib.md5(key).digest()
           source_id = int.from_bytes(digest[:8], byteorder="little", signed=True) & 0x7FFFFFFFFFFFFFFF
 
-          # 3. 소스코드와 100% 일치시킨 인덱스
           extensions = [{
               "name": "TVroom",
-              "pkg": "eu.kanade.tachiyomi.animeextension.ko.tvroom",
+              "pkg": real_pkg,
               "apk": target_apk,
               "lang": "ko",
-              "code": 2,
-              "version": "14.2",
+              "code": real_vcode,
+              "version": real_vname,
               "nsfw": 0,
               "hasReadme": 0,
               "hasChangelog": 0,
               "size": apk_size,
-              "icon": "eu.kanade.tachiyomi.animeextension.ko.tvroom.png",
+              "icon": f"{real_pkg}.png",
               "sources": [
                   {
                       "name": "티비위키",
@@ -139,14 +163,11 @@ jobs:
           }]
 
           for p in [os.path.join(repo_dir, "index.min.json"), os.path.join(repo_dir, "anime", "index.min.json")]:
-              with open(p, "w", encoding="utf-8") as fp:
-                  json.dump(extensions, fp, ensure_ascii=False, separators=(',', ':'))
+              with open(p, "w", encoding="utf-8") as f:
+                  json.dump(extensions, f, ensure_ascii=False, separators=(',', ':'))
 
-          print(f"Generated index.min.json with exact source: 티비위키, id: {source_id}")
+          print(f"Generated successfully: pkg={real_pkg}, code={real_vcode}, version={real_vname}")
           EOF
-
-          python3 generate_index.py
-          cat repo/index.min.json
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
