@@ -87,9 +87,8 @@ jobs:
           
           BADGING=$(aapt dump badging "$ORIG_APK")
           
-          RAW_PKG=$(echo "$BADGING" | grep -oP "package: name='\K[^']+")
-          # 중복된 .tvroom.tvroom을 표준 패키지명 .tvroom으로 정돈
-          REAL_PKG=$(echo "$RAW_PKG" | sed 's/\.tvroom\.tvroom$/\.tvroom/')
+          # APK 내부의 실제 패키지명 그대로 추출
+          REAL_PKG=$(echo "$BADGING" | grep -oP "package: name='\K[^']+")
           REAL_VCODE=$(echo "$BADGING" | grep -oP "versionCode='\K[^']+")
           REAL_VNAME=$(echo "$BADGING" | grep -oP "versionName='\K[^']+")
           
@@ -117,7 +116,7 @@ jobs:
           repo_dir = "repo"
           signing_key = os.environ.get("SIGNING_KEY", "")
           target_apk = "$TARGET_APK"
-          real_pkg = "$REAL_PKG".replace(".tvroom.tvroom", ".tvroom")
+          real_pkg = "$REAL_PKG"
           real_vcode = int("$REAL_VCODE")
           real_vname = "$REAL_VNAME"
           apk_path = os.path.join(repo_dir, target_apk)
@@ -141,7 +140,7 @@ jobs:
           source_id = str(int.from_bytes(digest[:8], byteorder="little", signed=True) & 0x7FFFFFFFFFFFFFFF)
 
           extensions = [{
-              "name": "티비위키",
+              "name": "TVroom",
               "pkg": real_pkg,
               "apk": target_apk,
               "lang": "ko",
@@ -167,7 +166,7 @@ jobs:
               with open(p, "w", encoding="utf-8") as f:
                   json.dump(extensions, f, ensure_ascii=False, separators=(',', ':'))
 
-          print(f"배포 완료: 이름 티비위키, 버전 {real_vname} (code: {real_vcode}), 패키지명: {real_pkg}")
+          print(f"배포 완료: 이름 TVroom, 버전 {real_vname} (code: {real_vcode}), 패키지명: {real_pkg}")
           EOF
 
       - name: Deploy to GitHub Pages
