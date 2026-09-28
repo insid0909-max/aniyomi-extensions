@@ -261,7 +261,7 @@ class TVroom : ParsedAnimeHttpSource() {
         val rawHlsUrl = episodeObj.optString("hls_url")
         val sessionDataList = listOfNotNull(episodeObj.opt("session_data1"), episodeObj.opt("session_data2"))
 
-        var sessionJson: JSONObject? = null
+        var acquiredSession: JSONObject? = null
         for (payload in sessionDataList) {
             val payloadStr = payload.toString()
 
@@ -280,10 +280,10 @@ class TVroom : ParsedAnimeHttpSource() {
                 val bridgeRes = client.newCall(POST("$bridgeBaseUrl/api/tvwiki-session", bridgeHeaders, reqBody)).execute()
                 val resJson = JSONObject(bridgeRes.body.string())
                 if (resJson.optBoolean("success", false) && resJson.has("player_url")) {
-                    sessionJson = resJson
+                    acquiredSession = resJson
                 }
             }
-            if (sessionJson != null) break
+            if (acquiredSession != null) break
 
             runCatching {
                 val directHeaders = Headers.Builder()
@@ -296,15 +296,13 @@ class TVroom : ParsedAnimeHttpSource() {
                 val directRes = client.newCall(POST("$baseUrl/api/create_session.php", directHeaders, reqBody)).execute()
                 val resJson = JSONObject(directRes.body.string())
                 if (resJson.optBoolean("success", false) && resJson.has("player_url")) {
-                    sessionJson = resJson
+                    acquiredSession = resJson
                 }
             }
-            if (sessionJson != null) break
+            if (acquiredSession != null) break
         }
 
-        if (sessionJson == null) {
-            return fallbackVideoParse(response)
-        }
+        val sessionJson = acquiredSession ?: return fallbackVideoParse(response)
 
         val rawPlayerUrl = sessionJson.getString("player_url")
         val sep = if (rawPlayerUrl.contains("?")) "&" else "?"
