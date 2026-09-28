@@ -1,6 +1,8 @@
 package eu.kanade.tachiyomi.animeextension.ko.tvroom
 
+import android.annotation.SuppressLint
 import android.app.Application
+import android.content.Context
 import android.content.SharedPreferences
 import android.util.Base64
 import android.widget.Toast
@@ -27,8 +29,6 @@ import okhttp3.Response
 import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.net.URLEncoder
 
 class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
@@ -37,14 +37,28 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override val lang = "ko"
     override val supportsLatest = true
 
+    // Injekt 의존성 없이 Android Application Context 직접 획득
+    @SuppressLint("PrivateApi")
     private val preferences: SharedPreferences by lazy {
-        Injekt.get<Application>().getSharedPreferences("source_$id", Application.MODE_PRIVATE)
+        val app = try {
+            Class.forName("android.app.ActivityThread")
+                .getMethod("currentApplication")
+                .invoke(null) as? Application
+        } catch (_: Throwable) {
+            null
+        }
+        app?.getSharedPreferences("source_$id", Context.MODE_PRIVATE)
+            ?: throw IllegalStateException("Context not available")
     }
 
     override val baseUrl: String
-        get() = preferences.getString(PREF_DOMAIN_KEY, DEFAULT_BASE_URL)
-            ?.takeIf { it.isNotBlank() }
-            ?: DEFAULT_BASE_URL
+        get() = try {
+            preferences.getString(PREF_DOMAIN_KEY, DEFAULT_BASE_URL)
+                ?.takeIf { it.isNotBlank() }
+                ?: DEFAULT_BASE_URL
+        } catch (_: Throwable) {
+            DEFAULT_BASE_URL
+        }
 
     override val client: OkHttpClient = network.client
 
