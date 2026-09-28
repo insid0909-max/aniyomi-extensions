@@ -78,6 +78,11 @@ jobs:
         run: |
           mkdir -p repo/anime repo/apk repo/icon
           
+          # Cloudflare Pages Functions가 배포되도록 functions 폴더 복사
+          if [ -d "functions" ]; then
+            cp -rv functions repo/
+          fi
+          
           ORIG_APK=$(find . -name "*.apk" -type f ! -path "./repo/*" | head -n 1)
           echo "Found APK: $ORIG_APK"
           
