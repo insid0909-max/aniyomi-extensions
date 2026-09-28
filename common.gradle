@@ -32,7 +32,7 @@ android {
     defaultConfig {
         minSdkVersion AndroidConfig.minSdk
         targetSdkVersion AndroidConfig.targetSdk
-        applicationId "eu.kanade.tachiyomi.animeextension." + project.parent.name + "." + project.name
+        applicationIdSuffix project.parent.name + "." + project.name
         versionCode theme == null ? extVersionCode : theme.baseVersionCode + overrideVersionCode
         versionName "14.2.$versionCode"
         base {
