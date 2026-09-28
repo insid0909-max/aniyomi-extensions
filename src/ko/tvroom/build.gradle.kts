@@ -4,7 +4,7 @@ plugins {
 }
 
 ext {
-    set("extName", "티비위키")
+    set("extName", "TVroom")
     set("extClass", ".TVroom")
     set("extVersionCode", 11)
 }
