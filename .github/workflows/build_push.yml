@@ -123,11 +123,12 @@ jobs:
           apk_path = os.path.join(repo_dir, target_apk)
           apk_size = os.path.getsize(apk_path) if os.path.exists(apk_path) else 0
 
+          # DC Media 규격과 동일하게 website를 Pages 루트 주소로 통일
           repo_data = {
               "meta": {
                   "name": "TVroom Repository",
                   "shortName": "TVroom",
-                  "website": "https://github.com/insid0909-max/aniyomi-extensions",
+                  "website": "https://aniyomi-extensions.pages.dev",
                   "signingKeyFingerprint": signing_key
               }
           }
@@ -136,9 +137,10 @@ jobs:
           with open(os.path.join(repo_dir, "anime", "repo.json"), "w", encoding="utf-8") as f:
               json.dump(repo_data, f, ensure_ascii=False, indent=2)
 
+          # 64비트 정수 오버플로 방지를 위해 source_id를 문자열(str)로 변환
           key = "티비위키/ko/1".encode("utf-8")
           digest = hashlib.md5(key).digest()
-          source_id = int.from_bytes(digest[:8], byteorder="little", signed=True) & 0x7FFFFFFFFFFFFFFF
+          source_id = str(int.from_bytes(digest[:8], byteorder="little", signed=True) & 0x7FFFFFFFFFFFFFFF)
 
           extensions = [{
               "name": "TVroom",
@@ -147,7 +149,7 @@ jobs:
               "lang": "ko",
               "code": real_vcode,
               "version": real_vname,
-              "nsfw": 0,
+              "nsfw": 1,
               "hasReadme": 0,
               "hasChangelog": 0,
               "size": apk_size,
