@@ -230,7 +230,7 @@ class TVroom : ParsedAnimeHttpSource() {
         return uniqueList
     }
 
-    // ============================== 비디오 재생 파싱 (핵심 직결) ==============================
+    // ============================== 비디오 재생 파싱 ==============================
     override fun videoListParse(response: Response): List<Video> {
         val episodePath = response.request.url.encodedPath
         val parts = episodePath.trim('/').split("/")
@@ -259,6 +259,8 @@ class TVroom : ParsedAnimeHttpSource() {
         var hlsUrl = episodeObj.optString("hls_url")
         val sessionData = episodeObj.opt("session_data1") ?: episodeObj.opt("session_data2")
 
+        var sessionCookie = ""
+
         if (sessionData != null) {
             runCatching {
                 val directReqBody = sessionData.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -269,8 +271,9 @@ class TVroom : ParsedAnimeHttpSource() {
                     .build()
 
                 val sessionResponse = client.newCall(POST("$baseUrl/api/create_session.php", directHeaders, directReqBody)).execute()
-                val sessionJson = JSONObject(sessionResponse.body.string())
+                sessionCookie = sessionResponse.headers("Set-Cookie").joinToString("; ") { it.substringBefore(";") }
 
+                val sessionJson = JSONObject(sessionResponse.body.string())
                 if (sessionJson.optBoolean("success", false)) {
                     val streamUrl = sessionJson.optString("hls_url").ifEmpty {
                         sessionJson.optString("url")
@@ -284,16 +287,19 @@ class TVroom : ParsedAnimeHttpSource() {
 
         val playlistUrl = fixUrl(hlsUrl)
 
-        val playHeaders = Headers.Builder()
+        val playHeadersBuilder = Headers.Builder()
             .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .add("Accept", "*/*")
             .add("Referer", "$baseUrl$episodePath")
             .add("Origin", baseUrl)
-            .build()
+
+        if (sessionCookie.isNotBlank()) {
+            playHeadersBuilder.add("Cookie", sessionCookie)
+        }
 
         val videoList = ArrayList<Video>()
         if (playlistUrl.isNotBlank() && playlistUrl != baseUrl) {
-            videoList.add(Video(playlistUrl, "고화질 스트리밍 (HLS)", playlistUrl, headers = playHeaders))
+            videoList.add(Video(playlistUrl, "고화질 스트리밍 (HLS)", playlistUrl, headers = playHeadersBuilder.build()))
         }
 
         return if (videoList.isNotEmpty()) videoList else fallbackVideoParse(response)
