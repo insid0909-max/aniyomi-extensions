@@ -7,5 +7,9 @@
             android:name="tachiyomi.animeextension.class"
             android:value="eu.kanade.tachiyomi.animeextension.ko.tvroom.TVroom"
             tools:replace="android:value" />
+        <meta-data
+            android:name="tachiyomi.animeextension.version"
+            android:value="14"
+            tools:replace="android:value" />
     </application>
 </manifest>
