@@ -62,11 +62,11 @@ jobs:
         run: |
           mkdir -p repo/anime
           
-          # 실제 빌드된 원본 apk 찾기 (예: aniyomi-.tvroom-v14.2-release.apk)
+          # 빌드된 APK 파일 탐색
           ORIG_APK=$(find . -name "*.apk" -type f ! -path "./repo/*" | head -n 1)
           echo "Found original APK: $ORIG_APK"
           
-          # 규격에 맞는 정상 파일명으로 복사
+          # Aniyomi 공식 표준 파일명으로 복사
           TARGET_APK="aniyomi-ko.tvroom-v14.2-release.apk"
           cp -v "$ORIG_APK" "repo/$TARGET_APK"
           cp -v "$ORIG_APK" "repo/anime/$TARGET_APK"
@@ -78,6 +78,8 @@ jobs:
           repo_dir = "repo"
           signing_key = os.environ.get("SIGNING_KEY", "")
           target_apk = "aniyomi-ko.tvroom-v14.2-release.apk"
+          apk_path = os.path.join(repo_dir, target_apk)
+          apk_size = os.path.getsize(apk_path) if os.path.exists(apk_path) else 0
 
           # 1. repo.json 생성
           repo_data = {
@@ -93,7 +95,7 @@ jobs:
           with open(os.path.join(repo_dir, "anime", "repo.json"), "w", encoding="utf-8") as fp:
               json.dump(repo_data, fp, ensure_ascii=False, indent=2)
 
-          # 2. DC Toki 규격 및 실제 APK 버전(14.2)과 1:1 일치하는 인덱스
+          # 2. Aniyomi 코어 전체 스키마 준수 index.min.json 생성
           extensions = [{
               "name": "Aniyomi: TVroom",
               "pkg": "eu.kanade.tachiyomi.animeextension.ko.tvroom",
@@ -102,6 +104,9 @@ jobs:
               "code": 11,
               "version": "14.2",
               "nsfw": 0,
+              "hasReadme": 0,
+              "hasChangelog": 0,
+              "size": apk_size,
               "sources": [
                   {
                       "name": "TVroom",
@@ -118,7 +123,7 @@ jobs:
               with open(p, "w", encoding="utf-8") as fp:
                   json.dump(extensions, fp, ensure_ascii=False, separators=(',', ':'))
 
-          print("Generated clean repo.json and index.min.json successfully.")
+          print(f"Generated complete index.min.json (size: {apk_size})")
           EOF
 
           python3 generate_index.py
