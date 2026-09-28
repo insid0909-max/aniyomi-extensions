@@ -1,8 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.ko.tvroom
 
-import android.annotation.SuppressLint
 import android.app.Application
-import android.content.Context
 import android.content.SharedPreferences
 import android.util.Base64
 import android.widget.Toast
@@ -37,28 +35,22 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override val lang = "ko"
     override val supportsLatest = true
 
-    // Injekt 의존성 없이 Android Application Context 직접 획득
-    @SuppressLint("PrivateApi")
-    private val preferences: SharedPreferences by lazy {
-        val app = try {
-            Class.forName("android.app.ActivityThread")
-                .getMethod("currentApplication")
-                .invoke(null) as? Application
-        } catch (_: Throwable) {
-            null
-        }
-        app?.getSharedPreferences("source_$id", Context.MODE_PRIVATE)
-            ?: throw IllegalStateException("Context not available")
+    // 안드로이드 기본 프레임워크 리플렉션으로 안전하게 SharedPreferences 획득 (어노테이션 미사용)
+    private fun getAppPreferences(): SharedPreferences? {
+        return runCatching {
+            val actThreadClass = Class.forName("android.app.ActivityThread")
+            val currentAppMethod = actThreadClass.getMethod("currentApplication")
+            val app = currentAppMethod.invoke(null) as? Application
+            app?.getSharedPreferences("source_$id", 0) // 0 = Context.MODE_PRIVATE
+        }.getOrNull()
     }
 
     override val baseUrl: String
-        get() = try {
-            preferences.getString(PREF_DOMAIN_KEY, DEFAULT_BASE_URL)
+        get() = runCatching {
+            getAppPreferences()?.getString(PREF_DOMAIN_KEY, DEFAULT_BASE_URL)
                 ?.takeIf { it.isNotBlank() }
                 ?: DEFAULT_BASE_URL
-        } catch (_: Throwable) {
-            DEFAULT_BASE_URL
-        }
+        }.getOrDefault(DEFAULT_BASE_URL)
 
     override val client: OkHttpClient = network.client
 
@@ -460,13 +452,14 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
             setOnPreferenceChangeListener { _, newValue ->
                 val newUrl = (newValue as String).trim().trimEnd('/')
+                val prefs = getAppPreferences()
                 if (newUrl.isBlank()) {
-                    preferences.edit().putString(PREF_DOMAIN_KEY, DEFAULT_BASE_URL).apply()
+                    prefs?.edit()?.putString(PREF_DOMAIN_KEY, DEFAULT_BASE_URL)?.apply()
                     summary = "빈 값이면 기본 주소를 사용합니다.\n현재 주소: $DEFAULT_BASE_URL"
                     Toast.makeText(screen.context, "기본 주소로 초기화되었습니다.", Toast.LENGTH_SHORT).show()
                     true
                 } else if (newUrl.matches(Regex("""^https://tvwiki\d+\.net$"""))) {
-                    preferences.edit().putString(PREF_DOMAIN_KEY, newUrl).apply()
+                    prefs?.edit()?.putString(PREF_DOMAIN_KEY, newUrl)?.apply()
                     summary = "빈 값이면 기본 주소를 사용합니다.\n현재 주소: $newUrl"
                     Toast.makeText(screen.context, "주소가 변경되었습니다: $newUrl", Toast.LENGTH_SHORT).show()
                     true
