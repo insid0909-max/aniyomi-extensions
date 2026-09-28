@@ -25,48 +25,49 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      - name: Prepare signing key
+      - name: Prepare fixed signing key
         run: |
-          keytool -genkey -v -keystore "$GITHUB_WORKSPACE/signingkey.jks" -alias aniyomi -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=aniyomi, OU=aniyomi, O=aniyomi, L=Unknown, S=Unknown, C=Unknown"
-          cp "$GITHUB_WORKSPACE/signingkey.jks" src/ko/tvroom/signingkey.jks || true
+          # 고정된 키가 없으면 생성, 있으면 재사용
+          KEYSTORE_PATH="$GITHUB_WORKSPACE/keystore.jks"
+          if [ ! -f "$KEYSTORE_PATH" ]; then
+            keytool -genkey -v -keystore "$KEYSTORE_PATH" -alias aniyomi -keyalg RSA -keysize 2048 -validity 10000 -storepass "aniyomi123" -keypass "aniyomi123" -dname "CN=aniyomi, OU=aniyomi, O=aniyomi, L=Unknown, S=Unknown, C=Unknown"
+          fi
           
-          # 서명 지문 추출
-          SIGNING_KEY=$(keytool -list -v -keystore "$GITHUB_WORKSPACE/signingkey.jks" -alias aniyomi -storepass password | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          # SHA-256 지문 추출
+          SIGNING_KEY=$(keytool -list -v -keystore "$KEYSTORE_PATH" -alias aniyomi -storepass "aniyomi123" | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
           echo "SIGNING_KEY=$SIGNING_KEY" >> $GITHUB_ENV
-          echo "Extracted SHA-256 Fingerprint: $SIGNING_KEY"
+          echo "Fixed SHA-256 Fingerprint: $SIGNING_KEY"
 
       - name: Build extensions
         env:
           CI_CHUNK_NUM: 0
           CI_CHUNK_SIZE: 1
-          CI_SIGNING_KEY: signingkey.jks
+          CI_SIGNING_KEY: keystore.jks
           CI_SIGNING_KEY_ALIAS: aniyomi
-          CI_SIGNING_KEY_PASSWORD: password
-          CI_SIGNING_STORE_PASSWORD: password
-          SIGNING_STORE_PASSWORD: password
-          SIGNING_KEY_PASSWORD: password
+          CI_SIGNING_KEY_PASSWORD: aniyomi123
+          CI_SIGNING_STORE_PASSWORD: aniyomi123
+          SIGNING_STORE_PASSWORD: aniyomi123
+          SIGNING_KEY_PASSWORD: aniyomi123
           SIGNING_KEY_ALIAS: aniyomi
         run: |
           ./gradlew :src:ko:tvroom:assembleRelease \
-            -PsigningStorePassword=password \
-            -PsigningKeyPassword=password \
-            -PsigningKeyAlias=aniyomi \
-            -PsigningStoreFile="$GITHUB_WORKSPACE/signingkey.jks" \
-            -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/signingkey.jks" \
-            -Pandroid.injected.signing.store.password=password \
-            -Pandroid.injected.signing.key.alias=aniyomi \
-            -Pandroid.injected.signing.key.password=password \
+            -PsigningStorePassword="aniyomi123" \
+            -PsigningKeyPassword="aniyomi123" \
+            -PsigningKeyAlias="aniyomi" \
+            -PsigningStoreFile="$GITHUB_WORKSPACE/keystore.jks" \
+            -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/keystore.jks" \
+            -Pandroid.injected.signing.store.password="aniyomi123" \
+            -Pandroid.injected.signing.key.alias="aniyomi" \
+            -Pandroid.injected.signing.key.password="aniyomi123" \
             --stacktrace
 
       - name: Prepare repo, icon and index
         run: |
           mkdir -p repo/anime repo/apk repo/icon
           
-          # 실제 빌드된 원본 APK 탐색
           ORIG_APK=$(find . -name "*.apk" -type f ! -path "./repo/*" | head -n 1)
           echo "Found original APK: $ORIG_APK"
           
-          # 기기에 설치된 실제 버전(14.2)과 동일하게 파일명 매핑
           TARGET_APK="aniyomi-ko.tvroom-v14.2-release.apk"
           PKG_NAME="eu.kanade.tachiyomi.animeextension.ko.tvroom"
           
@@ -74,7 +75,7 @@ jobs:
           cp -v "$ORIG_APK" "repo/anime/$TARGET_APK"
           cp -v "$ORIG_APK" "repo/apk/$TARGET_APK"
           
-          # APK 내부에서 아이콘 추출 후 저장소 경로에 복사
+          # 아이콘 복사
           unzip -p "$ORIG_APK" "res/9w.png" > "repo/icon/${PKG_NAME}.png" || true
           cp -v "repo/icon/${PKG_NAME}.png" "repo/${PKG_NAME}.png" || true
           cp -v "repo/icon/${PKG_NAME}.png" "repo/anime/${PKG_NAME}.png" || true
@@ -102,9 +103,9 @@ jobs:
           with open(os.path.join(repo_dir, "anime", "repo.json"), "w", encoding="utf-8") as fp:
               json.dump(repo_data, fp, ensure_ascii=False, indent=2)
 
-          # 2. 폰에 설치된 버전과 완전히 일치시킴 (code: 2, version: 14.2)
+          # 2. index.min.json
           extensions = [{
-              "name": "Aniyomi: TVroom",
+              "name": "TVroom",
               "pkg": "eu.kanade.tachiyomi.animeextension.ko.tvroom",
               "apk": target_apk,
               "lang": "ko",
@@ -126,12 +127,11 @@ jobs:
               ]
           }]
 
-          # 루트 및 anime 하위 양쪽에 index.min.json 배포
           for p in [os.path.join(repo_dir, "index.min.json"), os.path.join(repo_dir, "anime", "index.min.json")]:
               with open(p, "w", encoding="utf-8") as fp:
                   json.dump(extensions, fp, ensure_ascii=False, separators=(',', ':'))
 
-          print(f"Index successfully matched with installed app (code: 2, version: 14.2, size: {apk_size})")
+          print(f"Build complete. Fingerprint: {signing_key}")
           EOF
 
           python3 generate_index.py
