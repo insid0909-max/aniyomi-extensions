@@ -7,6 +7,7 @@ ext {
     set("extName", "TVroom")
     set("extClass", ".TVroom")
     set("extVersionCode", 11)
+    set("libVersion", "14")
 }
 
 apply(from = "$rootDir/common.gradle")
