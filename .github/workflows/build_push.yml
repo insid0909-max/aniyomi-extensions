@@ -30,7 +30,6 @@ jobs:
           keytool -genkey -v -keystore "$GITHUB_WORKSPACE/signingkey.jks" -alias aniyomi -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=aniyomi, OU=aniyomi, O=aniyomi, L=Unknown, S=Unknown, C=Unknown"
           cp "$GITHUB_WORKSPACE/signingkey.jks" src/ko/tvroom/signingkey.jks || true
           
-          # Signing key fingerprint extract karne
           SIGNING_KEY=$(keytool -list -v -keystore "$GITHUB_WORKSPACE/signingkey.jks" -alias aniyomi -storepass password | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
           echo "SIGNING_KEY=$SIGNING_KEY" >> $GITHUB_ENV
           echo "Extracted SHA-256 Fingerprint: $SIGNING_KEY"
@@ -58,24 +57,33 @@ jobs:
             -Pandroid.injected.signing.key.password=password \
             --stacktrace
 
-      - name: Prepare repo and index
+      - name: Prepare repo, icon and index
         run: |
-          mkdir -p repo/anime
+          mkdir -p repo/anime repo/apk repo/icon
           
+          # 실제 빌드된 APK 파일 탐색
           ORIG_APK=$(find . -name "*.apk" -type f ! -path "./repo/*" | head -n 1)
           echo "Found original APK: $ORIG_APK"
           
-          TARGET_APK="aniyomi-ko.tvroom-v14.2-release.apk"
+          # 표준 파일명으로 지정 복사 (14.11)
+          TARGET_APK="aniyomi-ko.tvroom-v14.11-release.apk"
+          PKG_NAME="eu.kanade.tachiyomi.animeextension.ko.tvroom"
+          
           cp -v "$ORIG_APK" "repo/$TARGET_APK"
           cp -v "$ORIG_APK" "repo/anime/$TARGET_APK"
-          ls -la repo/
+          cp -v "$ORIG_APK" "repo/apk/$TARGET_APK"
+          
+          # APK 내부에서 아이콘(res/9w.png)을 추출하여 icon/ 및 repo 루트에 배치
+          unzip -p "$ORIG_APK" "res/9w.png" > "repo/icon/${PKG_NAME}.png" || true
+          cp -v "repo/icon/${PKG_NAME}.png" "repo/${PKG_NAME}.png" || true
+          cp -v "repo/icon/${PKG_NAME}.png" "repo/anime/${PKG_NAME}.png" || true
 
           cat << 'EOF' > generate_index.py
           import os, json
 
           repo_dir = "repo"
           signing_key = os.environ.get("SIGNING_KEY", "")
-          target_apk = "aniyomi-ko.tvroom-v14.2-release.apk"
+          target_apk = "aniyomi-ko.tvroom-v14.11-release.apk"
           apk_path = os.path.join(repo_dir, target_apk)
           apk_size = os.path.getsize(apk_path) if os.path.exists(apk_path) else 0
 
@@ -93,18 +101,19 @@ jobs:
           with open(os.path.join(repo_dir, "anime", "repo.json"), "w", encoding="utf-8") as fp:
               json.dump(repo_data, fp, ensure_ascii=False, indent=2)
 
-          # 2. code 2 ani version 14.2 match kelela index
+          # 2. extVersionCode 11, libVersion 14와 정확히 일치하는 인덱스 스펙
           extensions = [{
               "name": "Aniyomi: TVroom",
               "pkg": "eu.kanade.tachiyomi.animeextension.ko.tvroom",
               "apk": target_apk,
               "lang": "ko",
-              "code": 2,
-              "version": "14.2",
+              "code": 11,
+              "version": "14.11",
               "nsfw": 0,
               "hasReadme": 0,
               "hasChangelog": 0,
               "size": apk_size,
+              "icon": "eu.kanade.tachiyomi.animeextension.ko.tvroom.png",
               "sources": [
                   {
                       "name": "TVroom",
@@ -116,11 +125,12 @@ jobs:
               ]
           }]
 
+          # 루트 및 anime 양쪽 배포
           for p in [os.path.join(repo_dir, "index.min.json"), os.path.join(repo_dir, "anime", "index.min.json")]:
               with open(p, "w", encoding="utf-8") as fp:
                   json.dump(extensions, fp, ensure_ascii=False, separators=(',', ':'))
 
-          print(f"Generated index.min.json (code: 2, version: 14.2, size: {apk_size})")
+          print(f"Index successfully created with code: 11, version: 14.11, size: {apk_size}")
           EOF
 
           python3 generate_index.py
