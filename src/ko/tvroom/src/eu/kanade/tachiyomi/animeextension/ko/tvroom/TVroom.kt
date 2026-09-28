@@ -10,7 +10,10 @@ import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
+import okhttp3.Cookie
+import okhttp3.CookieJar
 import okhttp3.Headers
+import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -28,10 +31,27 @@ class TVroom : ParsedAnimeHttpSource() {
     override val lang = "ko"
     override val supportsLatest = true
 
-    override val client: OkHttpClient = network.client
+    // 세션 유지를 위한 인메모리 쿠키 저장소
+    private val cookieStore = HashMap<String, MutableList<Cookie>>()
+
+    override val client: OkHttpClient = network.client.newBuilder()
+        .cookieJar(object : CookieJar {
+            override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+                val list = cookieStore.getOrPut(url.host) { ArrayList() }
+                list.removeAll { old -> cookies.any { it.name == old.name } }
+                list.addAll(cookies)
+            }
+
+            override fun loadForRequest(url: HttpUrl): List<Cookie> {
+                return cookieStore[url.host] ?: emptyList()
+            }
+        })
+        .build()
+
+    private val userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
-        .add("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1")
+        .add("User-Agent", userAgent)
         .add("Referer", "$baseUrl/")
 
     // ============================== 인기 목록 ==============================
@@ -246,7 +266,7 @@ class TVroom : ParsedAnimeHttpSource() {
         val metaUrl = "$baseUrl/bbs/get_episode.php?bo_table=$boTable&wr_id=$wrId&ep_idx=$epIdx"
         val metaHeaders = headersBuilder()
             .set("Referer", "$baseUrl$episodePath")
-            .set("Accept", "application/json")
+            .set("Accept", "application/json, text/javascript, */*; q=0.01")
             .set("X-Requested-With", "XMLHttpRequest")
             .build()
 
@@ -285,24 +305,25 @@ class TVroom : ParsedAnimeHttpSource() {
 
         val playlistUrl = fixUrl(hlsUrl)
 
-        // 3. 브라우저/웹뷰 루트 Referer 기반 기본 헤더
-        val playHeaders = Headers.Builder()
-            .add("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1")
-            .add("Referer", "$baseUrl/")
-            .add("Origin", baseUrl)
-            .build()
+        // 저장된 전체 쿠키 문자열 조합 (PHPSESSID 등)
+        val baseHttpUrl = HttpUrl.parse(baseUrl)!!
+        val cookies = client.cookieJar.loadForRequest(baseHttpUrl)
+        val cookieHeader = cookies.joinToString("; ") { "${it.name}=${it.value}" }
+
+        // 웹뷰와 동일한 재생 헤더 구성
+        val playHeadersBuilder = Headers.Builder()
+            .add("User-Agent", userAgent)
+            .add("Referer", "$baseUrl$episodePath")
+
+        if (cookieHeader.isNotBlank()) {
+            playHeadersBuilder.add("Cookie", cookieHeader)
+        }
+
+        val playHeaders = playHeadersBuilder.build()
 
         val videoList = ArrayList<Video>()
         if (playlistUrl.isNotBlank() && playlistUrl != baseUrl) {
-            // 기본 HLS 스트림 (루트 Referer)
             videoList.add(Video(playlistUrl, "고화질 스트리밍 (HLS)", playlistUrl, headers = playHeaders))
-
-            // 403 대응 대체 스트림 (회차 페이지 Referer)
-            val directHeaders = Headers.Builder()
-                .add("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1")
-                .add("Referer", "$baseUrl$episodePath")
-                .build()
-            videoList.add(Video(playlistUrl, "고화질 스트리밍 (대체)", playlistUrl, headers = directHeaders))
         }
 
         return if (videoList.isNotEmpty()) videoList else fallbackVideoParse(response)
