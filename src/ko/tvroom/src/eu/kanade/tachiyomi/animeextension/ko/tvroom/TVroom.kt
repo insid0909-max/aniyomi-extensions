@@ -1,6 +1,12 @@
 package eu.kanade.tachiyomi.animeextension.ko.tvroom
 
+import android.app.Application
+import android.content.SharedPreferences
 import android.util.Base64
+import android.widget.Toast
+import androidx.preference.EditTextPreference
+import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
@@ -21,14 +27,24 @@ import okhttp3.Response
 import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.net.URLEncoder
 
-class TVroom : ParsedAnimeHttpSource() {
+class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     override val name = "티비위키"
-    override val baseUrl = "https://tvwiki51.net"
     override val lang = "ko"
     override val supportsLatest = true
+
+    private val preferences: SharedPreferences by lazy {
+        Injekt.get<Application>().getSharedPreferences("source_$id", Application.MODE_PRIVATE)
+    }
+
+    override val baseUrl: String
+        get() = preferences.getString(PREF_DOMAIN_KEY, DEFAULT_BASE_URL)
+            ?.takeIf { it.isNotBlank() }
+            ?: DEFAULT_BASE_URL
 
     override val client: OkHttpClient = network.client
 
@@ -419,6 +435,36 @@ class TVroom : ParsedAnimeHttpSource() {
         ModeFilter(MODES),
     )
 
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        val domainPref = EditTextPreference(screen.context).apply {
+            key = PREF_DOMAIN_KEY
+            title = "티비위키 주소 직접 지정 (선택)"
+            summary = "빈 값이면 기본 주소를 사용합니다.\n현재 주소: $baseUrl"
+            dialogTitle = "기본값: $DEFAULT_BASE_URL"
+            dialogMessage = "https://tvwiki숫자.net 형식의 HTTPS 주소만 허용됩니다."
+            setDefaultValue(DEFAULT_BASE_URL)
+
+            setOnPreferenceChangeListener { _, newValue ->
+                val newUrl = (newValue as String).trim().trimEnd('/')
+                if (newUrl.isBlank()) {
+                    preferences.edit().putString(PREF_DOMAIN_KEY, DEFAULT_BASE_URL).apply()
+                    summary = "빈 값이면 기본 주소를 사용합니다.\n현재 주소: $DEFAULT_BASE_URL"
+                    Toast.makeText(screen.context, "기본 주소로 초기화되었습니다.", Toast.LENGTH_SHORT).show()
+                    true
+                } else if (newUrl.matches(Regex("""^https://tvwiki\d+\.net$"""))) {
+                    preferences.edit().putString(PREF_DOMAIN_KEY, newUrl).apply()
+                    summary = "빈 값이면 기본 주소를 사용합니다.\n현재 주소: $newUrl"
+                    Toast.makeText(screen.context, "주소가 변경되었습니다: $newUrl", Toast.LENGTH_SHORT).show()
+                    true
+                } else {
+                    Toast.makeText(screen.context, "올바른 주소 형식이 아닙니다 (예: https://tvwiki51.net)", Toast.LENGTH_LONG).show()
+                    false
+                }
+            }
+        }
+        screen.addPreference(domainPref)
+    }
+
     class CategoryFilter(categories: Array<Pair<String, String>>) :
         AnimeFilter.Select<String>("카테고리", categories.map { it.first }.toTypedArray())
 
@@ -429,6 +475,9 @@ class TVroom : ParsedAnimeHttpSource() {
         AnimeFilter.Select<String>("정렬 방식", modes.map { it.first }.toTypedArray())
 
     companion object {
+        private const val PREF_DOMAIN_KEY = "pref_domain_key"
+        private const val DEFAULT_BASE_URL = "https://tvwiki51.net"
+
         private val CATEGORIES = arrayOf(
             Pair("전체", "all"),
             Pair("영화", "movie"),
