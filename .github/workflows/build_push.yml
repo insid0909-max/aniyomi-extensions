@@ -30,7 +30,7 @@ jobs:
           keytool -genkey -v -keystore "$GITHUB_WORKSPACE/signingkey.jks" -alias aniyomi -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=aniyomi, OU=aniyomi, O=aniyomi, L=Unknown, S=Unknown, C=Unknown"
           cp "$GITHUB_WORKSPACE/signingkey.jks" src/ko/tvroom/signingkey.jks || true
           
-          # 키스토어에서 애니요미가 요구하는 SHA-256 지문(소문자 64자리) 추출
+          # 키스토어에서 Aniyomi가 요구하는 SHA-256 서명 지문 추출
           SIGNING_KEY=$(keytool -list -v -keystore "$GITHUB_WORKSPACE/signingkey.jks" -alias aniyomi -storepass password | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
           echo "SIGNING_KEY=$SIGNING_KEY" >> $GITHUB_ENV
           echo "Extracted SHA-256 Fingerprint: $SIGNING_KEY"
@@ -73,18 +73,14 @@ jobs:
           signing_key = os.environ.get("SIGNING_KEY", "")
           extensions = []
 
-          # 1. repo.json 생성 (추출된 signingKey 자동 반영)
+          # 1. Aniyomi 0.18.x 최신 표준 repo.json 생성 (meta 구조)
           repo_data = {
-              "name": "TVroom Repository",
-              "shortName": "TVroom",
-              "website": "https://github.com/insid0909-max/aniyomi-extensions",
-              "baseUrl": "https://aniyomi-extensions.pages.dev",
-              "badgeLabel": "TVroom",
-              "signingKey": signing_key,
-              "contact": {
-                  "website": "https://github.com/insid0909-max/aniyomi-extensions"
-              },
-              "index_v2": "https://aniyomi-extensions.pages.dev/anime/index.min.json"
+              "meta": {
+                  "name": "TVroom Repository",
+                  "shortName": "TVroom",
+                  "website": "https://github.com/insid0909-max/aniyomi-extensions",
+                  "signingKeyFingerprint": signing_key
+              }
           }
           with open(os.path.join(repo_dir, "repo.json"), "w", encoding="utf-8") as fp:
               json.dump(repo_data, fp, ensure_ascii=False, indent=2)
@@ -120,7 +116,7 @@ jobs:
           with open(os.path.join(repo_dir, "anime", "index.min.json"), "w", encoding="utf-8") as fp:
               json.dump(extensions, fp, ensure_ascii=False, indent=2)
 
-          print(f"Generated repo.json with signingKey: {signing_key}")
+          print(f"Generated repo.json with fingerprint: {signing_key}")
           print(f"Generated index with {len(extensions)} extensions")
           EOF
 
