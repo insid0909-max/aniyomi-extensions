@@ -4,7 +4,7 @@
   "website": "https://github.com/insid0909-max/aniyomi-extensions",
   "baseUrl": "https://aniyomi-extensions.pages.dev",
   "badgeLabel": "TVroom",
-  "signingKey": "",
+  "signingKey": "a9dd4411a7f28991c479eec26df61fcf558670236d7691c3495d60d7b14580d5",
   "contact": {
     "website": "https://github.com/insid0909-max/aniyomi-extensions"
   },
