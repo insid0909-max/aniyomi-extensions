@@ -33,17 +33,28 @@ class TVroom : ParsedAnimeHttpSource() {
         GET("$baseUrl/popular?page=$page", headers)
 
     override fun popularAnimeSelector(): String =
-        "div.list-item, div.post-item, div.item, ul.list > li, div.video-item"
+        "a[href~=^/(movie|kor_movie|ani_movie|drama|ent)/\\d+], a[href*='/ent/'], a[href*='/movie/'], div.list-item, div.item"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        val link = element.selectFirst("a")
-        setUrlWithoutDomain(link?.attr("href") ?: "")
-        title = element.selectFirst(".title, h2, h3, .name")?.text()?.trim()
-            ?: link?.text()?.trim()
-            ?: "제목 없음"
+        val link = if (element.tagName() == "a") element else (element.selectFirst("a") ?: element)
+        setUrlWithoutDomain(link.attr("href"))
+
+        title = link.attr("title").ifEmpty {
+            element.selectFirst(".title, .subject, .name, h2, h3, h4, h5, p, span")?.text()?.trim()
+                ?: link.text().trim()
+        }.ifEmpty { "제목 없음" }
+
         thumbnail_url = element.selectFirst("img")?.let { img ->
-            val src = img.attr("data-src").ifEmpty { img.attr("src") }
-            if (src.startsWith("//")) "https:$src" else if (src.startsWith("/")) "$baseUrl$src" else src
+            val src = img.attr("data-src").ifEmpty {
+                img.attr("data-original").ifEmpty {
+                    img.attr("src")
+                }
+            }
+            when {
+                src.startsWith("//") -> "https:$src"
+                src.startsWith("/") -> "$baseUrl$src"
+                else -> src
+            }
         }
     }
 
