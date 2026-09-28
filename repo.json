@@ -1,9 +1,0 @@
-{
-  "index_v2": "https://aniyomi-extensions.pages.dev/anime/index.min.json",
-  "meta": {
-    "name": "TVroom Media",
-    "shortName": "TVroom",
-    "website": "https://github.com/insid0909-max/aniyomi-extensions",
-    "signingKeyFingerprint": "62cd808b3c9a2ba9c556f5944cf07bce98822f86bce455dc5996152b78592e6e"
-  }
-}
