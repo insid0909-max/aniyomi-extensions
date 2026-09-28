@@ -61,25 +61,25 @@ jobs:
       - name: Prepare repo and index
         run: |
           mkdir -p repo/anime
-          find . -name "*.apk" -type f ! -path "./repo/*" -exec cp -v {} repo/ \;
-          find . -name "*.apk" -type f ! -path "./repo/*" -exec cp -v {} repo/anime/ \;
+          
+          # 실제 빌드된 원본 apk 찾기 (예: aniyomi-.tvroom-v14.2-release.apk)
+          ORIG_APK=$(find . -name "*.apk" -type f ! -path "./repo/*" | head -n 1)
+          echo "Found original APK: $ORIG_APK"
+          
+          # 규격에 맞는 정상 파일명으로 복사
+          TARGET_APK="aniyomi-ko.tvroom-v14.2-release.apk"
+          cp -v "$ORIG_APK" "repo/$TARGET_APK"
+          cp -v "$ORIG_APK" "repo/anime/$TARGET_APK"
           ls -la repo/
 
           cat << 'EOF' > generate_index.py
-          import os, shutil, json
+          import os, json
 
           repo_dir = "repo"
           signing_key = os.environ.get("SIGNING_KEY", "")
+          target_apk = "aniyomi-ko.tvroom-v14.2-release.apk"
 
-          # 실제 빌드된 APK 파일명 탐색 및 복사
-          apk_files = [f for f in os.listdir(repo_dir) if f.endswith(".apk")]
-          orig_apk = apk_files[0] if apk_files else "aniyomi-ko.tvroom-v14.11-release.apk"
-          target_apk = "aniyomi-ko.tvroom-v14.11-release.apk"
-
-          shutil.copy2(os.path.join(repo_dir, orig_apk), os.path.join(repo_dir, target_apk))
-          shutil.copy2(os.path.join(repo_dir, orig_apk), os.path.join(repo_dir, "anime", target_apk))
-
-          # 1. repo.json
+          # 1. repo.json 생성
           repo_data = {
               "meta": {
                   "name": "TVroom Repository",
@@ -93,14 +93,14 @@ jobs:
           with open(os.path.join(repo_dir, "anime", "repo.json"), "w", encoding="utf-8") as fp:
               json.dump(repo_data, fp, ensure_ascii=False, indent=2)
 
-          # 2. DC Toki와 동일한 규격 (code 11, version 14.11, id 정수형)
+          # 2. DC Toki 규격 및 실제 APK 버전(14.2)과 1:1 일치하는 인덱스
           extensions = [{
               "name": "Aniyomi: TVroom",
               "pkg": "eu.kanade.tachiyomi.animeextension.ko.tvroom",
               "apk": target_apk,
               "lang": "ko",
               "code": 11,
-              "version": "14.11",
+              "version": "14.2",
               "nsfw": 0,
               "sources": [
                   {
