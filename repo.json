@@ -1,8 +1,6 @@
 {
   "name": "내 애니요미 확장",
   "badgeLabel": "공식",
-  "signingKey": "",
-  "contact": {
-    "website": "https://github.com/insid0909-max/aniyomi-extensions"
-  }
+  "signingKey": "no-info",
+  "contact": "https://github.com/insid0909-max/aniyomi-extensions"
 }
