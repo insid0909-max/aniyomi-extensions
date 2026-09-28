@@ -3,5 +3,10 @@
   "shortName": "TVroom",
   "website": "https://github.com/insid0909-max/aniyomi-extensions",
   "baseUrl": "https://aniyomi-extensions.pages.dev",
+  "badgeLabel": "TVroom",
+  "signingKey": "",
+  "contact": {
+    "website": "https://github.com/insid0909-max/aniyomi-extensions"
+  },
   "index_v2": "https://aniyomi-extensions.pages.dev/index.min.json"
 }
