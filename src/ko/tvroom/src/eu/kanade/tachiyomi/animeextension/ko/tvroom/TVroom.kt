@@ -35,7 +35,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override val lang = "ko"
     override val supportsLatest = true
 
-    // 안드로이드 기본 프레임워크 리플렉션으로 안전하게 SharedPreferences 획득 (어노테이션 미사용)
+    // 안드로이드 기본 프레임워크 리플렉션으로 안전하게 SharedPreferences 획득 (Injekt 의존성 없음)
     private fun getAppPreferences(): SharedPreferences? {
         return runCatching {
             val actThreadClass = Class.forName("android.app.ActivityThread")
@@ -46,11 +46,48 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     override val baseUrl: String
-        get() = runCatching {
-            getAppPreferences()?.getString(PREF_DOMAIN_KEY, DEFAULT_BASE_URL)
+        get() {
+            val prefs = getAppPreferences()
+
+            // 1순위: 사용자가 직접 지정한 도메인이 있으면 최우선 적용
+            val customUrl = prefs?.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/')
+            if (!customUrl.isNullOrBlank()) {
+                return customUrl
+            }
+
+            // 2순위: 10분 이내 조회한 메모리 캐시가 유효하면 네트워크 요청 없이 즉시 반환
+            val now = System.currentTimeMillis()
+            if (cachedDomain != null && now - lastFetchTime < CACHE_TTL_MS) {
+                return cachedDomain!!
+            }
+
+            // 3순위: 중앙신호등 API 조회
+            val fetchedUrl = runCatching {
+                val req = Request.Builder()
+                    .url(SIGNAL_URL)
+                    .header("User-Agent", defaultUserAgent)
+                    .header("Accept", "application/json")
+                    .build()
+                val res = client.newCall(req).execute()
+                val body = res.body.string()
+                val json = JSONObject(body)
+                json.optString("tvwiki").takeIf { it.isNotBlank() }
+            }.getOrNull()
+
+            if (!fetchedUrl.isNullOrBlank()) {
+                val cleanUrl = fetchedUrl.trim().trimEnd('/')
+                cachedDomain = cleanUrl
+                lastFetchTime = now
+                // 성공한 주소를 마지막 정상 주소로 로컬 영구 저장
+                prefs?.edit()?.putString(PREF_LAST_GOOD_DOMAIN_KEY, cleanUrl)?.apply()
+                return cleanUrl
+            }
+
+            // 4순위: 신호등 실패 시 마지막 정상 주소 복구 -> 없으면 하드코딩 기본값
+            return prefs?.getString(PREF_LAST_GOOD_DOMAIN_KEY, DEFAULT_BASE_URL)
                 ?.takeIf { it.isNotBlank() }
                 ?: DEFAULT_BASE_URL
-        }.getOrDefault(DEFAULT_BASE_URL)
+        }
 
     override val client: OkHttpClient = network.client
 
@@ -445,22 +482,23 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         val domainPref = EditTextPreference(screen.context).apply {
             key = PREF_DOMAIN_KEY
             title = "티비위키 주소 직접 지정 (선택)"
-            summary = "빈 값이면 기본 주소를 사용합니다.\n현재 주소: $baseUrl"
+            summary = "빈 값이면 중앙신호등의 최신 주소를 사용하고, 실패하면 마지막 정상 주소로 복구합니다.\n현재 주소: $baseUrl"
             dialogTitle = "기본값: $DEFAULT_BASE_URL"
-            dialogMessage = "https://tvwiki숫자.net 형식의 HTTPS 주소만 허용됩니다."
-            setDefaultValue(DEFAULT_BASE_URL)
+            dialogMessage = "tvwiki숫자.net 형식의 HTTPS 주소만 허용됩니다."
+            setDefaultValue("")
 
             setOnPreferenceChangeListener { _, newValue ->
                 val newUrl = (newValue as String).trim().trimEnd('/')
                 val prefs = getAppPreferences()
                 if (newUrl.isBlank()) {
-                    prefs?.edit()?.putString(PREF_DOMAIN_KEY, DEFAULT_BASE_URL)?.apply()
-                    summary = "빈 값이면 기본 주소를 사용합니다.\n현재 주소: $DEFAULT_BASE_URL"
-                    Toast.makeText(screen.context, "기본 주소로 초기화되었습니다.", Toast.LENGTH_SHORT).show()
+                    prefs?.edit()?.remove(PREF_DOMAIN_KEY)?.apply()
+                    cachedDomain = null // 캐시 초기화
+                    summary = "빈 값이면 중앙신호등의 최신 주소를 사용하고, 실패하면 마지막 정상 주소로 복구합니다.\n현재 주소: $baseUrl"
+                    Toast.makeText(screen.context, "중앙신호등 모드로 전환되었습니다.", Toast.LENGTH_SHORT).show()
                     true
                 } else if (newUrl.matches(Regex("""^https://tvwiki\d+\.net$"""))) {
                     prefs?.edit()?.putString(PREF_DOMAIN_KEY, newUrl)?.apply()
-                    summary = "빈 값이면 기본 주소를 사용합니다.\n현재 주소: $newUrl"
+                    summary = "빈 값이면 중앙신호등의 최신 주소를 사용하고, 실패하면 마지막 정상 주소로 복구합니다.\n현재 주소: $newUrl"
                     Toast.makeText(screen.context, "주소가 변경되었습니다: $newUrl", Toast.LENGTH_SHORT).show()
                     true
                 } else {
@@ -483,7 +521,16 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
+        private const val PREF_LAST_GOOD_DOMAIN_KEY = "pref_last_good_domain"
         private const val DEFAULT_BASE_URL = "https://tvwiki51.net"
+
+        // 방금 정상 개통 확인된 중앙신호등 API 엔드포인트
+        private const val SIGNAL_URL = "https://aniyomi-extensions.pages.dev/api/signal"
+
+        // 10분 TTL 메모리 캐시
+        private const val CACHE_TTL_MS = 10 * 60 * 1000L
+        private var cachedDomain: String? = null
+        private var lastFetchTime: Long = 0L
 
         private val CATEGORIES = arrayOf(
             Pair("전체", "all"),
