@@ -30,7 +30,7 @@ class TVroom : ParsedAnimeHttpSource() {
 
     // ============================== 인기 목록 ==============================
     override fun popularAnimeRequest(page: Int): Request =
-        GET("$baseUrl/movie?page=$page", headers)
+        GET("$baseUrl/popular?page=$page", headers)
 
     override fun popularAnimeSelector(): String =
         "div.list-item, div.post-item, div.item, ul.list > li, div.video-item"
@@ -64,7 +64,7 @@ class TVroom : ParsedAnimeHttpSource() {
             return GET("$baseUrl/search?q=$query&page=$page", headers)
         }
 
-        var category = "movie"
+        var category = "popular"
         var order = "time"
 
         filters.forEach { filter ->
@@ -148,6 +148,7 @@ class TVroom : ParsedAnimeHttpSource() {
 
     companion object {
         private val CATEGORIES = arrayOf(
+            Pair("인기 자료", "popular"),
             Pair("영화 (전체)", "movie"),
             Pair("한국 영화", "kor_movie"),
             Pair("극장판 애니", "ani_movie"),
