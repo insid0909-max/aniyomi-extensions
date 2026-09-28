@@ -1,0 +1,22 @@
+name: Generate Repo Index
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - gh-pages
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+
+      - name: Run Mihon/Aniyomi Repo Generator
+        uses: keiyoushi/actions@repo-generator
+        with:
+          branch: gh-pages
+          signing-key: ${{ secrets.SIGNING_KEY }}
