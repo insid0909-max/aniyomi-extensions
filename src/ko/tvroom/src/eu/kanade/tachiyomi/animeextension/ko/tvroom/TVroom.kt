@@ -33,18 +33,20 @@ class TVroom : ParsedAnimeHttpSource() {
     override fun popularAnimeRequest(page: Int): Request =
         GET("$baseUrl/popular?page=$page", headers)
 
+    // 이미지를 포함하고 있는 모든 카드 링크를 포괄적으로 탐색
     override fun popularAnimeSelector(): String =
-        "div[class*='col'], div[class*='item'], div.card, a[href~=^/(movie|kor_movie|ani_movie|drama|ent)/\\d+]"
+        "a:has(img)"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
-        val link = if (element.tagName() == "a") element else element.selectFirst("a")!!
-        setUrlWithoutDomain(link.attr("href"))
+        setUrlWithoutDomain(element.attr("href"))
 
         val img = element.selectFirst("img")
-        title = element.selectFirst("h1, h2, h3, h4, h5, .title, .subject, .name")?.text()?.trim()
-            ?: img?.attr("alt")?.trim()?.ifEmpty { null }
-            ?: link.attr("title").trim().ifEmpty { null }
-            ?: link.text().trim().ifEmpty { "제목 없음" }
+        // 부모 또는 형제 요소에서 제목 텍스트 탐색 (런닝맨, 나 혼자 산다 등)
+        val parent = element.parent()
+        title = img?.attr("alt")?.trim()?.ifEmpty { null }
+            ?: element.attr("title").trim().ifEmpty { null }
+            ?: parent?.selectFirst("h1, h2, h3, h4, h5, p, span, div:not(:has(*))")?.text()?.trim()?.ifEmpty { null }
+            ?: element.text().trim().ifEmpty { "제목 없음" }
 
         thumbnail_url = img?.let {
             val src = it.attr("data-src").ifEmpty {
@@ -69,10 +71,14 @@ class TVroom : ParsedAnimeHttpSource() {
         val animeList = ArrayList<SAnime>()
 
         for (el in elements) {
-            runCatching {
-                val anime = popularAnimeFromElement(el)
-                if (anime.url.isNotBlank()) {
-                    animeList.add(anime)
+            val href = el.attr("href")
+            // 상세 작품 링크 (예: /ent/1067, /movie/200 등) 매칭 (메뉴바/대피소 링크 제외)
+            if (href.matches(Regex(".*/(movie|kor_movie|drama|ent|ani|foreign_drama|docu)/\\d+.*"))) {
+                runCatching {
+                    val anime = popularAnimeFromElement(el)
+                    if (anime.url.isNotBlank() && !anime.url.contains("notice")) {
+                        animeList.add(anime)
+                    }
                 }
             }
         }
@@ -133,8 +139,7 @@ class TVroom : ParsedAnimeHttpSource() {
     }
 
     // ============================== 회차(에피소드) 목록 ==============================
-    override fun episodeListSelector(): String =
-        "a[href*='/view/'], a[href*='/watch/'], a[href*='/episode/'], div[class*='ep'] a, div:has(> a[href*='view']) a"
+    override fun episodeListSelector(): String = "a"
 
     override fun episodeFromElement(element: Element): SEpisode = SEpisode.create().apply {
         val link = if (element.tagName() == "a") element else element.selectFirst("a") ?: element
@@ -145,24 +150,44 @@ class TVroom : ParsedAnimeHttpSource() {
         }
         name = epTitle
 
-        val epMatch = Regex("(\\d+)\\s*화").find(epTitle)
+        val epMatch = Regex("(\\d+)\\s*[화회]").find(epTitle)
         episode_number = epMatch?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = response.asJsoup()
-        val elements = document.select(episodeListSelector())
+        val currentPath = response.request.url.encodedPath.trimEnd('/')
+        val elements = document.select("a")
         val episodes = ArrayList<SEpisode>()
 
         for (el in elements) {
             val href = el.attr("href")
-            if (href.isNotBlank()) {
-                episodes.add(episodeFromElement(el))
+            val text = el.text().trim()
+
+            // 1. 회차 URL 구조 (예: /ent/1067/406780993) 매칭
+            val isEpisodeUrl = href.startsWith(currentPath) && href.matches(Regex(".*/\\d+$")) && href != currentPath
+
+            // 2. 텍스트에 "820화", "819화" 등 회차 번호가 있는 경우
+            val hasEpisodeText = text.matches(Regex(".*\\d+\\s*[화회].*"))
+
+            if (href.isNotBlank() && (isEpisodeUrl || hasEpisodeText)) {
+                val title = text.ifEmpty { el.attr("title").ifEmpty { "회차 재생" } }
+                val match = Regex("(\\d+)\\s*[화회]").find(title)
+                val epNum = match?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
+
+                episodes.add(
+                    SEpisode.create().apply {
+                        setUrlWithoutDomain(href)
+                        name = title
+                        episode_number = epNum
+                    },
+                )
             }
         }
 
         val uniqueEpisodes = episodes.distinctBy { it.url }
 
+        // 단편 영화라 세부 회차가 없는 경우
         if (uniqueEpisodes.isEmpty()) {
             return listOf(
                 SEpisode.create().apply {
@@ -218,13 +243,15 @@ class TVroom : ParsedAnimeHttpSource() {
         AnimeFilter.Select<String>("정렬", orders.map { it.first }.toTypedArray())
 
     companion object {
+        // 사이트 실제 상단 바 탭에 맞춘 카테고리
         private val CATEGORIES = arrayOf(
             Pair("인기 자료", "popular"),
-            Pair("영화 (전체)", "movie"),
-            Pair("한국 영화", "kor_movie"),
-            Pair("극장판 애니", "ani_movie"),
-            Pair("예능", "ent"),
+            Pair("영화", "movie"),
+            Pair("한국영화", "kor_movie"),
             Pair("드라마", "drama"),
+            Pair("예능프로그램", "ent"),
+            Pair("해외드라마", "foreign_drama"),
+            Pair("시사/다큐", "docu"),
         )
 
         private val ORDERS = arrayOf(
