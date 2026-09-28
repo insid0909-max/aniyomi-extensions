@@ -4,6 +4,8 @@
   "website": "https://github.com/insid0909-max/aniyomi-extensions",
   "signingKey": "",
   "badgeLabel": "TVroom",
-  "contact": "https://github.com/insid0909-max/aniyomi-extensions",
+  "contact": {
+    "website": "https://github.com/insid0909-max/aniyomi-extensions"
+  },
   "index_v2": "https://aniyomi-extensions.pages.dev/anime/index.min.json"
 }
