@@ -32,9 +32,9 @@ android {
     defaultConfig {
         minSdkVersion AndroidConfig.minSdk
         targetSdkVersion AndroidConfig.targetSdk
-        applicationIdSuffix project.parent.name + "." + project.name
+        applicationId "eu.kanade.tachiyomi.animeextension." + project.parent.name + "." + project.name
         versionCode theme == null ? extVersionCode : theme.baseVersionCode + overrideVersionCode
-        versionName "14.$versionCode"
+        versionName "14.2.$versionCode"
         base {
             archivesName = "aniyomi-$applicationIdSuffix-v$versionName"
         }
