@@ -8,13 +8,19 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import java.net.URLEncoder
+import java.util.Base64
 
 class TVroom : ParsedAnimeHttpSource() {
 
@@ -23,25 +29,23 @@ class TVroom : ParsedAnimeHttpSource() {
     override val lang = "ko"
     override val supportsLatest = true
 
+    private val bridgeBaseUrl = "https://dc-toki-mangayomi-media.pages.dev"
     override val client: OkHttpClient = network.client
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .add("Referer", baseUrl)
+        .add("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1")
+        .add("Referer", "$baseUrl/")
 
     // ============================== 인기 목록 ==============================
     override fun popularAnimeRequest(page: Int): Request =
         GET("$baseUrl/popular?page=$page", headers)
 
-    // 이미지를 포함하고 있는 모든 카드 링크를 포괄적으로 탐색
-    override fun popularAnimeSelector(): String =
-        "a:has(img)"
+    override fun popularAnimeSelector(): String = "a:has(img)"
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         setUrlWithoutDomain(element.attr("href"))
 
         val img = element.selectFirst("img")
-        // 부모 또는 형제 요소에서 제목 텍스트 탐색 (런닝맨, 나 혼자 산다 등)
         val parent = element.parent()
         title = img?.attr("alt")?.trim()?.ifEmpty { null }
             ?: element.attr("title").trim().ifEmpty { null }
@@ -72,7 +76,6 @@ class TVroom : ParsedAnimeHttpSource() {
 
         for (el in elements) {
             val href = el.attr("href")
-            // 상세 작품 링크 (예: /ent/1067, /movie/200 등) 매칭 (메뉴바/대피소 링크 제외)
             if (href.matches(Regex(".*/(movie|kor_movie|drama|ent|ani|foreign_drama|docu)/\\d+.*"))) {
                 runCatching {
                     val anime = popularAnimeFromElement(el)
@@ -100,7 +103,7 @@ class TVroom : ParsedAnimeHttpSource() {
     // ============================== 검색 및 필터 ==============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         if (query.isNotBlank()) {
-            return GET("$baseUrl/search?q=$query&page=$page", headers)
+            return GET("$baseUrl/search?stx=${URLEncoder.encode(query, "UTF-8")}&page=$page", headers)
         }
 
         var category = "popular"
@@ -164,10 +167,7 @@ class TVroom : ParsedAnimeHttpSource() {
             val href = el.attr("href")
             val text = el.text().trim()
 
-            // 1. 회차 URL 구조 (예: /ent/1067/406780993) 매칭
             val isEpisodeUrl = href.startsWith(currentPath) && href.matches(Regex(".*/\\d+$")) && href != currentPath
-
-            // 2. 텍스트에 "820화", "819화" 등 회차 번호가 있는 경우
             val hasEpisodeText = text.matches(Regex(".*\\d+\\s*[화회].*"))
 
             if (href.isNotBlank() && (isEpisodeUrl || hasEpisodeText)) {
@@ -187,7 +187,6 @@ class TVroom : ParsedAnimeHttpSource() {
 
         val uniqueEpisodes = episodes.distinctBy { it.url }
 
-        // 단편 영화라 세부 회차가 없는 경우
         if (uniqueEpisodes.isEmpty()) {
             return listOf(
                 SEpisode.create().apply {
@@ -200,30 +199,112 @@ class TVroom : ParsedAnimeHttpSource() {
         return uniqueEpisodes
     }
 
-    // ============================== 비디오 재생 파싱 ==============================
+    // ============================== 비디오 재생 파싱 (핵심: 망가요미 알고리즘 이식) ==============================
     override fun videoListParse(response: Response): List<Video> {
+        val episodePath = response.request.url.encodedPath
+        val parts = episodePath.trim('/').split("/")
+        if (parts.size < 3) {
+            return fallbackVideoParse(response)
+        }
+
+        val boTable = parts[0]
+        val wrId = parts[1]
+        val epIdx = parts[2]
+
+        // 1. 회차 메타데이터 요청
+        val metaUrl = "$baseUrl/bbs/get_episode.php?bo_table=$boTable&wr_id=$wrId&ep_idx=$epIdx"
+        val metaHeaders = headersBuilder()
+            .set("Referer", "$baseUrl$episodePath")
+            .set("Accept", "application/json")
+            .set("X-Requested-With", "XMLHttpRequest")
+            .build()
+
+        val metaResponse = client.newCall(GET(metaUrl, metaHeaders)).execute()
+        val metaJson = JSONObject(metaResponse.body.string())
+        if (!metaJson.optBoolean("success", false)) {
+            return fallbackVideoParse(response)
+        }
+
+        val episodeObj = metaJson.getJSONObject("episode")
+        val hlsUrlRel = episodeObj.optString("hls_url")
+        val sessionData1 = episodeObj.opt("session_data1")
+        val sessionData2 = episodeObj.opt("session_data2")
+
+        val payload = sessionData1 ?: sessionData2 ?: return fallbackVideoParse(response)
+
+        // 2. 재생 세션 요청 (Mangayomi Bridge API)
+        val bridgeUrl = "$bridgeBaseUrl/api/tvwiki-session"
+        val bridgeReqBody = JSONObject().apply {
+            put("baseUrl", baseUrl)
+            put("episodePath", episodePath)
+            put("sessionData", payload)
+        }.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+
+        val bridgeHeaders = headersBuilder()
+            .set("Referer", "$bridgeBaseUrl/")
+            .set("Content-Type", "application/json; charset=utf-8")
+            .build()
+
+        val sessionResponse = client.newCall(POST(bridgeUrl, bridgeHeaders, bridgeReqBody)).execute()
+        val sessionJson = JSONObject(sessionResponse.body.string())
+
+        val playerUrlPart = sessionJson.optString("player_url")
+        val token = sessionJson.optString("t")
+        val sig = sessionJson.optString("sig")
+
+        val sep = if (playerUrlPart.contains("?")) "&" else "?"
+        val fullPlayerUrl = fixUrl(playerUrlPart) + "${sep}t=${URLEncoder.encode(token, "UTF-8")}&sig=${URLEncoder.encode(sig, "UTF-8")}"
+        val playlistUrl = fixUrl(hlsUrlRel)
+
+        val playHeaders = Headers.Builder()
+            .add("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1")
+            .add("Accept", "*/*")
+            .add("Referer", fullPlayerUrl)
+            .add("Origin", baseUrl)
+            .build()
+
+        // 3. Playlist 요청 및 암호화 키 확인
+        val plResponse = client.newCall(GET(playlistUrl, playHeaders)).execute()
+        val plBody = plResponse.body.string()
+
+        val keyMatch = Regex("""#EXT-X-KEY:[^\r\n]*URI="([^"]+)"""", RegexOption.IGNORE_CASE).find(plBody)
+        if (keyMatch == null) {
+            return listOf(Video(playlistUrl, "자동 (HLS)", playlistUrl, headers = playHeaders))
+        }
+
+        val keyUri = keyMatch.groupValues[1]
+        val fullKeyUrl = if (keyUri.startsWith("http")) keyUri else playlistUrl.substringBeforeLast("/") + "/" + keyUri
+        val keyResponse = client.newCall(GET(fullKeyUrl, playHeaders)).execute()
+        val envelope = keyResponse.body.string()
+
+        val uEnc = URLEncoder.encode(base64Url(playlistUrl), "UTF-8")
+        val rEnc = URLEncoder.encode(base64Url(fullPlayerUrl), "UTF-8")
+        val xEnc = URLEncoder.encode(base64Url(envelope), "UTF-8")
+        val common = "u=$uEnc&r=$rEnc&x=$xEnc"
+
+        return listOf(
+            Video("$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=f&$common", "빠른 재생 (CDN 직접)", "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=f&$common", headers = playHeaders),
+            Video("$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=p&$common", "호환 재생 (중계)", "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=p&$common", headers = playHeaders),
+        )
+    }
+
+    private fun fallbackVideoParse(response: Response): List<Video> {
         val document = response.asJsoup()
-        val videoList = ArrayList<Video>()
-
-        val iframes = document.select("iframe")
-        for (iframe in iframes) {
-            val src = iframe.attr("src")
-            if (src.isNotBlank() && !src.contains("ads") && !src.contains("banner")) {
-                val streamUrl = if (src.startsWith("//")) "https:$src" else src
-                videoList.add(Video(streamUrl, "스트리밍 서버", streamUrl))
-            }
+        val list = ArrayList<Video>()
+        document.select("video source, video").forEach { v ->
+            val src = v.attr("src")
+            if (src.isNotBlank()) list.add(Video(fixUrl(src), "직접 재생", fixUrl(src)))
         }
+        return list
+    }
 
-        val videos = document.select("video source, video")
-        for (video in videos) {
-            val src = video.attr("src")
-            if (src.isNotBlank()) {
-                val streamUrl = if (src.startsWith("//")) "https:$src" else src
-                videoList.add(Video(streamUrl, "직접 재생", streamUrl))
-            }
-        }
+    private fun base64Url(str: String): String =
+        Base64.getUrlEncoder().withoutPadding().encodeToString(str.toByteArray(Charsets.UTF_8))
 
-        return videoList
+    private fun fixUrl(url: String): String = when {
+        url.startsWith("//") -> "https:$url"
+        url.startsWith("/") -> "$baseUrl$url"
+        else -> url
     }
 
     override fun videoListSelector(): String = throw UnsupportedOperationException()
@@ -243,7 +324,6 @@ class TVroom : ParsedAnimeHttpSource() {
         AnimeFilter.Select<String>("정렬", orders.map { it.first }.toTypedArray())
 
     companion object {
-        // 사이트 실제 상단 바 탭에 맞춘 카테고리
         private val CATEGORIES = arrayOf(
             Pair("인기 자료", "popular"),
             Pair("영화", "movie"),
