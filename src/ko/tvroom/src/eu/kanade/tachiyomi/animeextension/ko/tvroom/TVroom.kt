@@ -12,6 +12,7 @@ import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -32,13 +33,14 @@ class TVroom : ParsedAnimeHttpSource() {
     override val client: OkHttpClient = network.client
 
     private val bridgeBaseUrl = "https://dc-toki-mangayomi-media.pages.dev"
-    private val userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+    private val defaultUserAgent =
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 " +
+            "(KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
-        .add("User-Agent", userAgent)
+        .add("User-Agent", defaultUserAgent)
         .add("Referer", "$baseUrl/")
 
-    // ============================== 인기 목록 ==============================
     override fun popularAnimeRequest(page: Int): Request =
         GET("$baseUrl/popular?page=$page", headers)
 
@@ -95,7 +97,6 @@ class TVroom : ParsedAnimeHttpSource() {
         return AnimesPage(uniqueList, hasNextPage)
     }
 
-    // ============================== 최신 목록 ==============================
     override fun latestUpdatesRequest(page: Int): Request =
         GET("$baseUrl/drama?page=$page", headers)
 
@@ -104,7 +105,6 @@ class TVroom : ParsedAnimeHttpSource() {
     override fun latestUpdatesNextPageSelector(): String? = popularAnimeNextPageSelector()
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
-    // ============================== 검색 및 필터 ==============================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         if (query.isNotBlank()) {
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
@@ -140,7 +140,6 @@ class TVroom : ParsedAnimeHttpSource() {
     override fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
 
-    // ============================== 상세 정보 ==============================
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
         val titleNode = document.selectFirst("#bo_v_title .bo_v_tit, #bo_v_title h1, h1, .view-title")
         val ogTitle = document.selectFirst("meta[property='og:title']")?.attr("content")
@@ -158,7 +157,6 @@ class TVroom : ParsedAnimeHttpSource() {
         description = document.selectFirst(".thumb-desc, .desc, .summary, .content, #bo_v_con, p")?.text()?.trim()
     }
 
-    // ============================== 회차 목록 ==============================
     override fun episodeListSelector(): String =
         "#other_list li, ul.episode-list > li, div[class*='ep'] a, a"
 
@@ -234,7 +232,6 @@ class TVroom : ParsedAnimeHttpSource() {
         return uniqueList
     }
 
-    // ============================== 비디오 재생 파싱 (망가요미 동일 복호화/브릿지 이식) ==============================
     override fun videoListParse(response: Response): List<Video> {
         val episodePath = response.request.url.encodedPath
         val parts = episodePath.trim('/').split("/")
@@ -246,10 +243,9 @@ class TVroom : ParsedAnimeHttpSource() {
         val wrId = parts[1]
         val epIdx = parts[2]
 
-        // 1. 회차 메타데이터 호출
         val metaUrl = "$baseUrl/bbs/get_episode.php?bo_table=$boTable&wr_id=$wrId&ep_idx=$epIdx"
         val metaHeaders = Headers.Builder()
-            .add("User-Agent", userAgent)
+            .add("User-Agent", defaultUserAgent)
             .add("Referer", "$baseUrl$episodePath")
             .add("Accept", "application/json")
             .add("X-Requested-With", "XMLHttpRequest")
@@ -265,12 +261,10 @@ class TVroom : ParsedAnimeHttpSource() {
         val rawHlsUrl = episodeObj.optString("hls_url")
         val sessionDataList = listOfNotNull(episodeObj.opt("session_data1"), episodeObj.opt("session_data2"))
 
-        // 2. 세션 발급 (브릿지 우선 -> 사이트 직접 시도)
         var sessionJson: JSONObject? = null
         for (payload in sessionDataList) {
             val payloadStr = payload.toString()
 
-            // 2-1. 브릿지 세션 시도
             runCatching {
                 val bridgeReqObj = JSONObject().apply {
                     put("baseUrl", baseUrl)
@@ -278,7 +272,7 @@ class TVroom : ParsedAnimeHttpSource() {
                     put("sessionData", if (payloadStr.startsWith("{")) JSONObject(payloadStr) else payloadStr)
                 }
                 val bridgeHeaders = Headers.Builder()
-                    .add("User-Agent", userAgent)
+                    .add("User-Agent", defaultUserAgent)
                     .add("Referer", "$bridgeBaseUrl/")
                     .add("Content-Type", "application/json; charset=utf-8")
                     .build()
@@ -291,10 +285,9 @@ class TVroom : ParsedAnimeHttpSource() {
             }
             if (sessionJson != null) break
 
-            // 2-2. 사이트 직접 세션 시도
             runCatching {
                 val directHeaders = Headers.Builder()
-                    .add("User-Agent", userAgent)
+                    .add("User-Agent", defaultUserAgent)
                     .add("Referer", "$baseUrl$episodePath")
                     .add("Origin", baseUrl)
                     .add("Content-Type", "application/json; charset=utf-8")
@@ -313,7 +306,6 @@ class TVroom : ParsedAnimeHttpSource() {
             return fallbackVideoParse(response)
         }
 
-        // 3. 토큰 결합 플레이어 URL & 플레이리스트 URL 완성
         val rawPlayerUrl = sessionJson.getString("player_url")
         val sep = if (rawPlayerUrl.contains("?")) "&" else "?"
         val playerUrl = resolveAbsolute("$baseUrl$episodePath", rawPlayerUrl) +
@@ -322,18 +314,17 @@ class TVroom : ParsedAnimeHttpSource() {
         val playlistUrl = resolveAbsolute(playerUrl, rawHlsUrl)
 
         val playerOrigin = runCatching {
-            val u = okhttp3.HttpUrl.parse(playerUrl)
+            val u = playerUrl.toHttpUrlOrNull()
             "${u?.scheme}://${u?.host}"
         }.getOrDefault(baseUrl)
 
         val streamHeaders = Headers.Builder()
-            .add("User-Agent", userAgent)
+            .add("User-Agent", defaultUserAgent)
             .add("Accept", "*/*")
             .add("Referer", playerUrl)
             .add("Origin", playerOrigin)
             .build()
 
-        // 4. 플레이리스트 다운로드 및 EXT-X-KEY 암호화 키 확인
         val playlistRes = client.newCall(GET(playlistUrl, streamHeaders)).execute()
         val playlistContent = playlistRes.body.string()
 
@@ -350,10 +341,22 @@ class TVroom : ParsedAnimeHttpSource() {
             val xParam = URLEncoder.encode(toBase64Url(envelope), "UTF-8")
             val common = "u=$uParam&r=$rParam&x=$xParam"
 
-            // 호환 중계 (403 100% 우회 스트림)
-            videoList.add(Video("$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=p&$common", "호환 재생 (중계)", "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=p&$common", headers = streamHeaders))
-            // CDN 직결
-            videoList.add(Video("$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=f&$common", "빠른 재생 (CDN 직접)", "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=f&$common", headers = streamHeaders))
+            videoList.add(
+                Video(
+                    "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=p&$common",
+                    "호환 재생 (중계)",
+                    "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=p&$common",
+                    headers = streamHeaders,
+                ),
+            )
+            videoList.add(
+                Video(
+                    "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=f&$common",
+                    "빠른 재생 (CDN 직접)",
+                    "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=f&$common",
+                    headers = streamHeaders,
+                ),
+            )
         } else {
             videoList.add(Video(playlistUrl, "자동 (HLS)", playlistUrl, headers = streamHeaders))
         }
@@ -371,9 +374,11 @@ class TVroom : ParsedAnimeHttpSource() {
         return list
     }
 
-    // ============================== 헬퍼 함수 ==============================
     private fun toBase64Url(value: String): String {
-        return Base64.encodeToString(value.toByteArray(Charsets.UTF_8), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING).trim()
+        return Base64.encodeToString(
+            value.toByteArray(Charsets.UTF_8),
+            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
+        ).trim()
     }
 
     private fun resolveAbsolute(base: String, target: String): String {
@@ -381,7 +386,7 @@ class TVroom : ParsedAnimeHttpSource() {
         if (t.startsWith("http://") || t.startsWith("https://")) return t
         if (t.startsWith("//")) return "https:$t"
         return if (t.startsWith("/")) {
-            val baseUri = okhttp3.HttpUrl.parse(base)
+            val baseUri = base.toHttpUrlOrNull()
             "${baseUri?.scheme}://${baseUri?.host}$t"
         } else {
             val dir = base.substringBeforeLast('/')
@@ -391,4 +396,67 @@ class TVroom : ParsedAnimeHttpSource() {
 
     private fun fixUrl(url: String): String = when {
         url.startsWith("//") -> "https:$url"
-        url.startsWith("/") -> "$baseUrl$url
+        url.startsWith("/") -> "$baseUrl$url"
+        else -> url
+    }
+
+    private fun cleanSeriesTitle(raw: String): String =
+        raw.replace(Regex("""\s+\d+(?:[-.]\d+)?화(?:\s+다시보기)?\s*$"""), "")
+            .replace(Regex("""\s+다시보기(?:\s*-\s*티비위키)?\s*$"""), "")
+            .trim()
+
+    private fun formatEpisodeName(raw: String): String {
+        val trimmed = raw.trim()
+        val match = Regex("""(?:^|\s)(\d+(?:[-.]\d+)?화)""").find(trimmed)
+        return match?.groupValues?.get(1) ?: trimmed
+    }
+
+    override fun videoListSelector(): String = throw UnsupportedOperationException()
+    override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
+    override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
+
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        CategoryFilter(CATEGORIES),
+        PeriodFilter(PERIODS),
+        ModeFilter(MODES),
+    )
+
+    class CategoryFilter(categories: Array<Pair<String, String>>) :
+        AnimeFilter.Select<String>("카테고리", categories.map { it.first }.toTypedArray())
+
+    class PeriodFilter(periods: Array<Pair<String, String>>) :
+        AnimeFilter.Select<String>("기간 (인기탭)", periods.map { it.first }.toTypedArray())
+
+    class ModeFilter(modes: Array<Pair<String, String>>) :
+        AnimeFilter.Select<String>("정렬 방식", modes.map { it.first }.toTypedArray())
+
+    companion object {
+        private val CATEGORIES = arrayOf(
+            Pair("전체", "all"),
+            Pair("영화", "movie"),
+            Pair("한국영화", "kor_movie"),
+            Pair("드라마", "drama"),
+            Pair("예능프로그램", "ent"),
+            Pair("시사·다큐", "sisa"),
+            Pair("해외드라마", "world"),
+            Pair("해외 예능·다큐", "ott_ent"),
+            Pair("숏폼 드라마", "short_drama"),
+            Pair("극장판 애니", "ani_movie"),
+            Pair("일반 애니", "animation"),
+            Pair("추억의 예능", "old_ent"),
+            Pair("추억의 드라마", "old_drama"),
+        )
+
+        private val PERIODS = arrayOf(
+            Pair("일간", "d"),
+            Pair("주간", "w"),
+            Pair("월간", "m"),
+            Pair("전체 기간", "a"),
+        )
+
+        private val MODES = arrayOf(
+            Pair("최신순", "latest"),
+            Pair("인기순", "popular"),
+        )
+    }
+}
