@@ -242,6 +242,7 @@ class TVroom : ParsedAnimeHttpSource() {
         val wrId = parts[1]
         val epIdx = parts[2]
 
+        // 1. 회차 메타데이터 호출
         val metaUrl = "$baseUrl/bbs/get_episode.php?bo_table=$boTable&wr_id=$wrId&ep_idx=$epIdx"
         val metaHeaders = headersBuilder()
             .set("Referer", "$baseUrl$episodePath")
@@ -259,6 +260,7 @@ class TVroom : ParsedAnimeHttpSource() {
         var hlsUrl = episodeObj.optString("hls_url")
         val sessionData = episodeObj.opt("session_data1") ?: episodeObj.opt("session_data2")
 
+        // 2. 세션 API 호출
         if (sessionData != null) {
             runCatching {
                 val directReqBody = sessionData.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -283,15 +285,24 @@ class TVroom : ParsedAnimeHttpSource() {
 
         val playlistUrl = fixUrl(hlsUrl)
 
-        // 브라우저 웹뷰와 동일한 기본 헤더 구성 (불필요한 Origin 제거, Referer를 회차 경로로 지정)
-        val playHeaders = headersBuilder()
-            .set("Referer", "$baseUrl$episodePath")
-            .set("Accept", "*/*")
+        // 3. 브라우저/웹뷰 루트 Referer 기반 기본 헤더
+        val playHeaders = Headers.Builder()
+            .add("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1")
+            .add("Referer", "$baseUrl/")
+            .add("Origin", baseUrl)
             .build()
 
         val videoList = ArrayList<Video>()
         if (playlistUrl.isNotBlank() && playlistUrl != baseUrl) {
+            // 기본 HLS 스트림 (루트 Referer)
             videoList.add(Video(playlistUrl, "고화질 스트리밍 (HLS)", playlistUrl, headers = playHeaders))
+
+            // 403 대응 대체 스트림 (회차 페이지 Referer)
+            val directHeaders = Headers.Builder()
+                .add("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1")
+                .add("Referer", "$baseUrl$episodePath")
+                .build()
+            videoList.add(Video(playlistUrl, "고화질 스트리밍 (대체)", playlistUrl, headers = directHeaders))
         }
 
         return if (videoList.isNotEmpty()) videoList else fallbackVideoParse(response)
