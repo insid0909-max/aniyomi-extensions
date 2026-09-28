@@ -61,7 +61,6 @@ jobs:
       - name: Prepare repo and index
         run: |
           mkdir -p repo/anime
-          # repo 루트와 anime 양쪽에 apk 복사
           find . -name "*.apk" -type f ! -path "./repo/*" -exec cp -v {} repo/ \;
           find . -name "*.apk" -type f ! -path "./repo/*" -exec cp -v {} repo/anime/ \;
           ls -la repo/
@@ -72,16 +71,15 @@ jobs:
           repo_dir = "repo"
           signing_key = os.environ.get("SIGNING_KEY", "")
 
-          # 실제 apk 파일 찾기
+          # 실제 빌드된 APK 파일명 탐색 및 복사
           apk_files = [f for f in os.listdir(repo_dir) if f.endswith(".apk")]
-          orig_apk = apk_files[0] if apk_files else "aniyomi-ko.tvroom-v14.2-release.apk"
-          target_apk = "aniyomi-ko.tvroom-v14.2-release.apk"
+          orig_apk = apk_files[0] if apk_files else "aniyomi-ko.tvroom-v14.11-release.apk"
+          target_apk = "aniyomi-ko.tvroom-v14.11-release.apk"
 
-          if orig_apk != target_apk and os.path.exists(os.path.join(repo_dir, orig_apk)):
-              shutil.copy2(os.path.join(repo_dir, orig_apk), os.path.join(repo_dir, target_apk))
-              shutil.copy2(os.path.join(repo_dir, orig_apk), os.path.join(repo_dir, "anime", target_apk))
+          shutil.copy2(os.path.join(repo_dir, orig_apk), os.path.join(repo_dir, target_apk))
+          shutil.copy2(os.path.join(repo_dir, orig_apk), os.path.join(repo_dir, "anime", target_apk))
 
-          # 1. DC Toki와 100% 동일한 repo.json 생성
+          # 1. repo.json
           repo_data = {
               "meta": {
                   "name": "TVroom Repository",
@@ -95,14 +93,14 @@ jobs:
           with open(os.path.join(repo_dir, "anime", "repo.json"), "w", encoding="utf-8") as fp:
               json.dump(repo_data, fp, ensure_ascii=False, indent=2)
 
-          # 2. DC Toki와 1:1 일치하는 index.min.json 생성 (id는 따옴표 없는 숫자형)
+          # 2. DC Toki와 동일한 규격 (code 11, version 14.11, id 정수형)
           extensions = [{
               "name": "Aniyomi: TVroom",
               "pkg": "eu.kanade.tachiyomi.animeextension.ko.tvroom",
               "apk": target_apk,
               "lang": "ko",
               "code": 11,
-              "version": "14.2",
+              "version": "14.11",
               "nsfw": 0,
               "sources": [
                   {
@@ -115,12 +113,12 @@ jobs:
               ]
           }]
 
-          # index.min.json 저장
+          # 루트 및 anime 양쪽 배포
           for p in [os.path.join(repo_dir, "index.min.json"), os.path.join(repo_dir, "anime", "index.min.json")]:
               with open(p, "w", encoding="utf-8") as fp:
                   json.dump(extensions, fp, ensure_ascii=False, separators=(',', ':'))
 
-          print("Generated index.min.json and repo.json successfully.")
+          print("Generated clean repo.json and index.min.json successfully.")
           EOF
 
           python3 generate_index.py
