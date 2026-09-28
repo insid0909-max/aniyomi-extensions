@@ -1,12 +1,8 @@
 {
-  "name": "TVroom Repository",
-  "shortName": "TVroom",
-  "website": "https://github.com/insid0909-max/aniyomi-extensions",
-  "baseUrl": "https://aniyomi-extensions.pages.dev",
-  "badgeLabel": "TVroom",
-  "signingKey": "a9dd4411a7f28991c479eec26df61fcf558670236d7691c3495d60d7b14580d5",
-  "contact": {
-    "website": "https://github.com/insid0909-max/aniyomi-extensions"
-  },
-  "index_v2": "https://aniyomi-extensions.pages.dev/anime/index.min.json"
+  "meta": {
+    "name": "TVroom Repository",
+    "shortName": "TVroom",
+    "website": "https://github.com/insid0909-max/aniyomi-extensions",
+    "signingKeyFingerprint": "d8b9e8dc81305e2bd5c36589b3040a66aae203daa73d8389260f30055c45cc06"
+  }
 }
