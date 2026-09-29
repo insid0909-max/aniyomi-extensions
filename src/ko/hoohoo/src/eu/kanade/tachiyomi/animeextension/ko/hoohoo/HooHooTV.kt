@@ -30,22 +30,24 @@ class HooHooTV : ParsedAnimeHttpSource() {
         .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         .add("Referer", "$baseUrl/")
 
-    // --- 인기 탭 ---
+    // --- 인기 탭 (두 번째 성공했던 /popular 복원) ---
     override fun popularAnimeRequest(page: Int): Request {
         val url = if (page <= 1) "$baseUrl/popular" else "$baseUrl/popular?page=$page"
         return GET(url, headers)
     }
 
+    // 두 번째 목록 성공 셀렉터 기반 (메뉴 태그 제외를 위해 a[href] 필수 지정)
     override fun popularAnimeSelector(): String =
-        "div.list-item, div.post-item, div.video-item, div.item, div.col-6, div.col-4, div.col-md-3, div.card, article, ul.list-body li"
+        "div.list-item, div.post-item, div.video-item, div.item:has(a), div.card:has(a), div.col-6:has(a), div.col-4:has(a), div.col-md-3:has(a)"
 
     override fun popularAnimeFromElement(element: Element): SAnime {
         return SAnime.create().apply {
             val titleElement = element.selectFirst(".title, .subject, .name, .entry-title, h2, h3, a[title]")
-            title = (titleElement?.attr("title")?.takeIf { it.isNotBlank() }
+            val extractedTitle = titleElement?.attr("title")?.takeIf { it.isNotBlank() }
                 ?: titleElement?.text()?.takeIf { it.isNotBlank() }
                 ?: element.selectFirst("a")?.text()?.takeIf { it.isNotBlank() }
-                ?: "제목 없음").trim()
+                ?: "제목 없음"
+            title = extractedTitle.trim()
 
             val linkElement = element.selectFirst("a[href]")
             setUrlWithoutDomain(linkElement?.attr("href") ?: "")
@@ -66,7 +68,7 @@ class HooHooTV : ParsedAnimeHttpSource() {
     override fun popularAnimeNextPageSelector(): String? =
         ".pagination .next, a.next, a[rel='next'], li.next a, a:contains(다음)"
 
-    // --- 최신 탭 ---
+    // --- 최신 탭 (두 번째 성공했던 /home 복원) ---
     override fun latestUpdatesRequest(page: Int): Request {
         val url = if (page <= 1) "$baseUrl/home" else "$baseUrl/home?page=$page"
         return GET(url, headers)
@@ -110,7 +112,7 @@ class HooHooTV : ParsedAnimeHttpSource() {
         }
     }
 
-    // --- 회차 목록 ---
+    // --- 회차 목록 (두 번째 1화~10화 파싱 성공했던 코드 그대로 유지) ---
     override fun episodeListSelector(): String =
         "ul.episodes a, div.ep-list a, .episode-item, ul.list-group li a, a[href*='watch'], a[href*='view'], a[href*='episode']"
 
@@ -121,38 +123,40 @@ class HooHooTV : ParsedAnimeHttpSource() {
         }
     }
 
-    // --- 비디오 재생 링크 파싱 ---
+    // --- 비디오 재생 링크 파싱 (플레이어 URL 다중 대응) ---
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
         val videoList = mutableListOf<Video>()
 
-        // 1. iframe 주소 탐색 (플레이어 임베드)
-        val iframes = document.select("iframe[src]")
+        // 1. iframe 방식 (후후티비는 iframe src나 data-src에 실제 플레이어 주소를 둠)
+        val iframes = document.select("iframe[src], iframe[data-src]")
         for (iframe in iframes) {
-            val src = iframe.attr("abs:src")
-            if (src.isNotBlank() && !src.contains("google") && !src.contains("ad")) {
+            val src = iframe.attr("abs:src").ifEmpty { iframe.attr("abs:data-src") }
+            if (src.isNotBlank() && !src.contains("ad") && !src.contains("google")) {
                 videoList.add(Video(src, "기본 화질 (Iframe)", src))
             }
         }
 
-        // 2. video 태그 / source 태그 탐색
+        // 2. 직접 비디오 태그
         val directSources = document.select("video source[src], video[src]")
         for (source in directSources) {
             val src = source.attr("abs:src")
             if (src.isNotBlank()) {
-                videoList.add(Video(src, "직접 재생 링크", src))
+                videoList.add(Video(src, "직접 재생", src))
             }
         }
 
-        // 3. 페이지 내부 링크 중 외부 재생 서버 버튼이 있는 경우
+        // 3. 페이지 본문 script 안의 m3u8 / mp4 / iframe URL 정규식 추출
         if (videoList.isEmpty()) {
-            val playerButtons = document.select("a.btn[href*='http'], .server-list a[href*='http']")
-            for (btn in playerButtons) {
-                val url = btn.attr("abs:href")
-                val serverName = btn.text().trim().ifEmpty { "외부 서버" }
-                if (url.isNotBlank()) {
-                    videoList.add(Video(url, serverName, url))
-                }
+            val html = document.html()
+            val m3u8Regex = """https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""".toRegex()
+            val mp4Regex = """https?://[^\s"'<>]+\.mp4[^\s"'<>]*""".toRegex()
+            
+            m3u8Regex.findAll(html).forEach { match ->
+                videoList.add(Video(match.value, "HLS 스트림", match.value))
+            }
+            mp4Regex.findAll(html).forEach { match ->
+                videoList.add(Video(match.value, "MP4 비디오", match.value))
             }
         }
 
