@@ -10,5 +10,9 @@
             android:name="tachiyomi.animeextension.class"
             android:value=".HooHooTV"
             tools:replace="android:value" />
+        <meta-data
+            android:name="tachiyomi.animeextension.factory"
+            android:value="false" />
     </application>
+
 </manifest>
