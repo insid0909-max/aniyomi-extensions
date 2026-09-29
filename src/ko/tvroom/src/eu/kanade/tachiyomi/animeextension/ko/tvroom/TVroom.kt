@@ -204,7 +204,17 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
         val titleNode = document.selectFirst("#bo_v_title .bo_v_tit, #bo_v_title h1, h1, .view-title")
         val ogTitle = document.selectFirst("meta[property='og:title']")?.attr("content")
-        title = cleanSeriesTitle(ogTitle ?: titleNode?.text() ?: "티비위키")
+        val baseTitle = cleanSeriesTitle(ogTitle ?: titleNode?.text() ?: "티비위키")
+
+        // 개봉년도: YYYY 또는 YYYY-MM-DD 에서 4자리 연도 추출
+        val yearMatch = Regex("""개봉년도\s*:\s*(\d{4})""").find(document.text())
+        val releaseYear = yearMatch?.groupValues?.get(1)
+
+        title = if (!releaseYear.isNullOrEmpty() && !baseTitle.contains(releaseYear)) {
+            "$baseTitle ($releaseYear)"
+        } else {
+            baseTitle
+        }
 
         thumbnail_url = document.selectFirst(".poster img, .thumb img, img.cover, #bo_v_img img")?.let { img ->
             val src = img.attr("data-original").ifEmpty {
