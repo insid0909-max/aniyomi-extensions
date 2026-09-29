@@ -56,24 +56,6 @@ jobs:
           echo "SIGNING_KEY=$SIGNING_KEY" >> $GITHUB_ENV
           echo "Fixed Fingerprint: $SIGNING_KEY"
 
-      - name: Auto bump version code in build files
-        run: |
-          TARGET_VCODE=$(( ${{ github.run_number }} + 100 ))
-          echo "Target extVersionCode: $TARGET_VCODE"
-          
-          TARGET_FILES=$(find . -path "*tvroom*" -name "build.gradle*" -not -path "*/build/*")
-          if [ -z "$TARGET_FILES" ]; then
-            echo "::error::Could not find build.gradle for tvroom!"
-            exit 1
-          fi
-          
-          for f in $TARGET_FILES; do
-            echo "Updating version in $f"
-            sed -i -E "s/extVersionCode\s*=\s*[0-9]+/extVersionCode = $TARGET_VCODE/g" "$f"
-            sed -i -E "s/set\(\"extVersionCode\",\s*[0-9]+\)/set(\"extVersionCode\", $TARGET_VCODE)/g" "$f"
-            grep -H "extVersionCode" "$f" || true
-          done
-
       - name: Build extensions
         run: |
           ./gradlew clean :src:ko:tvroom:assembleRelease \
@@ -98,7 +80,6 @@ jobs:
 
           python3 - << 'EOF'
           import os, glob, subprocess, json
-          from PIL import Image
 
           repo_dir = "repo"
           signing_key = os.environ.get("SIGNING_KEY", "")
@@ -124,6 +105,7 @@ jobs:
               pkg = None
               vcode = None
               vname = None
+              label = None
 
               for line in badging.splitlines():
                   if line.startswith("package:"):
@@ -134,12 +116,13 @@ jobs:
                               vcode = int(part.split("'")[1])
                           elif part.startswith("versionName='"):
                               vname = part.split("'")[1]
+                  elif line.startswith("application-label:"):
+                      label = line.split("'")[1]
 
               if not pkg or not vcode or not vname:
                   continue
 
-              # 확장 이름은 APK의 실제 라벨명과 동일한 "TVroom"으로 일치
-              display_name = "TVroom"
+              display_name = label if label else "TVroom"
               source_name = "티비위키"
               base_domain = "https://tvwiki51.net"
               target_name = f"aniyomi-{pkg}-v{vname}-release.apk"
@@ -148,8 +131,20 @@ jobs:
                   subprocess.run(["cp", "-v", apk, os.path.join(dest, target_name)])
 
               icon_file = f"{pkg}.png"
+              icon_path_in_apk = None
+              for line in badging.splitlines():
+                  if "application-icon-" in line or "icon='" in line:
+                      icon_path_in_apk = line.split("'")[-2]
+              
+              if icon_path_in_apk:
+                  unzip_cmd = f"unzip -p '{apk}' '{icon_path_in_apk}' > '{os.path.join(repo_dir, 'icon', icon_file)}'"
+                  subprocess.run(unzip_cmd, shell=True)
+                  for dest in [repo_dir, os.path.join(repo_dir, "anime")]:
+                      subprocess.run(["cp", "-v", os.path.join(repo_dir, 'icon', icon_file), os.path.join(dest, icon_file)])
+
               apk_size = os.path.getsize(os.path.join(repo_dir, target_name))
 
+              # APK 파일에서 실제 확인된 vcode와 vname을 그대로 인덱스에 입력
               extensions.append({
                   "name": display_name,
                   "pkg": pkg,
@@ -177,7 +172,11 @@ jobs:
               with open(p, "w", encoding="utf-8") as f:
                   json.dump(extensions, f, ensure_ascii=False, separators=(',', ':'))
 
-          print(f"인덱싱 완료 (Name: {display_name}, Code: {vcode})")
+          # Cloudflare Pages 캐시 방지 헤더 생성
+          with open(os.path.join(repo_dir, "_headers"), "w", encoding="utf-8") as f:
+              f.write("/*\n  Access-Control-Allow-Origin: *\n/index.min.json\n  Cache-Control: no-cache, no-store, must-revalidate\n/anime/index.min.json\n  Cache-Control: no-cache, no-store, must-revalidate\n/repo.json\n  Cache-Control: no-cache, no-store, must-revalidate\n")
+
+          print(f"인덱싱 완료 -> Name: {display_name}, Version: {vname}, Code: {vcode}")
           EOF
 
       - name: Deploy to GitHub Pages
