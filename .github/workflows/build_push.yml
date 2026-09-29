@@ -38,22 +38,23 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip pillow
 
-      - name: Generate standard debug keystore
+      - name: Prepare fixed signing key
         run: |
-          KEYSTORE_PATH="$GITHUB_WORKSPACE/debug.keystore"
-          rm -f "$KEYSTORE_PATH"
+          KEYSTORE_PATH="$GITHUB_WORKSPACE/keystore.jks"
           
-          # 공식 안드로이드 디버그 규격으로 키스토어 정식 생성
-          keytool -genkeypair -v \
-            -keystore "$KEYSTORE_PATH" \
-            -storepass android \
-            -alias androiddebugkey \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
-          
+          # 이미 저장소에 고정 키가 커밋되어 있지 않다면 생성
+          if [ ! -f "$KEYSTORE_PATH" ]; then
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_PATH" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
           SIGNING_KEY=$(keytool -list -v -keystore "$KEYSTORE_PATH" -alias androiddebugkey -storepass android | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
           echo "SIGNING_KEY=$SIGNING_KEY" >> $GITHUB_ENV
           echo "Fixed Fingerprint: $SIGNING_KEY"
@@ -85,8 +86,8 @@ jobs:
             -PsigningStorePassword="android" \
             -PsigningKeyPassword="android" \
             -PsigningKeyAlias="androiddebugkey" \
-            -PsigningStoreFile="$GITHUB_WORKSPACE/debug.keystore" \
-            -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/debug.keystore" \
+            -PsigningStoreFile="$GITHUB_WORKSPACE/keystore.jks" \
+            -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/keystore.jks" \
             -Pandroid.injected.signing.store.password="android" \
             -Pandroid.injected.signing.key.alias="androiddebugkey" \
             -Pandroid.injected.signing.key.password="android" \
