@@ -97,8 +97,7 @@ jobs:
           fi
 
           python3 - << 'EOF'
-          import os, glob, subprocess, json, hashlib
-          from PIL import Image
+          import os, glob, subprocess, json
 
           repo_dir = "repo"
           signing_key = os.environ.get("SIGNING_KEY", "")
@@ -138,45 +137,19 @@ jobs:
               if not pkg or not vcode or not vname:
                   continue
 
-              print(f"Extracted APK Data -> pkg: {pkg}, vcode: {vcode}, vname: {vname}")
-
               display_name = "티비위키"
               base_domain = "https://tvwiki51.net"
-
               target_name = f"aniyomi-{pkg}-v{vname}-release.apk"
+
               for dest in [repo_dir, os.path.join(repo_dir, "anime"), os.path.join(repo_dir, "apk")]:
                   subprocess.run(["cp", "-v", apk, os.path.join(dest, target_name)])
 
-              icon_path_in_apk = None
-              for line in badging.splitlines():
-                  if "application-icon-" in line or "icon='" in line:
-                      icon_path_in_apk = line.split("'")[-2]
-              
               icon_file = f"{pkg}.png"
-              if icon_path_in_apk:
-                  unzip_cmd = f"unzip -p '{apk}' '{icon_path_in_apk}' > '{os.path.join(repo_dir, 'icon', icon_file)}'"
-                  subprocess.run(unzip_cmd, shell=True)
-                  for dest in [repo_dir, os.path.join(repo_dir, "anime")]:
-                      subprocess.run(["cp", "-v", os.path.join(repo_dir, 'icon', icon_file), os.path.join(dest, icon_file)])
 
-              full_icon = os.path.join(repo_dir, icon_file)
-              if os.path.exists(full_icon):
-                  try:
-                      img = Image.open(full_icon).convert("RGBA")
-                      datas = img.getdata()
-                      new_data = [(255, 255, 255, 0) if (d[0]>180 and d[1]>180 and d[2]>180) else d for d in datas]
-                      img.putdata(new_data)
-                      img.save(full_icon, "PNG")
-                  except Exception as e:
-                      print(f"Icon error: {e}")
-
-              key = f"{display_name}/ko/1".encode("utf-8")
-              digest = hashlib.md5(key).digest()
-              source_id = str(int.from_bytes(digest[:8], byteorder="little", signed=True) & 0x7FFFFFFFFFFFFFFF)
-
+              # Tvroom.kt의 고정 ID와 완전 일치
+              source_id = "7894561230123456789"
               apk_size = os.path.getsize(os.path.join(repo_dir, target_name))
 
-              # APK 파일에 실제로 들어간 code와 version을 100% 동일하게 저장
               extensions.append({
                   "name": display_name,
                   "pkg": pkg,
@@ -204,7 +177,7 @@ jobs:
               with open(p, "w", encoding="utf-8") as f:
                   json.dump(extensions, f, ensure_ascii=False, separators=(',', ':'))
 
-          print(f"총 {len(extensions)}개 확장 앱 인덱싱 완료")
+          print(f"인덱싱 완료 (Target Code: {vcode})")
           EOF
 
       - name: Deploy to GitHub Pages
