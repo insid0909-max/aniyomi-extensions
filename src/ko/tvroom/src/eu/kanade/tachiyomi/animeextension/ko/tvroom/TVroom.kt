@@ -35,6 +35,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override val lang = "ko"
     override val supportsLatest = true
 
+    // 안드로이드 기본 프레임워크 리플렉션으로 안전하게 SharedPreferences 획득
     private fun getAppPreferences(): SharedPreferences? {
         return runCatching {
             val actThreadClass = Class.forName("android.app.ActivityThread")
@@ -48,20 +49,22 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         get() {
             val prefs = getAppPreferences()
 
+            // 1순위: 사용자가 직접 지정한 도메인이 있으면 최우선 적용
             val customUrl = prefs?.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/')
             if (!customUrl.isNullOrBlank()) {
                 return customUrl
             }
 
+            // 2순위: 10분 이내 조회한 메모리 캐시가 유효하면 네트워크 요청 없이 즉시 반환
             val now = System.currentTimeMillis()
             if (cachedDomain != null && now - lastFetchTime < CACHE_TTL_MS) {
                 return cachedDomain!!
             }
 
-            // 실패하더라도 즉시 마지막 주소를 반환하여 비디오 파싱 중 불필요한 지연 방지
             val lastGood = prefs?.getString(PREF_LAST_GOOD_DOMAIN_KEY, DEFAULT_BASE_URL)
                 ?.takeIf { it.isNotBlank() } ?: DEFAULT_BASE_URL
 
+            // 3순위: 중앙신호등 API 조회
             val fetchedUrl = runCatching {
                 val req = Request.Builder()
                     .url(SIGNAL_URL)
@@ -82,6 +85,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 return cleanUrl
             }
 
+            // 4순위: 실패 시 캐시 갱신 후 마지막 정상 주소 반환
             cachedDomain = lastGood
             lastFetchTime = now
             return lastGood
@@ -323,7 +327,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         for (payload in sessionDataList) {
             val payloadStr = payload.toString()
 
-            // 1순위: 티비위키 원본 서버에 세션 직접 요청 (가장 빠름)
+            // 1순위: 티비위키 원본 서버에 세션 직접 생성
             runCatching {
                 val directHeaders = Headers.Builder()
                     .add("User-Agent", defaultUserAgent)
@@ -340,7 +344,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             }
             if (acquiredSession != null) break
 
-            // 2순위: 원본 실패 시 중계 브릿지 서버로 백업 요청
+            // 2순위: 원본 실패 시 중계 브릿지로 백업 세션 생성
             runCatching {
                 val bridgeReqObj = JSONObject().apply {
                     put("baseUrl", currentBaseUrl)
@@ -383,37 +387,45 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             .add("Origin", playerOrigin)
             .build()
 
+        val playlistRes = client.newCall(GET(playlistUrl, streamHeaders)).execute()
+        val playlistContent = playlistRes.body.string()
+
+        val keyMatch = Regex("""#EXT-X-KEY:[^\r\n]*URI="([^"]+)"""", RegexOption.IGNORE_CASE).find(playlistContent)
         val videoList = ArrayList<Video>()
 
-        // 최적화: 사전 플레이리스트/키 Envelope 요청을 건너뛰고 빠른 재생 URL 구성
-        val uParam = URLEncoder.encode(toBase64Url(playlistUrl), "UTF-8")
-        val rParam = URLEncoder.encode(toBase64Url(playerUrl), "UTF-8")
-        val common = "u=$uParam&r=$rParam"
+        if (keyMatch != null) {
+            val keyUrl = resolveAbsolute(playlistUrl, keyMatch.groupValues[1])
+            val envelopeRes = client.newCall(GET(keyUrl, streamHeaders)).execute()
+            val envelope = envelopeRes.body.string()
 
-        // 1순위: CDN 직접 스트리밍 (가장 빠름, 첫 번째로 재생 시도)
-        videoList.add(
-            Video(
-                "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=f&$common",
-                "빠른 재생 (CDN 직접)",
-                "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=f&$common",
-                headers = streamHeaders,
-            ),
-        )
+            val uParam = URLEncoder.encode(toBase64Url(playlistUrl), "UTF-8")
+            val rParam = URLEncoder.encode(toBase64Url(playerUrl), "UTF-8")
+            val xParam = URLEncoder.encode(toBase64Url(envelope), "UTF-8")
+            val common = "u=$uParam&r=$rParam&x=$xParam"
 
-        // 2순위: 원본 직접 재생 (플레이어가 복호화 지원 시)
-        videoList.add(Video(playlistUrl, "원본 직접 재생 (HLS)", playlistUrl, headers = streamHeaders))
+            // 1순위: CDN 직접 스트리밍 (복호화 키 정상 포함)
+            videoList.add(
+                Video(
+                    "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=f&$common",
+                    "빠른 재생 (CDN 직접)",
+                    "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=f&$common",
+                    headers = streamHeaders,
+                ),
+            )
+            // 2순위: 중계 프록시 재생
+            videoList.add(
+                Video(
+                    "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=p&$common",
+                    "호환 재생 (중계)",
+                    "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=p&$common",
+                    headers = streamHeaders,
+                ),
+            )
+        } else {
+            videoList.add(Video(playlistUrl, "자동 (HLS)", playlistUrl, headers = streamHeaders))
+        }
 
-        // 3순위: 중계 프록시 재생 (호환성 보장)
-        videoList.add(
-            Video(
-                "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=p&$common",
-                "호환 재생 (중계)",
-                "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=p&$common",
-                headers = streamHeaders,
-            ),
-        )
-
-        return videoList
+        return if (videoList.isNotEmpty()) videoList else fallbackVideoParse(response)
     }
 
     private fun fallbackVideoParse(response: Response): List<Video> {
