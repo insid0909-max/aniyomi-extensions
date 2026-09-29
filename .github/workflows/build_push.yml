@@ -40,28 +40,25 @@ jobs:
 
       - name: Prepare fixed signing key
         run: |
-          KEYSTORE_PATH="$GITHUB_WORKSPACE/keystore.jks"
+          KEYSTORE_PATH="$GITHUB_WORKSPACE/debug.keystore"
+          rm -f "$KEYSTORE_PATH"
+          keytool -genkeypair -v \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
           
-          # 이미 저장소에 고정 키가 커밋되어 있지 않다면 생성
-          if [ ! -f "$KEYSTORE_PATH" ]; then
-            keytool -genkeypair -v \
-              -keystore "$KEYSTORE_PATH" \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
-          fi
-
           SIGNING_KEY=$(keytool -list -v -keystore "$KEYSTORE_PATH" -alias androiddebugkey -storepass android | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
           echo "SIGNING_KEY=$SIGNING_KEY" >> $GITHUB_ENV
           echo "Fixed Fingerprint: $SIGNING_KEY"
 
       - name: Auto bump version code in build files
         run: |
-          TARGET_VCODE=$(( ${{ github.run_number }} + 300 ))
+          TARGET_VCODE=$(( ${{ github.run_number }} + 100 ))
           echo "Target extVersionCode: $TARGET_VCODE"
           
           TARGET_FILES=$(find . -path "*tvroom*" -name "build.gradle*" -not -path "*/build/*")
@@ -74,9 +71,7 @@ jobs:
             echo "Updating version in $f"
             sed -i -E "s/extVersionCode\s*=\s*[0-9]+/extVersionCode = $TARGET_VCODE/g" "$f"
             sed -i -E "s/set\(\"extVersionCode\",\s*[0-9]+\)/set(\"extVersionCode\", $TARGET_VCODE)/g" "$f"
-            sed -i -E "s/set\(\"extVersion\",\s*\"[^\"]+\"\)/set(\"extVersion\", \"14.${{ github.run_number }}\")/g" "$f"
-            sed -i -E "s/extVersion\s*=\s*\"[^\"]+\"/extVersion = \"14.${{ github.run_number }}\"/g" "$f"
-            grep -H "extVersion" "$f" || true
+            grep -H "extVersionCode" "$f" || true
           done
 
       - name: Build extensions
@@ -86,8 +81,8 @@ jobs:
             -PsigningStorePassword="android" \
             -PsigningKeyPassword="android" \
             -PsigningKeyAlias="androiddebugkey" \
-            -PsigningStoreFile="$GITHUB_WORKSPACE/keystore.jks" \
-            -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/keystore.jks" \
+            -PsigningStoreFile="$GITHUB_WORKSPACE/debug.keystore" \
+            -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/debug.keystore" \
             -Pandroid.injected.signing.store.password="android" \
             -Pandroid.injected.signing.key.alias="androiddebugkey" \
             -Pandroid.injected.signing.key.password="android" \
@@ -140,8 +135,10 @@ jobs:
                           elif part.startswith("versionName='"):
                               vname = part.split("'")[1]
 
-              if not pkg:
+              if not pkg or not vcode or not vname:
                   continue
+
+              print(f"Extracted APK Data -> pkg: {pkg}, vcode: {vcode}, vname: {vname}")
 
               display_name = "티비위키"
               base_domain = "https://tvwiki51.net"
@@ -179,6 +176,7 @@ jobs:
 
               apk_size = os.path.getsize(os.path.join(repo_dir, target_name))
 
+              # APK 파일에 실제로 들어간 code와 version을 100% 동일하게 저장
               extensions.append({
                   "name": display_name,
                   "pkg": pkg,
