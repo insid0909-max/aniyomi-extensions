@@ -59,8 +59,8 @@ jobs:
       - name: Calculate auto version
         run: |
           AUTO_VCODE=$(( ${{ github.run_number }} - 209 ))
-          if [ $AUTO_VCODE -lt 14 ]; then
-            AUTO_VCODE=14
+          if [ $AUTO_VCODE -lt 20 ]; then
+            AUTO_VCODE=20
           fi
           echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
           echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
@@ -132,20 +132,16 @@ jobs:
               if not pkg or not vcode or not vname:
                   continue
 
-              clean_pkg = pkg
-              if clean_pkg.endswith(".tvroom.tvroom"):
-                  clean_pkg = clean_pkg.replace(".tvroom.tvroom", ".tvroom")
-
-              # APK 실제 라벨인 TVroom으로 일치시켜 중복 분리 방지
-              display_name = "TVroom"
+              # APK 실제 라벨과 실제 패키지명을 무조건 100% 그대로 반영
+              display_name = label if label else "TVroom"
               source_name = "티비위키"
               base_domain = "https://tvwiki51.net"
-              target_name = f"aniyomi-{clean_pkg}-v{vname}-release.apk"
+              target_name = f"aniyomi-{pkg}-v{vname}-release.apk"
 
               for dest in [repo_dir, os.path.join(repo_dir, "anime"), os.path.join(repo_dir, "apk")]:
                   subprocess.run(["cp", "-v", apk, os.path.join(dest, target_name)])
 
-              icon_file = f"{clean_pkg}.png"
+              icon_file = f"{pkg}.png"
               icon_path_in_apk = None
               for line in badging.splitlines():
                   if "application-icon-" in line or "icon='" in line:
@@ -161,7 +157,7 @@ jobs:
 
               extensions.append({
                   "name": display_name,
-                  "pkg": clean_pkg,
+                  "pkg": pkg,
                   "apk": target_name,
                   "lang": "ko",
                   "code": vcode,
@@ -190,7 +186,7 @@ jobs:
           with open(os.path.join(repo_dir, "_headers"), "w", encoding="utf-8") as f:
               f.write("/*\n  Access-Control-Allow-Origin: *\n/index.min.json\n  Cache-Control: no-cache, no-store, must-revalidate\n/anime/index.min.json\n  Cache-Control: no-cache, no-store, must-revalidate\n/repo.json\n  Cache-Control: no-cache, no-store, must-revalidate\n")
 
-          print(f"인덱싱 완료 -> Name: {display_name}, Version: {vname}, Code: {vcode}, Pkg: {clean_pkg}")
+          print(f"인덱싱 완료 -> Name: {display_name}, Version: {vname}, Code: {vcode}, Pkg: {pkg}")
           EOF
 
       - name: Deploy to GitHub Pages
