@@ -29,6 +29,15 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip pillow
+
       - name: Prepare fixed signing key
         run: |
           KEYSTORE_PATH="$GITHUB_WORKSPACE/keystore.jks"
@@ -77,7 +86,6 @@ jobs:
         run: |
           mkdir -p repo/anime repo/apk repo/icon
           
-          # Cloudflare Pages Functions 폴더 배포 포함
           if [ -d "functions" ]; then
             cp -rv functions repo/
           fi
@@ -87,7 +95,6 @@ jobs:
           
           BADGING=$(aapt dump badging "$ORIG_APK")
           
-          # APK 내부의 실제 패키지명 그대로 추출
           REAL_PKG=$(echo "$BADGING" | grep -oP "package: name='\K[^']+")
           REAL_VCODE=$(echo "$BADGING" | grep -oP "versionCode='\K[^']+")
           REAL_VNAME=$(echo "$BADGING" | grep -oP "versionName='\K[^']+")
@@ -110,6 +117,33 @@ jobs:
             cp -v "repo/icon/${REAL_PKG}.png" "repo/anime/${REAL_PKG}.png" || true
           fi
 
+          # 아이콘 배경 자동 투명화 처리
+          python3 - << 'EOF'
+          import glob
+          from PIL import Image
+
+          def process_icon(img_path):
+              try:
+                  img = Image.open(img_path).convert("RGBA")
+                  datas = img.getdata()
+                  new_data = []
+                  for item in datas:
+                      # 밝은 픽셀(체크무늬 흰색/연회색 영역)을 완전 투명 처리
+                      if item[0] > 180 and item[1] > 180 and item[2] > 180:
+                          new_data.append((255, 255, 255, 0))
+                      else:
+                          new_data.append(item)
+                  img.putdata(new_data)
+                  img.save(img_path, "PNG")
+                  print(f"투명화 완료: {img_path}")
+              except Exception as e:
+                  print(f"투명화 실패 ({img_path}): {e}")
+
+          for icon in glob.glob("repo/**/*.png", recursive=True):
+              process_icon(icon)
+          EOF
+
+          # 인덱스 생성
           python3 - << EOF
           import os, json, hashlib
 
