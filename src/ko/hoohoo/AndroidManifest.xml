@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:label="후후티비"
+        android:icon="@mipmap/tv_icon"
+        tools:replace="android:label,android:icon">
+        <meta-data
+            android:name="tachiyomi.animeextension.class"
+            android:value=".HooHooTV" />
+    </application>
+</manifest>
