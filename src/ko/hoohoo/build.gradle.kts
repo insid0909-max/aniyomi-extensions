@@ -4,7 +4,7 @@ plugins {
 }
 
 ext {
-    set("extName", "후후티비")
+    set("extName", "HooHoo")
     set("extClass", ".HooHooTV")
     set("extVersionCode", 1)
 }
@@ -12,12 +12,6 @@ ext {
 apply(from = "$rootDir/common.gradle")
 
 android {
-    namespace = "eu.kanade.tachiyomi.animeextension.ko.hoohootv"
-
-    defaultConfig {
-        applicationId = "eu.kanade.tachiyomi.animeextension.ko.hoohootv"
-    }
-
     sourceSets {
         getByName("main") {
             res.srcDirs("$rootDir/src/ko/tvroom/res")
