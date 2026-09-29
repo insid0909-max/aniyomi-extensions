@@ -6,7 +6,7 @@ plugins {
 ext {
     set("extName", "TVroom")
     set("extClass", ".TVroom")
-    set("extVersionCode", 20)
+    set("extVersionCode", 150)
 }
 
 apply(from = "$rootDir/common.gradle")
@@ -30,4 +30,3 @@ dependencies {
         exclude(group = "com.github.inorichi.injekt")
     }
 }
-
