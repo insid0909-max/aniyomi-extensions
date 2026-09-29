@@ -1,0 +1,8 @@
+/*
+  Access-Control-Allow-Origin: *
+/index.min.json
+  Cache-Control: no-cache, no-store, must-revalidate
+/anime/index.min.json
+  Cache-Control: no-cache, no-store, must-revalidate
+/repo.json
+  Cache-Control: no-cache, no-store, must-revalidate
