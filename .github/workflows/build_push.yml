@@ -57,8 +57,6 @@ jobs:
 
       - name: Build extensions
         env:
-          CI_CHUNK_NUM: 0
-          CI_CHUNK_SIZE: 1
           CI_SIGNING_KEY: keystore.jks
           CI_SIGNING_KEY_ALIAS: aniyomi
           CI_SIGNING_KEY_PASSWORD: aniyomi123
