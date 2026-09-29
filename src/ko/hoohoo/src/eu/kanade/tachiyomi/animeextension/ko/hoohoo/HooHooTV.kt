@@ -57,7 +57,7 @@ class HooHooTV : ParsedAnimeHttpSource() {
     }
 
     override fun popularAnimeSelector(): String =
-        "a[href*='/detail/']:has(img), div.item:has(a[href*='/detail/']), div.post-item:has(a[href*='/detail/'])"
+        "#container a[href*='/detail/']:has(img), #container div[class*='item']:has(a[href*='/detail/']), #container div[class*='post']:has(a[href*='/detail/'])"
 
     override fun popularAnimeFromElement(element: Element): SAnime {
         return SAnime.create().apply {
@@ -65,13 +65,13 @@ class HooHooTV : ParsedAnimeHttpSource() {
             setUrlWithoutDomain(anchor.attr("href"))
 
             val img = element.selectFirst("img")
-            val extractedTitle = img?.attr("alt")?.takeIf { it.isNotBlank() }
+            val rawTitle = img?.attr("alt")?.takeIf { it.isNotBlank() }
                 ?: img?.attr("title")?.takeIf { it.isNotBlank() }
                 ?: anchor.attr("title").takeIf { it.isNotBlank() }
                 ?: element.selectFirst(".title, .subject, .name")?.text()?.takeIf { it.isNotBlank() }
                 ?: "제목 없음"
 
-            title = cleanTitle(extractedTitle)
+            title = cleanTitle(rawTitle)
 
             thumbnail_url = img?.let {
                 it.attr("abs:data-src").ifEmpty {
@@ -119,17 +119,18 @@ class HooHooTV : ParsedAnimeHttpSource() {
     // --- 상세 정보 ---
     override fun animeDetailsParse(document: Document): SAnime {
         return SAnime.create().apply {
-            val hElements = document.select("h1, h2, h3, .title, .subject")
-            val detailTitle = hElements
+            // #container 내부 본문 영역에서 제목 정밀 탐색 (#header 오염 차단)
+            val container = document.selectFirst("#container") ?: document
+            val detailTitle = container.select("h1, h2, h3, .title, .subject, [class*='title']")
                 .map { it.text().trim() }
                 .firstOrNull { it.isNotBlank() && !it.contains("다시보기") && !it.contains("후후티비") && !it.contains("영화 ,") }
                 ?: document.title()
 
             title = cleanTitle(detailTitle)
 
-            description = document.select(".desc, .summary, div:contains(줄거리) + div, div:contains(줄거리) + p, .content").text().trim()
+            description = container.select(".desc, .summary, div:contains(줄거리) + div, div:contains(줄거리) + p, .content").text().trim()
 
-            val img = document.selectFirst(".poster img, .detail-thumb img, img.thumb")
+            val img = container.selectFirst(".poster img, .detail-thumb img, img.thumb")
             thumbnail_url = img?.let {
                 it.attr("abs:data-src").ifEmpty {
                     it.attr("abs:data-original").ifEmpty {
@@ -140,31 +141,29 @@ class HooHooTV : ParsedAnimeHttpSource() {
         }
     }
 
-    // --- 회차 목록 파싱 (본문 내 모든 회차 링크 수집) ---
+    // --- 회차 목록 (캡처된 모든 링크 수집) ---
     override fun episodeListParse(response: Response): List<SEpisode> {
         val document = response.asJsoup()
         val episodes = mutableListOf<SEpisode>()
 
-        // 1. 본문 안의 모든 링크 중에서 회차 정보를 담고 있는 태그 수집
-        val linkElements = document.select("a[href*='/detail/'], a[href*='/view/'], a[href*='/watch/'], a[href*='/play/'], .ep-item a, .episode-list a")
+        // 1. #container 내부의 모든 상세/재생 링크 수집
+        val linkElements = document.select("#container a[href*='/detail/'], #container a[href*='/view/'], #container a[href*='/watch/'], a[href*='/detail/']")
         for (el in linkElements) {
             val href = el.attr("href")
             val text = el.text().trim()
-            // 회차 식별 조건 (화, 회, 시즌, 또는 날짜 형식 포함)
             if (href.isNotBlank() && (text.contains("화") || text.contains("회") || text.contains("시즌"))) {
-                val cleanedName = cleanEpisodeName(text)
                 episodes.add(
                     SEpisode.create().apply {
-                        name = cleanedName
+                        name = cleanEpisodeName(text)
                         setUrlWithoutDomain(href)
                     },
                 )
             }
         }
 
-        // 2. 만약 별도 회차 링크 태그가 없다면 본문 텍스트 내 현재 에피소드 1개 생성
+        // 2. 단일 페이지(또는 리스트가 비동기인 경우) 현재 페이지 회차 보장
         if (episodes.isEmpty()) {
-            val currentTitle = document.select("h1, h2, h3, .title")
+            val currentTitle = document.select("#container h1, #container h2, #container h3, [class*='title']")
                 .map { it.text().trim() }
                 .firstOrNull { it.contains("화") || it.contains("회") }
                 ?: "현재 회차 바로보기"
@@ -183,21 +182,16 @@ class HooHooTV : ParsedAnimeHttpSource() {
     override fun episodeListSelector(): String = throw UnsupportedOperationException("Not used")
     override fun episodeFromElement(element: Element): SEpisode = throw UnsupportedOperationException("Not used")
 
-    // --- 비디오 재생 링크 (Iframe 내부 실제 스트림 추출) ---
+    // --- 비디오 재생 링크 (JW Player 및 creatorofvideo 스트림 정밀 파싱) ---
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
         val videoList = mutableListOf<Video>()
+        val pageHtml = document.html()
 
-        // 1. 직접 비디오 태그
-        val directVideos = document.select("video source[src], video[src]")
-        for (v in directVideos) {
-            val src = v.attr("abs:src")
-            if (src.isNotBlank() && (src.contains(".m3u8") || src.contains(".mp4"))) {
-                videoList.add(Video(src, "직접 재생", src, headers = headers))
-            }
-        }
+        // 1. 본문 스크립트 내 jwplayer setup 또는 file: "..." 직접 추출
+        extractStreamsFromHtml(pageHtml, document.location(), videoList)
 
-        // 2. iframe 탐색 -> iframe 내부 HTML 재요청하여 실제 m3u8/mp4 추출
+        // 2. iframe 및 외부 플레이어 페이지(creatorofvideo.com 등) 진입 파싱
         val iframes = document.select("iframe[src], iframe[data-src]")
         for (iframe in iframes) {
             val iframeUrl = iframe.attr("abs:src").ifEmpty { iframe.attr("abs:data-src") }
@@ -208,40 +202,41 @@ class HooHooTV : ParsedAnimeHttpSource() {
                 val iframeDoc = client.newCall(GET(iframeUrl, iframeHeaders)).execute().asJsoup()
                 val iframeHtml = iframeDoc.html()
 
-                // 내부 video 태그 탐색
-                val innerSrc = iframeDoc.selectFirst("video source[src], video[src]")?.attr("abs:src")
-                if (!innerSrc.isNullOrBlank()) {
-                    videoList.add(Video(innerSrc, "고화질 스트림 (내부)", innerSrc, headers = iframeHeaders))
-                }
-
-                // 스크립트 내부 스트림 주소 정규식 추출
-                """https?://[^\s"'<>]+\.(?:m3u8|mp4)[^\s"'<>]*""".toRegex().findAll(iframeHtml).forEach { match ->
-                    val streamUrl = match.value
-                    val label = if (streamUrl.contains("m3u8")) "HLS 스트림" else "MP4 비디오"
-                    videoList.add(Video(streamUrl, label, streamUrl, headers = iframeHeaders))
-                }
+                // 내부 HTML에서 m3u8 / mp4 추출
+                extractStreamsFromHtml(iframeHtml, iframeUrl, videoList)
             } catch (_: Exception) {
-                // iframe 직접 요청 실패 시 fallback 등록
-                videoList.add(Video(iframeUrl, "플레이어 링크", iframeUrl, headers = headers))
+                // 실패 시 스킵
             }
         }
 
-        // 3. 본문 스크립트 내부 스트림 주소 탐색
-        val html = document.html()
-        """https?://[^\s"'<>]+\.(?:m3u8|mp4)[^\s"'<>]*""".toRegex().findAll(html).forEach { match ->
-            val streamUrl = match.value
-            val label = if (streamUrl.contains("m3u8")) "HLS 스트림" else "MP4 비디오"
-            videoList.add(Video(streamUrl, label, streamUrl, headers = headers))
+        return videoList.distinctBy { it.url }
+    }
+
+    // m3u8 및 mp4 추출 공통 헬퍼
+    private fun extractStreamsFromHtml(html: String, refererUrl: String, list: MutableList<Video>) {
+        val reqHeaders = headers.newBuilder().set("Referer", refererUrl).build()
+
+        // jwplayer file: "..." 패턴
+        val fileRegex = """(?:file|source)\s*:\s*["'](https?://[^"']+\.(?:m3u8|mp4)[^"']*)["']""".toRegex(RegexOption.IGNORE_CASE)
+        fileRegex.findAll(html).forEach { match ->
+            val streamUrl = match.groupValues[1]
+            val label = if (streamUrl.contains(".m3u8")) "JW HLS 스트림" else "JW MP4 비디오"
+            list.add(Video(streamUrl, label, streamUrl, headers = reqHeaders))
         }
 
-        return videoList.distinctBy { it.url }
+        // 전체 본문 url 정규식
+        val directStreamRegex = """https?://[^\s"'<>]+\.(?:m3u8|mp4)[^\s"'<>]*""".toRegex()
+        directStreamRegex.findAll(html).forEach { match ->
+            val streamUrl = match.value
+            val label = if (streamUrl.contains(".m3u8")) "HLS 고화질 스트림" else "MP4 고화질"
+            list.add(Video(streamUrl, label, streamUrl, headers = reqHeaders))
+        }
     }
 
     override fun videoListSelector(): String = throw UnsupportedOperationException("Not used")
     override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException("Not used")
     override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException("Not used")
 
-    // 불필요한 조회수 및 태그 정리
     private fun cleanTitle(raw: String): String {
         return raw.replace(Regex("""(?i)다시보기|후후티비.*|영화\s*,.*|\b\d{1,3}(,\d{3})+\b|드라마\s*,.*"""), "")
             .trim()
