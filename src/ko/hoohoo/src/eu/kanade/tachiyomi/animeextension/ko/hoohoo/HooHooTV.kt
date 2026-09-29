@@ -24,100 +24,90 @@ class HooHooTV : ParsedAnimeHttpSource() {
 
     override val client: OkHttpClient = network.cloudflareClient
 
-    // --- 신호등(다중 우회 도메인) 후보 목록 ---
-    private val candidateDomains = listOf(
-        "https://fq.hoohootv458.xyz",
-        "https://hoohootv.net",
-        "https://hoohootv.com",
-        "https://hoohootv.org",
-    )
-
-    private var activeBaseUrl: String = candidateDomains.first()
-
-    override val baseUrl: String
-        get() = activeBaseUrl
+    override val baseUrl = "https://fu.hoohootv458.xyz"
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
         .add(
             "User-Agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
-        .add("Referer", baseUrl)
+        .add("Referer", "$baseUrl/")
 
-    // 신호등: 정상 응답(200 OK)이 오는 도메인을 찾아 baseUrl 갱신
-    private fun getWorkingUrl(endpoint: String = "/home"): String {
-        for (domain in candidateDomains) {
-            try {
-                val req = Request.Builder()
-                    .url("$domain$endpoint")
-                    .headers(headers)
-                    .head()
-                    .build()
-                client.newCall(req).execute().use { res ->
-                    if (res.isSuccessful) {
-                        activeBaseUrl = domain
-                        return "$domain$endpoint"
-                    }
-                }
-            } catch (_: Exception) {
-                // 접속 불가 시 다음 도메인 탐색
-            }
-        }
-        return "$activeBaseUrl$endpoint"
-    }
-
-    // --- 인기 목록 ---
+    // --- 인기 탭 ---
     override fun popularAnimeRequest(page: Int): Request {
-        val targetUrl = getWorkingUrl("/home")
-        return GET(targetUrl, headers)
+        val url = if (page <= 1) "$baseUrl/popular" else "$baseUrl/popular?page=$page"
+        return GET(url, headers)
     }
 
-    override fun popularAnimeSelector(): String = "div.item, div.post-item, .list-item"
+    override fun popularAnimeSelector(): String =
+        ".post-item, .list-item, .item, article, .card, div[class*='post'], div[class*='item'], div[class*='video-item'], div[class*='thumb']"
 
     override fun popularAnimeFromElement(element: Element): SAnime {
         return SAnime.create().apply {
-            title = element.select("a, .title").text().trim()
-            setUrlWithoutDomain(element.select("a").attr("href"))
-            thumbnail_url = element.select("img").attr("abs:src")
+            val titleElement = element.selectFirst(".title, .post-title, .entry-title, h2, h3, a[title], .subject")
+            title = (titleElement?.attr("title")?.takeIf { it.isNotBlank() }
+                ?: titleElement?.text()
+                ?: element.selectFirst("a")?.text()
+                ?: "제목 없음").trim()
+
+            val linkElement = element.selectFirst("a[href*='/']") ?: element
+            setUrlWithoutDomain(linkElement.attr("href"))
+
+            val imgElement = element.selectFirst("img")
+            thumbnail_url = imgElement?.let {
+                it.attr("abs:data-src").ifEmpty { it.attr("abs:src") }
+            }
         }
     }
 
-    override fun popularAnimeNextPageSelector(): String? = null
+    override fun popularAnimeNextPageSelector(): String? = ".pagination .next, a.next, .nav-links .next, a[rel='next']"
 
-    // --- 최신 목록 ---
-    override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
+    // --- 최신 탭 ---
+    override fun latestUpdatesRequest(page: Int): Request {
+        val url = if (page <= 1) "$baseUrl/home" else "$baseUrl/home?page=$page"
+        return GET(url, headers)
+    }
 
     override fun latestUpdatesSelector(): String = popularAnimeSelector()
 
     override fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
-    override fun latestUpdatesNextPageSelector(): String? = null
+    override fun latestUpdatesNextPageSelector(): String? = popularAnimeNextPageSelector()
 
     // --- 검색 ---
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        return GET("$baseUrl/search?q=$query", headers)
+        val url = if (page <= 1) {
+            "$baseUrl/search?q=$query"
+        } else {
+            "$baseUrl/search?q=$query&page=$page"
+        }
+        return GET(url, headers)
     }
 
     override fun searchAnimeSelector(): String = popularAnimeSelector()
 
     override fun searchAnimeFromElement(element: Element): SAnime = popularAnimeFromElement(element)
 
-    override fun searchAnimeNextPageSelector(): String? = null
+    override fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
 
     // --- 상세 정보 ---
     override fun animeDetailsParse(document: Document): SAnime {
         return SAnime.create().apply {
-            title = document.select("h1, .entry-title").text().trim()
-            description = document.select(".desc, .summary").text().trim()
+            title = (document.selectFirst("h1, .entry-title, .post-title, .title")?.text() ?: "").trim()
+            description = document.select(".desc, .summary, .entry-content, .post-content").text().trim()
+            thumbnail_url = document.selectFirst(".poster img, .entry-content img, .post-thumbnail img, img[class*='poster']")?.let {
+                it.attr("abs:data-src").ifEmpty { it.attr("abs:src") }
+            }
         }
     }
 
     // --- 회차 목록 ---
-    override fun episodeListSelector(): String = "ul.episodes li, .ep-list a, .episode-item"
+    override fun episodeListSelector(): String =
+        ".episodes a, .ep-list a, .episode-item, ul.list-group li a, a[href*='episode'], a[href*='watch'], a[href*='view']"
 
     override fun episodeFromElement(element: Element): SEpisode {
         return SEpisode.create().apply {
-            name = element.text().trim()
+            name = element.text().trim().ifEmpty { "회차 바로보기" }
             setUrlWithoutDomain(element.attr("href"))
         }
     }
@@ -125,8 +115,11 @@ class HooHooTV : ParsedAnimeHttpSource() {
     // --- 비디오 링크 추출 ---
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
-        val videoUrl = document.select("iframe").attr("src")
-        return if (videoUrl.isNotEmpty()) {
+        val videoUrl = document.selectFirst("iframe[src*='http']")?.attr("abs:src")
+            ?: document.selectFirst("video source")?.attr("abs:src")
+            ?: document.selectFirst("video")?.attr("abs:src")
+
+        return if (!videoUrl.isNullOrEmpty()) {
             listOf(Video(videoUrl, "기본 화질", videoUrl))
         } else {
             emptyList()
