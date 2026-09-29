@@ -55,6 +55,14 @@ jobs:
           echo "SIGNING_KEY=$SIGNING_KEY" >> $GITHUB_ENV
           echo "Fixed Fingerprint: $SIGNING_KEY"
 
+      - name: Auto bump version code in build.gradle
+        run: |
+          # 빌드할 때마다 현재 build_number(고유 증가 번호) + 300으로 APK 내부 버전을 강제 교체
+          TARGET_VCODE=$(( ${{ github.run_number }} + 300 ))
+          echo "Setting extVersionCode to $TARGET_VCODE"
+          sed -i -E "s/extVersionCode\s*=\s*[0-9]+/extVersionCode = $TARGET_VCODE/g" src/ko/tvroom/build.gradle
+          grep "extVersionCode" src/ko/tvroom/build.gradle
+
       - name: Build extensions
         env:
           CI_SIGNING_KEY: keystore.jks
@@ -166,6 +174,7 @@ jobs:
 
               apk_size = os.path.getsize(os.path.join(repo_dir, target_name))
 
+              # sed로 실제 주입된 APK 내부 versionCode와 완벽 일치
               extensions.append({
                   "name": display_name,
                   "pkg": pkg,
