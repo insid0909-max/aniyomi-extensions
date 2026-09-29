@@ -6,7 +6,7 @@ plugins {
 ext {
     set("extName", "HooHoo")
     set("extClass", ".HooHooTV")
-    set("extVersionCode", 150)
+    set("extVersionCode", 152)
 }
 
 apply(from = "$rootDir/common.gradle")
