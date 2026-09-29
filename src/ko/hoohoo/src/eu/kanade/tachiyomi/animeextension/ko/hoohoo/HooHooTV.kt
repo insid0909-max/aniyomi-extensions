@@ -28,7 +28,6 @@ class HooHooTV : ParsedAnimeHttpSource() {
 
     override val baseUrl = "https://fu.hoohootv458.xyz"
 
-    // Cloudflare 차단 우회용 모바일 크롬 완전 헤더
     override fun headersBuilder(): Headers.Builder {
         val cookie = runCatching { CookieManager.getInstance().getCookie(baseUrl) }.getOrNull() ?: ""
         return Headers.Builder()
@@ -65,15 +64,18 @@ class HooHooTV : ParsedAnimeHttpSource() {
             val anchor = if (element.tagName() == "a") element else element.selectFirst("a[href*='/detail/']") ?: element
             setUrlWithoutDomain(anchor.attr("href"))
 
-            val titleNode = element.selectFirst(".title, .subject, .name, h2, h3, a[title]")
-            val rawTitle = titleNode?.attr("title")?.takeIf { it.isNotBlank() }
-                ?: titleNode?.text()?.takeIf { it.isNotBlank() }
+            val img = element.selectFirst("img")
+            
+            // 1. img의 alt/title 속성이나 부모 anchor의 title을 최우선으로 가져와 '제목 없음' 해결
+            val extractedTitle = img?.attr("alt")?.takeIf { it.isNotBlank() }
+                ?: img?.attr("title")?.takeIf { it.isNotBlank() }
                 ?: anchor.attr("title").takeIf { it.isNotBlank() }
+                ?: element.selectFirst(".title, .subject, .name, h2, h3")?.text()?.takeIf { it.isNotBlank() }
                 ?: anchor.text().takeIf { it.isNotBlank() }
                 ?: "제목 없음"
-            title = cleanTitle(rawTitle)
 
-            val img = element.selectFirst("img")
+            title = cleanTitle(extractedTitle)
+
             thumbnail_url = img?.let {
                 it.attr("abs:data-src").ifEmpty {
                     it.attr("abs:data-original").ifEmpty {
@@ -117,18 +119,21 @@ class HooHooTV : ParsedAnimeHttpSource() {
 
     override fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
 
-    // --- 상세 정보 ---
+    // --- 상세 정보 (웹뷰 캡처 구조 정확 타겟팅) ---
     override fun animeDetailsParse(document: Document): SAnime {
         return SAnime.create().apply {
-            val titleNode = document.selectFirst(".detail-title, .content-title, .view-title, h1:not(:contains(후후티비)), h2:not(:contains(후후티비))")
-            val extractedTitle = titleNode?.text()?.trim()
-            if (!extractedTitle.isNullOrBlank()) {
-                title = cleanTitle(extractedTitle)
-            }
+            // 웹뷰 스크린샷 기준: '영화, 드라마...' 사이트 배너는 배제하고 본문의 실제 회차/작품 타이틀 추출
+            val detailTitle = document.select("h1, h2, h3, div[class*='title']")
+                .map { it.text().trim() }
+                .firstOrNull { it.isNotBlank() && !it.contains("다시보기") && !it.contains("후후티비") && !it.contains("영화 ,") }
+                ?: document.title()
 
-            description = document.select(".desc, .summary, .detail-desc, .content-desc, .entry-content").text().trim()
-            
-            val img = document.selectFirst(".poster img, .detail-thumb img, .view-thumb img, img.poster")
+            title = cleanTitle(detailTitle)
+
+            // 줄거리 영역 추출
+            description = document.select(".desc, .summary, div:contains(줄거리) + div, div:contains(줄거리) + p, .content").text().trim()
+
+            val img = document.selectFirst(".poster img, .detail-thumb img, img.thumb")
             thumbnail_url = img?.let {
                 it.attr("abs:data-src").ifEmpty {
                     it.attr("abs:data-original").ifEmpty {
@@ -139,48 +144,77 @@ class HooHooTV : ParsedAnimeHttpSource() {
         }
     }
 
-    // --- 회차 목록 ---
-    override fun episodeListSelector(): String =
-        "a[href*='/watch/'], a[href*='/view/'], a[href*='/play/'], .episodes a, .ep-list a, .episode-item, ul.list-group li a"
+    // --- 회차 목록 (기본 1회차 보장 및 다중 회차 추출) ---
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val document = response.asJsoup()
+        val episodes = mutableListOf<SEpisode>()
 
-    override fun episodeFromElement(element: Element): SEpisode {
-        return SEpisode.create().apply {
-            name = element.text().trim().ifEmpty { "회차 바로보기" }
-            setUrlWithoutDomain(element.attr("href"))
+        // 1. 페이지 내 회차 버튼이나 링크가 있는 경우 추출
+        val epElements = document.select("a[href*='/detail/'], a[href*='/view/'], a[href*='/watch/'], .episode-list a, .ep-item a")
+        for (el in epElements) {
+            val href = el.attr("href")
+            val epName = el.text().trim()
+            if (href.isNotBlank() && epName.isNotBlank() && (epName.contains("화") || epName.contains("회") || epName.contains("시즌"))) {
+                episodes.add(
+                    SEpisode.create().apply {
+                        name = epName
+                        setUrlWithoutDomain(href)
+                    },
+                )
+            }
         }
+
+        // 2. 만약 상세 페이지 자체가 단일 재생 회차라 별도 리스트 태그가 없다면, 현재 페이지를 '1화(현재 회차)'로 등록
+        if (episodes.isEmpty()) {
+            val epTitle = document.select("h1, h2, h3, div[class*='title']")
+                .map { it.text().trim() }
+                .firstOrNull { it.contains("화") || it.contains("회") }
+                ?: "1화 (바로보기)"
+
+            episodes.add(
+                SEpisode.create().apply {
+                    name = epTitle
+                    setUrlWithoutDomain(response.request.url.encodedPath)
+                },
+            )
+        }
+
+        return episodes.distinctBy { it.url }
     }
 
-    // --- 비디오 재생 링크 파싱 ---
+    override fun episodeListSelector(): String = throw UnsupportedOperationException("Not used")
+    override fun episodeFromElement(element: Element): SEpisode = throw UnsupportedOperationException("Not used")
+
+    // --- 비디오 재생 링크 (웹뷰의 실제 플레이어 영역 추출) ---
     override fun videoListParse(response: Response): List<Video> {
         val document = response.asJsoup()
         val videoList = mutableListOf<Video>()
 
-        // 1. iframe 주소
+        // 1. iframe 추출
         val iframes = document.select("iframe[src], iframe[data-src]")
         for (iframe in iframes) {
             val src = iframe.attr("abs:src").ifEmpty { iframe.attr("abs:data-src") }
             if (src.isNotBlank() && !src.contains("google") && !src.contains("ad")) {
-                videoList.add(Video(src, "기본 재생 서버", src))
+                videoList.add(Video(src, "기본 재생 플레이어", src, headers = headers))
             }
         }
 
-        // 2. 외부 재생 링크 버튼
-        val playButtons = document.select("a[href*='stream'], a[href*='play'], a[href*='watch'], a[href*='embed']")
-        for (btn in playButtons) {
-            val link = btn.attr("abs:href")
-            if (link.isNotBlank() && !link.startsWith(baseUrl)) {
-                val label = btn.text().trim().ifEmpty { "외부 플레이어" }
-                videoList.add(Video(link, label, link))
+        // 2. HTML5 direct video 태그
+        val directVideos = document.select("video source[src], video[src]")
+        for (v in directVideos) {
+            val src = v.attr("abs:src")
+            if (src.isNotBlank()) {
+                videoList.add(Video(src, "직접 재생", src, headers = headers))
             }
         }
 
-        // 3. 본문 스크립트 스트림 링크 (m3u8, mp4)
+        // 3. 페이지 스크립트 내부 스트림 주소(m3u8, mp4)
         val html = document.html()
         """https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""".toRegex().findAll(html).forEach {
-            videoList.add(Video(it.value, "고화질 스트림 (m3u8)", it.value))
+            videoList.add(Video(it.value, "고화질 스트림 (m3u8)", it.value, headers = headers))
         }
         """https?://[^\s"'<>]+\.mp4[^\s"'<>]*""".toRegex().findAll(html).forEach {
-            videoList.add(Video(it.value, "직접 재생 (mp4)", it.value))
+            videoList.add(Video(it.value, "MP4 직접 재생", it.value, headers = headers))
         }
 
         return videoList
@@ -191,6 +225,6 @@ class HooHooTV : ParsedAnimeHttpSource() {
     override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException("Not used")
 
     private fun cleanTitle(raw: String): String {
-        return raw.replace(Regex("후후티비.*"), "").trim().ifEmpty { raw.trim() }
+        return raw.replace(Regex("(?i)다시보기|후후티비.*|영화\\s*,.*"), "").trim().ifEmpty { raw.trim() }
     }
 }
