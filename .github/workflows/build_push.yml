@@ -67,6 +67,7 @@ jobs:
         run: |
           ./gradlew clean :src:ko:tvroom:assembleRelease \
             -x lintKotlin -x lint \
+            -PextVersionCode="${{ github.run_number }}" \
             -PsigningStorePassword="aniyomi123" \
             -PsigningKeyPassword="aniyomi123" \
             -PsigningKeyAlias="aniyomi" \
@@ -78,6 +79,8 @@ jobs:
             --stacktrace
 
       - name: Prepare repo and auto-generate index
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
         run: |
           mkdir -p repo/anime repo/apk repo/icon
           
@@ -91,6 +94,7 @@ jobs:
 
           repo_dir = "repo"
           signing_key = os.environ.get("SIGNING_KEY", "")
+          build_num = int(os.environ.get("BUILD_NUMBER", "1"))
 
           repo_data = {
               "meta": {
@@ -127,13 +131,8 @@ jobs:
               if not pkg:
                   continue
 
-              # 모듈별 소스 이름 및 기본 주소 매핑
-              if "hoohoo" in pkg:
-                  display_name = "후후티비"
-                  base_domain = "https://fq.hoohootv458.xyz"
-              else:
-                  display_name = "티비위키"
-                  base_domain = "https://tvwiki51.net"
+              display_name = "티비위키"
+              base_domain = "https://tvwiki51.net"
 
               target_name = f"aniyomi-{pkg}-v{vname}-release.apk"
               for dest in [repo_dir, os.path.join(repo_dir, "anime"), os.path.join(repo_dir, "apk")]:
@@ -171,12 +170,15 @@ jobs:
 
               apk_size = os.path.getsize(os.path.join(repo_dir, target_name))
 
+              # 기존 기기 버전(150)보다 항상 크면서, 매 커밋마다 1씩 자동 증가 보장
+              final_vcode = max(vcode or 0, build_num + 200)
+
               extensions.append({
                   "name": display_name,
                   "pkg": pkg,
                   "apk": target_name,
                   "lang": "ko",
-                  "code": vcode,
+                  "code": final_vcode,
                   "version": vname,
                   "nsfw": 1,
                   "hasReadme": 0,
