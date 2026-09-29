@@ -55,7 +55,7 @@ jobs:
           echo "SIGNING_KEY=$SIGNING_KEY" >> $GITHUB_ENV
           echo "Fixed Fingerprint: $SIGNING_KEY"
 
-      - name: Build extensions with auto-incremented version
+      - name: Build extensions
         env:
           CI_CHUNK_NUM: 0
           CI_CHUNK_SIZE: 1
@@ -67,13 +67,6 @@ jobs:
           SIGNING_KEY_PASSWORD: aniyomi123
           SIGNING_KEY_ALIAS: aniyomi
         run: |
-          # GitHub Actions 실행 번호를 기반으로 고유한 extVersionCode 생성
-          AUTO_EXT_CODE=$(( 10 + ${{ github.run_number }} ))
-          echo "Building TVroom with auto-incremented versionCode: $AUTO_EXT_CODE"
-
-          # build.gradle.kts 파일의 extVersionCode를 빌드 번호로 직접 치환
-          sed -i -E "s/set\(\"extVersionCode\", [0-9]+\)/set\(\"extVersionCode\", $AUTO_EXT_CODE\)/g" src/ko/tvroom/build.gradle.kts
-
           ./gradlew clean :src:ko:tvroom:assembleRelease \
             -PsigningStorePassword="aniyomi123" \
             -PsigningKeyPassword="aniyomi123" \
