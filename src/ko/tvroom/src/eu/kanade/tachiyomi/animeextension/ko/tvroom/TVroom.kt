@@ -35,13 +35,12 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override val lang = "ko"
     override val supportsLatest = true
 
-    // 안드로이드 기본 프레임워크 리플렉션으로 안전하게 SharedPreferences 획득 (Injekt 의존성 없음)
     private fun getAppPreferences(): SharedPreferences? {
         return runCatching {
             val actThreadClass = Class.forName("android.app.ActivityThread")
             val currentAppMethod = actThreadClass.getMethod("currentApplication")
             val app = currentAppMethod.invoke(null) as? Application
-            app?.getSharedPreferences("source_$id", 0) // 0 = Context.MODE_PRIVATE
+            app?.getSharedPreferences("source_$id", 0)
         }.getOrNull()
     }
 
@@ -49,19 +48,20 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         get() {
             val prefs = getAppPreferences()
 
-            // 1순위: 사용자가 직접 지정한 도메인이 있으면 최우선 적용
             val customUrl = prefs?.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/')
             if (!customUrl.isNullOrBlank()) {
                 return customUrl
             }
 
-            // 2순위: 10분 이내 조회한 메모리 캐시가 유효하면 네트워크 요청 없이 즉시 반환
             val now = System.currentTimeMillis()
             if (cachedDomain != null && now - lastFetchTime < CACHE_TTL_MS) {
                 return cachedDomain!!
             }
 
-            // 3순위: 중앙신호등 API 조회
+            // 실패하더라도 즉시 마지막 주소를 반환하여 비디오 파싱 중 불필요한 지연 방지
+            val lastGood = prefs?.getString(PREF_LAST_GOOD_DOMAIN_KEY, DEFAULT_BASE_URL)
+                ?.takeIf { it.isNotBlank() } ?: DEFAULT_BASE_URL
+
             val fetchedUrl = runCatching {
                 val req = Request.Builder()
                     .url(SIGNAL_URL)
@@ -78,15 +78,13 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 val cleanUrl = fetchedUrl.trim().trimEnd('/')
                 cachedDomain = cleanUrl
                 lastFetchTime = now
-                // 성공한 주소를 마지막 정상 주소로 로컬 영구 저장
                 prefs?.edit()?.putString(PREF_LAST_GOOD_DOMAIN_KEY, cleanUrl)?.apply()
                 return cleanUrl
             }
 
-            // 4순위: 신호등 실패 시 마지막 정상 주소 복구 -> 없으면 하드코딩 기본값
-            return prefs?.getString(PREF_LAST_GOOD_DOMAIN_KEY, DEFAULT_BASE_URL)
-                ?.takeIf { it.isNotBlank() }
-                ?: DEFAULT_BASE_URL
+            cachedDomain = lastGood
+            lastFetchTime = now
+            return lastGood
         }
 
     override val client: OkHttpClient = network.client
@@ -292,6 +290,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     override fun videoListParse(response: Response): List<Video> {
+        val currentBaseUrl = baseUrl
         val episodePath = response.request.url.encodedPath
         val parts = episodePath.trim('/').split("/")
         if (parts.size < 3) {
@@ -302,10 +301,10 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         val wrId = parts[1]
         val epIdx = parts[2]
 
-        val metaUrl = "$baseUrl/bbs/get_episode.php?bo_table=$boTable&wr_id=$wrId&ep_idx=$epIdx"
+        val metaUrl = "$currentBaseUrl/bbs/get_episode.php?bo_table=$boTable&wr_id=$wrId&ep_idx=$epIdx"
         val metaHeaders = Headers.Builder()
             .add("User-Agent", defaultUserAgent)
-            .add("Referer", "$baseUrl$episodePath")
+            .add("Referer", "$currentBaseUrl$episodePath")
             .add("Accept", "application/json")
             .add("X-Requested-With", "XMLHttpRequest")
             .build()
@@ -324,9 +323,27 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         for (payload in sessionDataList) {
             val payloadStr = payload.toString()
 
+            // 1순위: 티비위키 원본 서버에 세션 직접 요청 (가장 빠름)
+            runCatching {
+                val directHeaders = Headers.Builder()
+                    .add("User-Agent", defaultUserAgent)
+                    .add("Referer", "$currentBaseUrl$episodePath")
+                    .add("Origin", currentBaseUrl)
+                    .add("Content-Type", "application/json; charset=utf-8")
+                    .build()
+                val reqBody = payloadStr.toRequestBody("application/json; charset=utf-8".toMediaType())
+                val directRes = client.newCall(POST("$currentBaseUrl/api/create_session.php", directHeaders, reqBody)).execute()
+                val resJson = JSONObject(directRes.body.string())
+                if (resJson.optBoolean("success", false) && resJson.has("player_url")) {
+                    acquiredSession = resJson
+                }
+            }
+            if (acquiredSession != null) break
+
+            // 2순위: 원본 실패 시 중계 브릿지 서버로 백업 요청
             runCatching {
                 val bridgeReqObj = JSONObject().apply {
-                    put("baseUrl", baseUrl)
+                    put("baseUrl", currentBaseUrl)
                     put("episodePath", episodePath)
                     put("sessionData", if (payloadStr.startsWith("{")) JSONObject(payloadStr) else payloadStr)
                 }
@@ -343,29 +360,13 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 }
             }
             if (acquiredSession != null) break
-
-            runCatching {
-                val directHeaders = Headers.Builder()
-                    .add("User-Agent", defaultUserAgent)
-                    .add("Referer", "$baseUrl$episodePath")
-                    .add("Origin", baseUrl)
-                    .add("Content-Type", "application/json; charset=utf-8")
-                    .build()
-                val reqBody = payloadStr.toRequestBody("application/json; charset=utf-8".toMediaType())
-                val directRes = client.newCall(POST("$baseUrl/api/create_session.php", directHeaders, reqBody)).execute()
-                val resJson = JSONObject(directRes.body.string())
-                if (resJson.optBoolean("success", false) && resJson.has("player_url")) {
-                    acquiredSession = resJson
-                }
-            }
-            if (acquiredSession != null) break
         }
 
         val sessionJson = acquiredSession ?: return fallbackVideoParse(response)
 
         val rawPlayerUrl = sessionJson.getString("player_url")
         val sep = if (rawPlayerUrl.contains("?")) "&" else "?"
-        val playerUrl = resolveAbsolute("$baseUrl$episodePath", rawPlayerUrl) +
+        val playerUrl = resolveAbsolute("$currentBaseUrl$episodePath", rawPlayerUrl) +
             "${sep}t=${URLEncoder.encode(sessionJson.optString("t"), "UTF-8")}&sig=${URLEncoder.encode(sessionJson.optString("sig"), "UTF-8")}"
 
         val playlistUrl = resolveAbsolute(playerUrl, rawHlsUrl)
@@ -373,7 +374,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         val playerOrigin = runCatching {
             val u = playerUrl.toHttpUrlOrNull()
             "${u?.scheme}://${u?.host}"
-        }.getOrDefault(baseUrl)
+        }.getOrDefault(currentBaseUrl)
 
         val streamHeaders = Headers.Builder()
             .add("User-Agent", defaultUserAgent)
@@ -382,43 +383,37 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             .add("Origin", playerOrigin)
             .build()
 
-        val playlistRes = client.newCall(GET(playlistUrl, streamHeaders)).execute()
-        val playlistContent = playlistRes.body.string()
-
-        val keyMatch = Regex("""#EXT-X-KEY:[^\r\n]*URI="([^"]+)"""", RegexOption.IGNORE_CASE).find(playlistContent)
         val videoList = ArrayList<Video>()
 
-        if (keyMatch != null) {
-            val keyUrl = resolveAbsolute(playlistUrl, keyMatch.groupValues[1])
-            val envelopeRes = client.newCall(GET(keyUrl, streamHeaders)).execute()
-            val envelope = envelopeRes.body.string()
+        // 최적화: 사전 플레이리스트/키 Envelope 요청을 건너뛰고 빠른 재생 URL 구성
+        val uParam = URLEncoder.encode(toBase64Url(playlistUrl), "UTF-8")
+        val rParam = URLEncoder.encode(toBase64Url(playerUrl), "UTF-8")
+        val common = "u=$uParam&r=$rParam"
 
-            val uParam = URLEncoder.encode(toBase64Url(playlistUrl), "UTF-8")
-            val rParam = URLEncoder.encode(toBase64Url(playerUrl), "UTF-8")
-            val xParam = URLEncoder.encode(toBase64Url(envelope), "UTF-8")
-            val common = "u=$uParam&r=$rParam&x=$xParam"
+        // 1순위: CDN 직접 스트리밍 (가장 빠름, 첫 번째로 재생 시도)
+        videoList.add(
+            Video(
+                "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=f&$common",
+                "빠른 재생 (CDN 직접)",
+                "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=f&$common",
+                headers = streamHeaders,
+            ),
+        )
 
-            videoList.add(
-                Video(
-                    "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=p&$common",
-                    "호환 재생 (중계)",
-                    "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=p&$common",
-                    headers = streamHeaders,
-                ),
-            )
-            videoList.add(
-                Video(
-                    "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=f&$common",
-                    "빠른 재생 (CDN 직접)",
-                    "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=f&$common",
-                    headers = streamHeaders,
-                ),
-            )
-        } else {
-            videoList.add(Video(playlistUrl, "자동 (HLS)", playlistUrl, headers = streamHeaders))
-        }
+        // 2순위: 원본 직접 재생 (플레이어가 복호화 지원 시)
+        videoList.add(Video(playlistUrl, "원본 직접 재생 (HLS)", playlistUrl, headers = streamHeaders))
 
-        return if (videoList.isNotEmpty()) videoList else fallbackVideoParse(response)
+        // 3순위: 중계 프록시 재생 (호환성 보장)
+        videoList.add(
+            Video(
+                "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=p&$common",
+                "호환 재생 (중계)",
+                "$bridgeBaseUrl/api/tvwiki-playlist.m3u8?m=p&$common",
+                headers = streamHeaders,
+            ),
+        )
+
+        return videoList
     }
 
     private fun fallbackVideoParse(response: Response): List<Video> {
@@ -492,7 +487,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 val prefs = getAppPreferences()
                 if (newUrl.isBlank()) {
                     prefs?.edit()?.remove(PREF_DOMAIN_KEY)?.apply()
-                    cachedDomain = null // 캐시 초기화
+                    cachedDomain = null
                     summary = "빈 값이면 중앙신호등의 최신 주소를 사용하고, 실패하면 마지막 정상 주소로 복구합니다.\n현재 주소: $baseUrl"
                     Toast.makeText(screen.context, "중앙신호등 모드로 전환되었습니다.", Toast.LENGTH_SHORT).show()
                     true
@@ -524,10 +519,8 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         private const val PREF_LAST_GOOD_DOMAIN_KEY = "pref_last_good_domain"
         private const val DEFAULT_BASE_URL = "https://tvwiki51.net"
 
-        // 방금 정상 개통 확인된 중앙신호등 API 엔드포인트
         private const val SIGNAL_URL = "https://aniyomi-extensions.pages.dev/api/signal"
 
-        // 10분 TTL 메모리 캐시
         private const val CACHE_TTL_MS = 10 * 60 * 1000L
         private var cachedDomain: String? = null
         private var lastFetchTime: Long = 0L
