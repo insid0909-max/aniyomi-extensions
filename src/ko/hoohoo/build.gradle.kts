@@ -5,7 +5,7 @@ plugins {
 
 ext {
     set("extName", "HooHoo")
-    set("extClass", "eu.kanade.tachiyomi.animeextension.ko.hoohoo.HooHooTV")
+    set("extClass", ".HooHooTV")
     set("extVersionCode", 1)
 }
 
