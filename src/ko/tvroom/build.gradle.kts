@@ -6,7 +6,7 @@ plugins {
 ext {
     set("extName", "TVroom")
     set("extClass", ".TVroom")
-    set("extVersionCode", 250)
+    set("extVersionCode", 2)
 }
 
 apply(from = "$rootDir/common.gradle")
@@ -23,10 +23,4 @@ android {
 
 configurations.all {
     exclude(group = "com.github.inorichi.injekt")
-}
-
-dependencies {
-    implementation(project(":core")) {
-        exclude(group = "com.github.inorichi.injekt")
-    }
 }
