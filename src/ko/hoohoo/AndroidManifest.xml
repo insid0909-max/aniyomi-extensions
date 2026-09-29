@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    package="eu.kanade.tachiyomi.animeextension.ko.hoohoo">
+    xmlns:tools="http://schemas.android.com/tools">
 
     <application
         android:label="후후티비"
@@ -9,6 +8,6 @@
         tools:replace="android:label,android:icon">
         <meta-data
             android:name="tachiyomi.animeextension.class"
-            android:value="eu.kanade.tachiyomi.animeextension.ko.hoohoo.HooHooTV" />
+            android:value=".HooHooTV" />
     </application>
 </manifest>
