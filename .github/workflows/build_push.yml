@@ -1,4 +1,4 @@
-name: CI
+Name: CI
 
 on:
   push:
@@ -67,7 +67,7 @@ jobs:
           SIGNING_KEY_PASSWORD: aniyomi123
           SIGNING_KEY_ALIAS: aniyomi
         run: |
-          ./gradlew clean assembleRelease \
+          ./gradlew clean :src:ko:tvroom:assembleRelease :src:ko:hoohoo:assembleRelease \
             -PsigningStorePassword="aniyomi123" \
             -PsigningKeyPassword="aniyomi123" \
             -PsigningKeyAlias="aniyomi" \
