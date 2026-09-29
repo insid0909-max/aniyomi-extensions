@@ -6,20 +6,13 @@ plugins {
 ext {
     set("extName", "HooHoo")
     set("extClass", ".HooHooTV")
-    set("extVersionCode", 2)
+    set("extVersionCode", 150)
 }
 
 apply(from = "$rootDir/common.gradle")
 
 android {
     namespace = "eu.kanade.tachiyomi.animeextension.ko.hoohoo"
-
-    defaultConfig {
-        // 티비위키와 100% 분리되는 안드로이드 고유 패키지 ID 강제 부여
-        applicationId = "eu.kanade.tachiyomi.animeextension.ko.hoohoo"
-        versionCode = 2
-        versionName = "14.2"
-    }
 
     sourceSets {
         getByName("main") {
