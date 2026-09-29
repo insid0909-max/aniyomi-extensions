@@ -67,7 +67,6 @@ jobs:
         run: |
           ./gradlew clean :src:ko:tvroom:assembleRelease \
             -x lintKotlin -x lint \
-            -PextVersionCode="${{ github.run_number }}" \
             -PsigningStorePassword="aniyomi123" \
             -PsigningKeyPassword="aniyomi123" \
             -PsigningKeyAlias="aniyomi" \
@@ -79,8 +78,6 @@ jobs:
             --stacktrace
 
       - name: Prepare repo and auto-generate index
-        env:
-          BUILD_NUMBER: ${{ github.run_number }}
         run: |
           mkdir -p repo/anime repo/apk repo/icon
           
@@ -94,7 +91,6 @@ jobs:
 
           repo_dir = "repo"
           signing_key = os.environ.get("SIGNING_KEY", "")
-          build_num = int(os.environ.get("BUILD_NUMBER", "1"))
 
           repo_data = {
               "meta": {
@@ -170,15 +166,12 @@ jobs:
 
               apk_size = os.path.getsize(os.path.join(repo_dir, target_name))
 
-              # 기존 기기 버전(150)보다 항상 크면서, 매 커밋마다 1씩 자동 증가 보장
-              final_vcode = max(vcode or 0, build_num + 200)
-
               extensions.append({
                   "name": display_name,
                   "pkg": pkg,
                   "apk": target_name,
                   "lang": "ko",
-                  "code": final_vcode,
+                  "code": vcode,
                   "version": vname,
                   "nsfw": 1,
                   "hasReadme": 0,
