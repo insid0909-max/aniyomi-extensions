@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.ko.hoohoo
 
+import android.webkit.CookieManager
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
@@ -27,9 +28,28 @@ class HooHooTV : ParsedAnimeHttpSource() {
 
     override val baseUrl = "https://fu.hoohootv458.xyz"
 
-    override fun headersBuilder(): Headers.Builder = Headers.Builder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .add("Referer", "$baseUrl/")
+    // Cloudflare 차단 우회용 모바일 크롬 완전 헤더
+    override fun headersBuilder(): Headers.Builder {
+        val cookie = runCatching { CookieManager.getInstance().getCookie(baseUrl) }.getOrNull() ?: ""
+        return Headers.Builder()
+            .add("User-Agent", "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36")
+            .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+            .add("Accept-Language", "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7")
+            .add("Sec-Ch-Ua", "\"Chromium\";v=\"124\", \"Google Chrome\";v=\"124\", \"Not-A.Brand\";v=\"99\"")
+            .add("Sec-Ch-Ua-Mobile", "?1")
+            .add("Sec-Ch-Ua-Platform", "\"Android\"")
+            .add("Sec-Fetch-Dest", "document")
+            .add("Sec-Fetch-Mode", "navigate")
+            .add("Sec-Fetch-Site", "same-origin")
+            .add("Sec-Fetch-User", "?1")
+            .add("Upgrade-Insecure-Requests", "1")
+            .add("Referer", "$baseUrl/")
+            .apply {
+                if (cookie.isNotBlank()) {
+                    add("Cookie", cookie)
+                }
+            }
+    }
 
     // --- 인기 탭 ---
     override fun popularAnimeRequest(page: Int): Request {
@@ -37,7 +57,6 @@ class HooHooTV : ParsedAnimeHttpSource() {
         return GET(url, headers)
     }
 
-    // 상세(/detail/) 링크를 가진 카드만 정확히 타겟팅 (상단 메뉴/사이트 헤더 혼입 방지)
     override fun popularAnimeSelector(): String =
         "a[href*='/detail/']:has(img), div.item:has(a[href*='/detail/']), div.post-item:has(a[href*='/detail/'])"
 
@@ -46,7 +65,6 @@ class HooHooTV : ParsedAnimeHttpSource() {
             val anchor = if (element.tagName() == "a") element else element.selectFirst("a[href*='/detail/']") ?: element
             setUrlWithoutDomain(anchor.attr("href"))
 
-            // 제목 추출 (사이트 공통 문구 배제)
             val titleNode = element.selectFirst(".title, .subject, .name, h2, h3, a[title]")
             val rawTitle = titleNode?.attr("title")?.takeIf { it.isNotBlank() }
                 ?: titleNode?.text()?.takeIf { it.isNotBlank() }
@@ -55,7 +73,6 @@ class HooHooTV : ParsedAnimeHttpSource() {
                 ?: "제목 없음"
             title = cleanTitle(rawTitle)
 
-            // 썸네일 추출
             val img = element.selectFirst("img")
             thumbnail_url = img?.let {
                 it.attr("abs:data-src").ifEmpty {
@@ -100,10 +117,9 @@ class HooHooTV : ParsedAnimeHttpSource() {
 
     override fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
 
-    // --- 상세 정보 (사이트 헤더 문구로 덮어쓰기 방지) ---
+    // --- 상세 정보 ---
     override fun animeDetailsParse(document: Document): SAnime {
         return SAnime.create().apply {
-            // 상세 페이지 내의 실제 콘텐츠 제목 태그 추출
             val titleNode = document.selectFirst(".detail-title, .content-title, .view-title, h1:not(:contains(후후티비)), h2:not(:contains(후후티비))")
             val extractedTitle = titleNode?.text()?.trim()
             if (!extractedTitle.isNullOrBlank()) {
@@ -148,7 +164,7 @@ class HooHooTV : ParsedAnimeHttpSource() {
             }
         }
 
-        // 2. 외부 재생 버튼 및 플레이어 링크
+        // 2. 외부 재생 링크 버튼
         val playButtons = document.select("a[href*='stream'], a[href*='play'], a[href*='watch'], a[href*='embed']")
         for (btn in playButtons) {
             val link = btn.attr("abs:href")
@@ -158,7 +174,7 @@ class HooHooTV : ParsedAnimeHttpSource() {
             }
         }
 
-        // 3. 본문 스크립트 스트리밍 주소(m3u8, mp4)
+        // 3. 본문 스크립트 스트림 링크 (m3u8, mp4)
         val html = document.html()
         """https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""".toRegex().findAll(html).forEach {
             videoList.add(Video(it.value, "고화질 스트림 (m3u8)", it.value))
@@ -174,7 +190,6 @@ class HooHooTV : ParsedAnimeHttpSource() {
     override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException("Not used")
     override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException("Not used")
 
-    // 제목 정리 헬퍼 함수
     private fun cleanTitle(raw: String): String {
         return raw.replace(Regex("후후티비.*"), "").trim().ifEmpty { raw.trim() }
     }
