@@ -3,16 +3,27 @@ plugins {
     id("kotlin-android")
 }
 
+val extCode = if (project.hasProperty("extVersionCode")) {
+    project.property("extVersionCode").toString().toInt()
+} else {
+    3
+}
+
 ext {
     set("extName", "TVroom")
     set("extClass", ".TVroom")
-    set("extVersionCode", 3)
+    set("extVersionCode", extCode)
 }
 
 apply(from = "$rootDir/common.gradle")
 
 android {
     namespace = "eu.kanade.tachiyomi.animeextension.ko.tvroom"
+
+    defaultConfig {
+        versionCode = extCode
+        versionName = "14.$extCode"
+    }
 
     sourceSets {
         getByName("main") {
