@@ -59,8 +59,8 @@ jobs:
       - name: Calculate auto version
         run: |
           AUTO_VCODE=$(( ${{ github.run_number }} - 209 ))
-          if [ $AUTO_VCODE -lt 6 ]; then
-            AUTO_VCODE=6
+          if [ $AUTO_VCODE -lt 11 ]; then
+            AUTO_VCODE=11
           fi
           echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
           echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
@@ -136,7 +136,8 @@ jobs:
               if clean_pkg.endswith(".tvroom.tvroom"):
                   clean_pkg = clean_pkg.replace(".tvroom.tvroom", ".tvroom")
 
-              display_name = "TVroom"
+              # 인덱스 표기 이름을 한글 "티비위키"로 고정
+              display_name = "티비위키"
               source_name = "티비위키"
               base_domain = "https://tvwiki51.net"
               target_name = f"aniyomi-{clean_pkg}-v{vname}-release.apk"
@@ -158,7 +159,6 @@ jobs:
 
               apk_size = os.path.getsize(os.path.join(repo_dir, target_name))
 
-              # APK에서 실측된 vcode와 vname을 인덱스에 일치 기록
               extensions.append({
                   "name": display_name,
                   "pkg": clean_pkg,
