@@ -115,7 +115,6 @@ jobs:
               pkg = None
               vcode = None
               vname = None
-              label = "Unknown"
 
               for line in badging.splitlines():
                   if line.startswith("package:"):
@@ -126,11 +125,17 @@ jobs:
                               vcode = int(part.split("'")[1])
                           elif part.startswith("versionName='"):
                               vname = part.split("'")[1]
-                  elif "application: label='" in line:
-                      label = line.split("application: label='")[1].split("'")[0]
 
               if not pkg:
                   continue
+
+              # 모듈별 소스 이름 및 기본 주소 매핑
+              if "hoohoo" in pkg:
+                  display_name = "후후티비"
+                  base_domain = "https://fq.hoohootv458.xyz"
+              else:
+                  display_name = "티비위키"
+                  base_domain = "https://tvwiki51.net"
 
               target_name = f"aniyomi-{pkg}-v{vname}-release.apk"
               for dest in [repo_dir, os.path.join(repo_dir, "anime"), os.path.join(repo_dir, "apk")]:
@@ -161,16 +166,15 @@ jobs:
                   except Exception as e:
                       print(f"Icon error: {e}")
 
-              # 소스 ID 해시 계산
-              key = f"{label}/ko/1".encode("utf-8")
+              # Tachiyomi 공식 소스 ID 해시 계산
+              key = f"{display_name}/ko/1".encode("utf-8")
               digest = hashlib.md5(key).digest()
               source_id = str(int.from_bytes(digest[:8], byteorder="little", signed=True) & 0x7FFFFFFFFFFFFFFF)
 
               apk_size = os.path.getsize(os.path.join(repo_dir, target_name))
-              base_domain = "https://fq.hoohootv458.xyz" if "hoohoo" in pkg else "https://tvwiki51.net"
 
               extensions.append({
-                  "name": label,
+                  "name": display_name,
                   "pkg": pkg,
                   "apk": target_name,
                   "lang": "ko",
@@ -183,7 +187,7 @@ jobs:
                   "icon": icon_file,
                   "sources": [
                       {
-                          "name": label,
+                          "name": display_name,
                           "lang": "ko",
                           "id": source_id,
                           "baseUrl": base_domain,
