@@ -65,7 +65,7 @@ jobs:
           SIGNING_KEY_PASSWORD: aniyomi123
           SIGNING_KEY_ALIAS: aniyomi
         run: |
-          ./gradlew clean :src:ko:tvroom:assembleRelease :src:ko:hoohoo:assembleRelease \
+          ./gradlew clean :src:ko:tvroom:assembleRelease \
             -x lintKotlin -x lint \
             -PsigningStorePassword="aniyomi123" \
             -PsigningKeyPassword="aniyomi123" \
