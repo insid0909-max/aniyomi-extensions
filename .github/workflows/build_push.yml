@@ -41,6 +41,7 @@ jobs:
       - name: Prepare fixed signing key
         run: |
           KEYSTORE_PATH="$GITHUB_WORKSPACE/keystore.jks"
+          # 매번 같은 키가 생성되도록 고정 파라미터 적용
           keytool -genkey -v \
             -keystore "$KEYSTORE_PATH" \
             -alias aniyomi \
@@ -68,11 +69,15 @@ jobs:
           
           for f in $TARGET_FILES; do
             echo "Updating version in $f"
-            # Groovy DSL 치환: extVersionCode = 숫자
+            # versionCode 치환 (Groovy & kts)
             sed -i -E "s/extVersionCode\s*=\s*[0-9]+/extVersionCode = $TARGET_VCODE/g" "$f"
-            # Kotlin DSL 치환: set("extVersionCode", 숫자)
             sed -i -E "s/set\(\"extVersionCode\",\s*[0-9]+\)/set(\"extVersionCode\", $TARGET_VCODE)/g" "$f"
-            grep -H "extVersionCode" "$f" || true
+            
+            # versionName(extVersion)도 함께 증가 치환
+            sed -i -E "s/set\(\"extVersion\",\s*\"[^\"]+\"\)/set(\"extVersion\", \"14.${{ github.run_number }}\")/g" "$f"
+            sed -i -E "s/extVersion\s*=\s*\"[^\"]+\"/extVersion = \"14.${{ github.run_number }}\"/g" "$f"
+            
+            grep -H "extVersion" "$f" || true
           done
 
       - name: Build extensions
