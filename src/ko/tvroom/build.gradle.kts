@@ -3,16 +3,10 @@ plugins {
     id("kotlin-android")
 }
 
-val extVer = if (project.hasProperty("extVersionCode")) {
-    project.property("extVersionCode").toString().toInt()
-} else {
-    6
-}
-
 ext {
     set("extName", "TVroom")
     set("extClass", ".TVroom")
-    set("extVersionCode", extVer)
+    set("extVersionCode", 3)
 }
 
 apply(from = "$rootDir/common.gradle")
