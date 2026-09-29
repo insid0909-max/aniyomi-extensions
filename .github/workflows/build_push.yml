@@ -67,7 +67,7 @@ jobs:
           SIGNING_KEY_PASSWORD: aniyomi123
           SIGNING_KEY_ALIAS: aniyomi
         run: |
-          ./gradlew clean :src:ko:tvroom:assembleRelease \
+          ./gradlew clean assembleRelease \
             -PsigningStorePassword="aniyomi123" \
             -PsigningKeyPassword="aniyomi123" \
             -PsigningKeyAlias="aniyomi" \
@@ -85,72 +85,13 @@ jobs:
           if [ -d "functions" ]; then
             cp -rv functions repo/
           fi
-          
-          ORIG_APK=$(find . -name "*.apk" -type f ! -path "./repo/*" | head -n 1)
-          echo "Found APK: $ORIG_APK"
-          
-          BADGING=$(aapt dump badging "$ORIG_APK")
-          
-          REAL_PKG=$(echo "$BADGING" | grep -oP "package: name='\K[^']+")
-          REAL_VCODE=$(echo "$BADGING" | grep -oP "versionCode='\K[^']+")
-          REAL_VNAME=$(echo "$BADGING" | grep -oP "versionName='\K[^']+")
-          
-          echo "Auto Version - Pkg: $REAL_PKG, Code: $REAL_VCODE, Version: $REAL_VNAME"
-          
-          TARGET_APK="aniyomi-ko.tvroom-v${REAL_VNAME}-release.apk"
-          cp -v "$ORIG_APK" "repo/$TARGET_APK"
-          cp -v "$ORIG_APK" "repo/anime/$TARGET_APK"
-          cp -v "$ORIG_APK" "repo/apk/$TARGET_APK"
-          
-          ICON_SRC=$(echo "$BADGING" | grep -oP "application-icon-[0-9]+:'\K[^']+" | tail -n 1)
-          if [ -z "$ICON_SRC" ]; then
-            ICON_SRC=$(echo "$BADGING" | grep -oP "application: label='.*?' icon='\K[^']+")
-          fi
-          
-          if [ -n "$ICON_SRC" ]; then
-            unzip -p "$ORIG_APK" "$ICON_SRC" > "repo/icon/${REAL_PKG}.png" || true
-            cp -v "repo/icon/${REAL_PKG}.png" "repo/${REAL_PKG}.png" || true
-            cp -v "repo/icon/${REAL_PKG}.png" "repo/anime/${REAL_PKG}.png" || true
-          fi
 
-          # 아이콘 배경 자동 투명화 처리
           python3 - << 'EOF'
-          import glob
+          import os, glob, subprocess, json, hashlib
           from PIL import Image
-
-          def process_icon(img_path):
-              try:
-                  img = Image.open(img_path).convert("RGBA")
-                  datas = img.getdata()
-                  new_data = []
-                  for item in datas:
-                      # 밝은 픽셀(체크무늬 흰색/연회색 영역)을 완전 투명 처리
-                      if item[0] > 180 and item[1] > 180 and item[2] > 180:
-                          new_data.append((255, 255, 255, 0))
-                      else:
-                          new_data.append(item)
-                  img.putdata(new_data)
-                  img.save(img_path, "PNG")
-                  print(f"투명화 완료: {img_path}")
-              except Exception as e:
-                  print(f"투명화 실패 ({img_path}): {e}")
-
-          for icon in glob.glob("repo/**/*.png", recursive=True):
-              process_icon(icon)
-          EOF
-
-          # 인덱스 생성
-          python3 - << EOF
-          import os, json, hashlib
 
           repo_dir = "repo"
           signing_key = os.environ.get("SIGNING_KEY", "")
-          target_apk = "$TARGET_APK"
-          real_pkg = "$REAL_PKG"
-          real_vcode = int("$REAL_VCODE")
-          real_vname = "$REAL_VNAME"
-          apk_path = os.path.join(repo_dir, target_apk)
-          apk_size = os.path.getsize(apk_path) if os.path.exists(apk_path) else 0
 
           repo_data = {
               "meta": {
@@ -160,43 +101,101 @@ jobs:
                   "signingKeyFingerprint": signing_key
               }
           }
-          with open(os.path.join(repo_dir, "repo.json"), "w", encoding="utf-8") as f:
-              json.dump(repo_data, f, ensure_ascii=False, indent=2)
-          with open(os.path.join(repo_dir, "anime", "repo.json"), "w", encoding="utf-8") as f:
-              json.dump(repo_data, f, ensure_ascii=False, indent=2)
+          for sub in ["", "anime"]:
+              p = os.path.join(repo_dir, sub, "repo.json") if sub else os.path.join(repo_dir, "repo.json")
+              with open(p, "w", encoding="utf-8") as f:
+                  json.dump(repo_data, f, ensure_ascii=False, indent=2)
 
-          key = "티비위키/ko/1".encode("utf-8")
-          digest = hashlib.md5(key).digest()
-          source_id = str(int.from_bytes(digest[:8], byteorder="little", signed=True) & 0x7FFFFFFFFFFFFFFF)
+          apk_files = glob.glob("src/**/build/outputs/apk/release/*.apk", recursive=True)
+          extensions = []
 
-          extensions = [{
-              "name": "TVroom",
-              "pkg": real_pkg,
-              "apk": target_apk,
-              "lang": "ko",
-              "code": real_vcode,
-              "version": real_vname,
-              "nsfw": 1,
-              "hasReadme": 0,
-              "hasChangelog": 0,
-              "size": apk_size,
-              "icon": f"{real_pkg}.png",
-              "sources": [
-                  {
-                      "name": "티비위키",
-                      "lang": "ko",
-                      "id": source_id,
-                      "baseUrl": "https://tvwiki51.net",
-                      "versionId": 1
-                  }
-              ]
-          }]
+          for apk in apk_files:
+              badging = subprocess.check_output(["aapt", "dump", "badging", apk]).decode("utf-8", errors="ignore")
+              pkg = None
+              vcode = None
+              vname = None
+              label = "Unknown"
+
+              for line in badging.splitlines():
+                  if line.startswith("package:"):
+                      for part in line.split():
+                          if part.startswith("name='"):
+                              pkg = part.split("'")[1]
+                          elif part.startswith("versionCode='"):
+                              vcode = int(part.split("'")[1])
+                          elif part.startswith("versionName='"):
+                              vname = part.split("'")[1]
+                  elif "application: label='" in line:
+                      label = line.split("application: label='")[1].split("'")[0]
+
+              if not pkg:
+                  continue
+
+              target_name = f"aniyomi-{pkg}-v{vname}-release.apk"
+              for dest in [repo_dir, os.path.join(repo_dir, "anime"), os.path.join(repo_dir, "apk")]:
+                  subprocess.run(["cp", "-v", apk, os.path.join(dest, target_name)])
+
+              # 아이콘 추출
+              icon_path_in_apk = None
+              for line in badging.splitlines():
+                  if "application-icon-" in line or "icon='" in line:
+                      icon_path_in_apk = line.split("'")[-2]
+              
+              icon_file = f"{pkg}.png"
+              if icon_path_in_apk:
+                  unzip_cmd = f"unzip -p '{apk}' '{icon_path_in_apk}' > '{os.path.join(repo_dir, 'icon', icon_file)}'"
+                  subprocess.run(unzip_cmd, shell=True)
+                  for dest in [repo_dir, os.path.join(repo_dir, "anime")]:
+                      subprocess.run(["cp", "-v", os.path.join(repo_dir, 'icon', icon_file), os.path.join(dest, icon_file)])
+
+              # 아이콘 투명화
+              full_icon = os.path.join(repo_dir, icon_file)
+              if os.path.exists(full_icon):
+                  try:
+                      img = Image.open(full_icon).convert("RGBA")
+                      datas = img.getdata()
+                      new_data = [(255, 255, 255, 0) if (d[0]>180 and d[1]>180 and d[2]>180) else d for d in datas]
+                      img.putdata(new_data)
+                      img.save(full_icon, "PNG")
+                  except Exception as e:
+                      print(f"Icon error: {e}")
+
+              # 소스 ID 해시 계산
+              key = f"{label}/ko/1".encode("utf-8")
+              digest = hashlib.md5(key).digest()
+              source_id = str(int.from_bytes(digest[:8], byteorder="little", signed=True) & 0x7FFFFFFFFFFFFFFF)
+
+              apk_size = os.path.getsize(os.path.join(repo_dir, target_name))
+              base_domain = "https://fq.hoohootv458.xyz" if "hoohoo" in pkg else "https://tvwiki51.net"
+
+              extensions.append({
+                  "name": label,
+                  "pkg": pkg,
+                  "apk": target_name,
+                  "lang": "ko",
+                  "code": vcode,
+                  "version": vname,
+                  "nsfw": 1,
+                  "hasReadme": 0,
+                  "hasChangelog": 0,
+                  "size": apk_size,
+                  "icon": icon_file,
+                  "sources": [
+                      {
+                          "name": label,
+                          "lang": "ko",
+                          "id": source_id,
+                          "baseUrl": base_domain,
+                          "versionId": 1
+                      }
+                  ]
+              })
 
           for p in [os.path.join(repo_dir, "index.min.json"), os.path.join(repo_dir, "anime", "index.min.json")]:
               with open(p, "w", encoding="utf-8") as f:
                   json.dump(extensions, f, ensure_ascii=False, separators=(',', ':'))
 
-          print(f"배포 완료: 이름 TVroom, 버전 {real_vname} (code: {real_vcode}), 패키지명: {real_pkg}")
+          print(f"총 {len(extensions)}개 확장 앱 인덱싱 완료")
           EOF
 
       - name: Deploy to GitHub Pages
