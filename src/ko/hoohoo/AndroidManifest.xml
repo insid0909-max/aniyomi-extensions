@@ -8,11 +8,11 @@
         tools:replace="android:label,android:icon">
         <meta-data
             android:name="tachiyomi.animeextension.class"
-            android:value=".HooHooTV"
+            android:value="eu.kanade.tachiyomi.animeextension.ko.hoohoo.HooHooTV"
             tools:replace="android:value" />
         <meta-data
-            android:name="tachiyomi.animeextension.factory"
-            android:value="false" />
+            android:name="tachiyomi.animeextension.version"
+            android:value="14"
+            tools:replace="android:value" />
     </application>
-
 </manifest>
