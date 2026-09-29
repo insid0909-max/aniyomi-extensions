@@ -27,7 +27,7 @@ class HooHooTV : ParsedAnimeHttpSource() {
         "https://fq.hoohootv458.xyz",
         "https://hoohootv.net",
         "https://hoohootv.com",
-        "https://hoohootv.org"
+        "https://hoohootv.org",
     )
 
     private var activeBaseUrl: String = candidateDomains.first()
@@ -36,7 +36,10 @@ class HooHooTV : ParsedAnimeHttpSource() {
         get() = activeBaseUrl
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
-        .add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .add(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        )
         .add("Referer", baseUrl)
 
     // 신호등: 정상 응답(200 OK)이 오는 도메인을 찾아 baseUrl 갱신
@@ -55,7 +58,7 @@ class HooHooTV : ParsedAnimeHttpSource() {
                     }
                 }
             } catch (_: Exception) {
-                // 도메인 접속 불가 시 다음 후보로 탐색
+                // 다음 도메인 탐색
             }
         }
         return "$activeBaseUrl$endpoint"
