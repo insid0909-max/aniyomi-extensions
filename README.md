@@ -48,3 +48,4 @@ It might also be good to read our [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
 ## Disclaimer
 
 The developer of this application does not have any affiliation with the content providers available.
+
