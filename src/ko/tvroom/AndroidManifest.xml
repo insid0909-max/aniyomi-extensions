@@ -4,7 +4,8 @@
 
     <application
         android:label="TVroom"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        tools:replace="android:label,android:icon">
         <meta-data
             android:name="tachiyomi.animeextension.class"
             android:value="eu.kanade.tachiyomi.animeextension.ko.tvroom.TVroom"
