@@ -5,13 +5,15 @@ plugins {
 
 ext {
     set("extName", "HooHoo")
-    set("extClass", ".HooHooTV")
+    set("extClass", "eu.kanade.tachiyomi.animeextension.ko.hoohoo.HooHooTV")
     set("extVersionCode", 1)
 }
 
 apply(from = "$rootDir/common.gradle")
 
 android {
+    namespace = "eu.kanade.tachiyomi.animeextension.ko.hoohoo"
+
     sourceSets {
         getByName("main") {
             res.srcDirs("$rootDir/src/ko/tvroom/res")
