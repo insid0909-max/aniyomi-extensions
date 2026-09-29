@@ -241,7 +241,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
         name = formatEpisodeName(rawText)
 
-        val match = Regex("(\\d+(?:\\.\\d+)?)\\s*[화회]").find(rawText)
+        val match = Regex("""(\d+(?:[-.]\d+)?)\s*[화회]""").find(rawText)
         episode_number = match?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
     }
 
@@ -256,12 +256,12 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 val link = item.selectFirst("a.title.ep-link, a.title, a.ep-link, a[href]") ?: continue
                 val href = link.attr("href")
                 if (href.isNotBlank()) {
-                    val rawName = link.attr("title").ifEmpty { link.text().ifEmpty { item.text() } }.trim()
-                    val match = Regex("(\\d+(?:\\.\\d+)?)\\s*[화회]").find(rawName)
+                    val fullItemText = item.text().trim()
+                    val match = Regex("""(\d+(?:[-.]\d+)?)\s*[화회]""").find(fullItemText)
                     episodes.add(
                         SEpisode.create().apply {
                             setUrlWithoutDomain(href)
-                            name = formatEpisodeName(rawName)
+                            name = formatEpisodeName(fullItemText)
                             episode_number = match?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
                         },
                     )
@@ -275,10 +275,10 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 val href = link.attr("href")
                 val text = link.text().trim()
                 val isEpisodeUrl = href.startsWith(currentPath) && href.matches(Regex(".*/\\d+$")) && href != currentPath
-                val hasEpText = text.matches(Regex(".*\\d+\\s*[화회].*"))
+                val hasEpText = text.matches(Regex(""".*\d+\s*[화회].*"""))
 
                 if (href.isNotBlank() && (isEpisodeUrl || hasEpText)) {
-                    val match = Regex("(\\d+(?:\\.\\d+)?)\\s*[화회]").find(text)
+                    val match = Regex("""(\d+(?:[-.]\d+)?)\s*[화회]""").find(text)
                     episodes.add(
                         SEpisode.create().apply {
                             setUrlWithoutDomain(href)
@@ -481,8 +481,33 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     private fun formatEpisodeName(raw: String): String {
         val trimmed = raw.trim()
-        val match = Regex("""(?:^|\s)(\d+(?:[-.]\d+)?화)""").find(trimmed)
-        return match?.groupValues?.get(1) ?: trimmed
+
+        // 1. 회차 추출 (예: 820화, 820회)
+        val epMatch = Regex("""(\d+(?:[-.]\d+)?)\s*[화회]""").find(trimmed)
+        val epText = epMatch?.let { "${it.groupValues[1]}화" } ?: ""
+
+        // 2. 방영 날짜 추출 (예: 2026-09-13)
+        val dateMatch = Regex("""(\d{4}[.-]\d{2}[.-]\d{2})""").find(trimmed)
+        val dateText = dateMatch?.groupValues?.get(1)
+
+        // 3. 부제 추출 (회차와 날짜를 제거하고 남은 텍스트)
+        val subTitle = trimmed
+            .replace(Regex("""^.*?(\d+(?:[-.]\d+)?\s*[화회])"""), "")
+            .replace(Regex("""\d{4}[.-]\d{2}[.-]\d{2}"""), "")
+            .replace(Regex("""^\s*[-:–]\s*"""), "")
+            .trim()
+
+        return buildString {
+            if (epText.isNotBlank()) append(epText)
+            if (!dateText.isNullOrBlank()) {
+                if (isNotEmpty()) append(" - ")
+                append(dateText)
+            }
+            if (subTitle.isNotBlank()) {
+                if (isNotEmpty()) append(" ")
+                append(subTitle)
+            }
+        }.ifEmpty { trimmed }
     }
 
     override fun videoListSelector(): String = throw UnsupportedOperationException()
