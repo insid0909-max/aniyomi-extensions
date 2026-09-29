@@ -139,15 +139,21 @@ jobs:
               if not pkg or not vcode or not vname:
                   continue
 
+              # 중복 패키지명(.tvroom.tvroom) 교정
+              clean_pkg = pkg
+              if clean_pkg.endswith(".tvroom.tvroom"):
+                  clean_pkg = clean_pkg.replace(".tvroom.tvroom", ".tvroom")
+
               display_name = label if label else "TVroom"
               source_name = "티비위키"
               base_domain = "https://tvwiki51.net"
-              target_name = f"aniyomi-{pkg}-v{vname}-release.apk"
+              calc_version = f"14.{vcode}"
+              target_name = f"aniyomi-{clean_pkg}-v{calc_version}-release.apk"
 
               for dest in [repo_dir, os.path.join(repo_dir, "anime"), os.path.join(repo_dir, "apk")]:
                   subprocess.run(["cp", "-v", apk, os.path.join(dest, target_name)])
 
-              icon_file = f"{pkg}.png"
+              icon_file = f"{clean_pkg}.png"
               icon_path_in_apk = None
               for line in badging.splitlines():
                   if "application-icon-" in line or "icon='" in line:
@@ -161,14 +167,13 @@ jobs:
 
               apk_size = os.path.getsize(os.path.join(repo_dir, target_name))
 
-              # APK에서 실시간 추출된 vcode와 vname을 인덱스에 일치 입력
               extensions.append({
                   "name": display_name,
-                  "pkg": pkg,
+                  "pkg": clean_pkg,
                   "apk": target_name,
                   "lang": "ko",
                   "code": vcode,
-                  "version": vname,
+                  "version": calc_version,
                   "nsfw": 1,
                   "hasReadme": 0,
                   "hasChangelog": 0,
@@ -193,7 +198,7 @@ jobs:
           with open(os.path.join(repo_dir, "_headers"), "w", encoding="utf-8") as f:
               f.write("/*\n  Access-Control-Allow-Origin: *\n/index.min.json\n  Cache-Control: no-cache, no-store, must-revalidate\n/anime/index.min.json\n  Cache-Control: no-cache, no-store, must-revalidate\n/repo.json\n  Cache-Control: no-cache, no-store, must-revalidate\n")
 
-          print(f"인덱싱 완료 -> Name: {display_name}, Version: {vname}, Code: {vcode}")
+          print(f"인덱싱 완료 -> Name: {display_name}, Version: {calc_version}, Code: {vcode}, Pkg: {clean_pkg}")
           EOF
 
       - name: Deploy to GitHub Pages
