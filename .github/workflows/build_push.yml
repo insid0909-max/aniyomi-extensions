@@ -38,26 +38,23 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip pillow
 
-      - name: Restore permanent fixed signing key
+      - name: Generate standard debug keystore
         run: |
-          # 100% 동일한 키스토어 바이너리를 복원하여 영구 동일 서명 유지
-          cat << 'EOF' | base64 -d > "$GITHUB_WORKSPACE/keystore.jks"
-          /u3+7QAAAAIAAAABAAAAAQALYW5peW9taWtleQAAAZTqW74uAAAFATCCBP0wDgYKKwYBBAEq
-          AhEBAQUABIIE6YyS6q+Q+2cRrnS1Fp3m48fF6g8oR+8KkS2P+d5wU5L8C9nQ2xM/T4vO0+pM
-          9gX0f/2C0w4lQ3bZ4KxY2gO8k7eP5q7L3xM/T4vO0+pM9gX0f/2C0w4lQ3bZ4KxY2gO8k7eP
-          EOF
+          KEYSTORE_PATH="$GITHUB_WORKSPACE/debug.keystore"
+          rm -f "$KEYSTORE_PATH"
           
-          # 파일 검증 및 대체 생성 (기존 파일이 없을 시 고정 덤프)
-          if [ ! -s "$GITHUB_WORKSPACE/keystore.jks" ] || [ $(wc -c < "$GITHUB_WORKSPACE/keystore.jks") -lt 100 ]; then
-            # fallback: 고정 표준 디버그 인증서 키스토어 사용 (모든 안드로이드에서 무제한 업데이트 허용)
-            keytool -genkeypair -alias androiddebugkey -keypass android -keystore "$GITHUB_WORKSPACE/keystore.jks" \
-              -storepass android -dname "CN=Android Debug,O=Android,C=US" -validity 10000 -keyalg RSA -keysize 2048
-          fi
-
-          SIGNING_KEY=$(keytool -list -v -keystore "$GITHUB_WORKSPACE/keystore.jks" -alias androiddebugkey -storepass android 2>/dev/null | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
-          if [ -z "$SIGNING_KEY" ]; then
-            SIGNING_KEY=$(keytool -list -v -keystore "$GITHUB_WORKSPACE/keystore.jks" -storepass "aniyomi123" 2>/dev/null | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
-          fi
+          # 공식 안드로이드 디버그 규격으로 키스토어 정식 생성
+          keytool -genkeypair -v \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+          
+          SIGNING_KEY=$(keytool -list -v -keystore "$KEYSTORE_PATH" -alias androiddebugkey -storepass android | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
           echo "SIGNING_KEY=$SIGNING_KEY" >> $GITHUB_ENV
           echo "Fixed Fingerprint: $SIGNING_KEY"
 
@@ -88,8 +85,8 @@ jobs:
             -PsigningStorePassword="android" \
             -PsigningKeyPassword="android" \
             -PsigningKeyAlias="androiddebugkey" \
-            -PsigningStoreFile="$GITHUB_WORKSPACE/keystore.jks" \
-            -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/keystore.jks" \
+            -PsigningStoreFile="$GITHUB_WORKSPACE/debug.keystore" \
+            -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/debug.keystore" \
             -Pandroid.injected.signing.store.password="android" \
             -Pandroid.injected.signing.key.alias="androiddebugkey" \
             -Pandroid.injected.signing.key.password="android" \
