@@ -58,7 +58,6 @@ jobs:
 
       - name: Auto increment version in build files
         run: |
-          # 현재 #212 빌드 시 3 (14.3), 다음 빌드부터 4 (14.4), 5 (14.5)... 1씩 자동 증가
           AUTO_VCODE=$(( ${{ github.run_number }} - 209 ))
           if [ $AUTO_VCODE -lt 3 ]; then
             AUTO_VCODE=3
@@ -139,12 +138,12 @@ jobs:
               if not pkg or not vcode or not vname:
                   continue
 
-              # 중복 패키지명(.tvroom.tvroom) 교정
               clean_pkg = pkg
               if clean_pkg.endswith(".tvroom.tvroom"):
                   clean_pkg = clean_pkg.replace(".tvroom.tvroom", ".tvroom")
 
-              display_name = label if label else "TVroom"
+              # 앱 라벨 및 인덱스 이름을 "TVroom"으로 일치화
+              display_name = "TVroom"
               source_name = "티비위키"
               base_domain = "https://tvwiki51.net"
               calc_version = f"14.{vcode}"
