@@ -5,6 +5,8 @@ import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.ParsedAnimeHttpSource
+import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.util.asJsoup
 import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -58,7 +60,7 @@ class HooHooTV : ParsedAnimeHttpSource() {
                     }
                 }
             } catch (_: Exception) {
-                // 다음 도메인 탐색
+                // 접속 불가 시 다음 도메인 탐색
             }
         }
         return "$activeBaseUrl$endpoint"
