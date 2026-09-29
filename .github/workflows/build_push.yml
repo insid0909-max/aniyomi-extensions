@@ -56,25 +56,19 @@ jobs:
           echo "SIGNING_KEY=$SIGNING_KEY" >> $GITHUB_ENV
           echo "Fixed Fingerprint: $SIGNING_KEY"
 
-      - name: Auto increment version in build files
+      - name: Calculate auto version
         run: |
           AUTO_VCODE=$(( ${{ github.run_number }} - 209 ))
-          if [ $AUTO_VCODE -lt 3 ]; then
-            AUTO_VCODE=3
+          if [ $AUTO_VCODE -lt 6 ]; then
+            AUTO_VCODE=6
           fi
-          echo "Auto Generated Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
-
-          TARGET_FILES=$(find . -path "*tvroom*" -name "build.gradle*" -not -path "*/build/*")
-          for f in $TARGET_FILES; do
-            echo "Applying auto version code $AUTO_VCODE to $f"
-            sed -i -E "s/set\(\"extVersionCode\",\s*[0-9]+\)/set(\"extVersionCode\", $AUTO_VCODE)/g" "$f"
-            sed -i -E "s/extVersionCode\s*=\s*[0-9]+/extVersionCode = $AUTO_VCODE/g" "$f"
-            grep -H "extVersionCode" "$f" || true
-          done
+          echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
+          echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
 
       - name: Build extensions
         run: |
           ./gradlew clean :src:ko:tvroom:assembleRelease \
+            -PextVersionCode=${{ env.AUTO_VCODE }} \
             -x lintKotlin -x lint \
             -PsigningStorePassword="android" \
             -PsigningKeyPassword="android" \
@@ -142,12 +136,10 @@ jobs:
               if clean_pkg.endswith(".tvroom.tvroom"):
                   clean_pkg = clean_pkg.replace(".tvroom.tvroom", ".tvroom")
 
-              # 앱 라벨 및 인덱스 이름을 "TVroom"으로 일치화
               display_name = "TVroom"
               source_name = "티비위키"
               base_domain = "https://tvwiki51.net"
-              calc_version = f"14.{vcode}"
-              target_name = f"aniyomi-{clean_pkg}-v{calc_version}-release.apk"
+              target_name = f"aniyomi-{clean_pkg}-v{vname}-release.apk"
 
               for dest in [repo_dir, os.path.join(repo_dir, "anime"), os.path.join(repo_dir, "apk")]:
                   subprocess.run(["cp", "-v", apk, os.path.join(dest, target_name)])
@@ -166,13 +158,14 @@ jobs:
 
               apk_size = os.path.getsize(os.path.join(repo_dir, target_name))
 
+              # APK에서 실측된 vcode와 vname을 인덱스에 일치 기록
               extensions.append({
                   "name": display_name,
                   "pkg": clean_pkg,
                   "apk": target_name,
                   "lang": "ko",
                   "code": vcode,
-                  "version": calc_version,
+                  "version": vname,
                   "nsfw": 1,
                   "hasReadme": 0,
                   "hasChangelog": 0,
@@ -197,7 +190,7 @@ jobs:
           with open(os.path.join(repo_dir, "_headers"), "w", encoding="utf-8") as f:
               f.write("/*\n  Access-Control-Allow-Origin: *\n/index.min.json\n  Cache-Control: no-cache, no-store, must-revalidate\n/anime/index.min.json\n  Cache-Control: no-cache, no-store, must-revalidate\n/repo.json\n  Cache-Control: no-cache, no-store, must-revalidate\n")
 
-          print(f"인덱싱 완료 -> Name: {display_name}, Version: {calc_version}, Code: {vcode}, Pkg: {clean_pkg}")
+          print(f"인덱싱 완료 -> Name: {display_name}, Version: {vname}, Code: {vcode}, Pkg: {clean_pkg}")
           EOF
 
       - name: Deploy to GitHub Pages
