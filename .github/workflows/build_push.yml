@@ -98,6 +98,7 @@ jobs:
 
           python3 - << 'EOF'
           import os, glob, subprocess, json
+          from PIL import Image
 
           repo_dir = "repo"
           signing_key = os.environ.get("SIGNING_KEY", "")
@@ -137,7 +138,9 @@ jobs:
               if not pkg or not vcode or not vname:
                   continue
 
-              display_name = "티비위키"
+              # 확장 이름은 APK의 실제 라벨명과 동일한 "TVroom"으로 일치
+              display_name = "TVroom"
+              source_name = "티비위키"
               base_domain = "https://tvwiki51.net"
               target_name = f"aniyomi-{pkg}-v{vname}-release.apk"
 
@@ -145,9 +148,6 @@ jobs:
                   subprocess.run(["cp", "-v", apk, os.path.join(dest, target_name)])
 
               icon_file = f"{pkg}.png"
-
-              # Tvroom.kt의 고정 ID와 완전 일치
-              source_id = "7894561230123456789"
               apk_size = os.path.getsize(os.path.join(repo_dir, target_name))
 
               extensions.append({
@@ -164,9 +164,9 @@ jobs:
                   "icon": icon_file,
                   "sources": [
                       {
-                          "name": display_name,
+                          "name": source_name,
                           "lang": "ko",
-                          "id": source_id,
+                          "id": "7894561230123456789",
                           "baseUrl": base_domain,
                           "versionId": 1
                       }
@@ -177,7 +177,7 @@ jobs:
               with open(p, "w", encoding="utf-8") as f:
                   json.dump(extensions, f, ensure_ascii=False, separators=(',', ':'))
 
-          print(f"인덱싱 완료 (Target Code: {vcode})")
+          print(f"인덱싱 완료 (Name: {display_name}, Code: {vcode})")
           EOF
 
       - name: Deploy to GitHub Pages
