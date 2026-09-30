@@ -59,13 +59,16 @@ jobs:
 
       - name: Calculate auto version
         run: |
-          # 기존 설치된 20 버전보다 무조건 높은 21부터 시작하며, 빌드가 돌 때마다 1씩 자동 누적 증가
-          # (예: run_number가 230일 때 230 - 208 = 22, 231일 때 23...)
-          BASE_OFFSET=208
-          AUTO_VCODE=$(( ${{ github.run_number }} - BASE_OFFSET ))
-          if [ $AUTO_VCODE -lt 21 ]; then
-            AUTO_VCODE=21
+          # Git 전체 커밋 수를 기반으로 자동 버전 코드 생성 (푸시할 때마다 무조건 1씩 증가)
+          # 기준 커밋 수에 맞춰 기기 버전(21)보다 무조건 높게 나오도록 오프셋 계산
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          
+          # 만약 22 이상이 되도록 보정 (커밋 수 기반)
+          AUTO_VCODE=$COMMIT_COUNT
+          if [ $AUTO_VCODE -le 21 ]; then
+            AUTO_VCODE=22
           fi
+
           echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
           echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
 
