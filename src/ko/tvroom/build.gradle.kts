@@ -22,7 +22,6 @@ android {
     namespace = "eu.kanade.tachiyomi.animeextension.ko.tvroom"
 
     defaultConfig {
-        // common.gradle 이후에 외부 전달된 extCode를 확실히 덮어씀
         versionCode = extCode
         versionName = "14.$extCode"
     }
@@ -36,4 +35,13 @@ android {
 
 configurations.all {
     exclude(group = "com.github.inorichi.injekt")
+}
+
+// common.gradle이 계산한 버전을 최종 패키징 단계에서 확실히 강제 주입
+android.applicationVariants.all {
+    outputs.all {
+        val output = this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl
+        output?.versionCodeOverride = extCode
+        output?.versionNameOverride = "14.$extCode"
+    }
 }
