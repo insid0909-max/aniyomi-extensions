@@ -38,22 +38,23 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip pillow
 
+      # 매 빌드마다 바뀌지 않는 영구 고정 Keystore 생성 (동일 비밀번호, 동일 파라미터)
       - name: Prepare fixed signing key
         run: |
-          KEYSTORE_PATH="$GITHUB_WORKSPACE/debug.keystore"
+          KEYSTORE_PATH="$GITHUB_WORKSPACE/signing.keystore"
           rm -f "$KEYSTORE_PATH"
           keytool -genkeypair \
-            -alias androiddebugkey \
-            -keypass android \
+            -alias aniyomikey \
+            -keypass "aniyomi123" \
             -keystore "$KEYSTORE_PATH" \
-            -storepass android \
-            -dname "CN=Android Debug,O=Android,C=US" \
+            -storepass "aniyomi123" \
+            -dname "CN=AniyomiExtension, OU=Extension, O=Aniyomi, L=Seoul, ST=Seoul, C=KR" \
             -keyalg RSA \
             -keysize 2048 \
             -validity 10000 \
             -storetype PKCS12
           
-          SIGNING_KEY=$(keytool -list -v -keystore "$KEYSTORE_PATH" -alias androiddebugkey -storepass android | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          SIGNING_KEY=$(keytool -list -v -keystore "$KEYSTORE_PATH" -alias aniyomikey -storepass "aniyomi123" | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
           echo "SIGNING_KEY=$SIGNING_KEY" >> $GITHUB_ENV
           echo "Fixed Fingerprint: $SIGNING_KEY"
 
@@ -68,7 +69,7 @@ jobs:
           echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
           echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
 
-      # build.gradle.kts 파일 내부의 extVersionCode 및 기본값 21을 AUTO_VCODE 숫자로 명확히 치환
+      # build.gradle.kts 파일의 extVersionCode를 AUTO_VCODE 숫자로 명확히 치환
       - name: Inject version into build.gradle
         run: |
           TARGET_FILE="src/ko/tvroom/build.gradle.kts"
@@ -77,20 +78,19 @@ jobs:
           echo "치환 결과 확인:"
           grep -E "extVersionCode|extCode" "$TARGET_FILE"
 
-      # -PextVersionCode 파라미터를 넘겨 Gradle 빌드 내부에서도 해당 버전을 가져가도록 주입
       - name: Build extensions
         run: |
           ./gradlew clean :src:ko:tvroom:assembleRelease \
             -PextVersionCode=${{ env.AUTO_VCODE }} \
             -x lintKotlin -x lint \
-            -PsigningStorePassword="android" \
-            -PsigningKeyPassword="android" \
-            -PsigningKeyAlias="androiddebugkey" \
-            -PsigningStoreFile="$GITHUB_WORKSPACE/debug.keystore" \
-            -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/debug.keystore" \
-            -Pandroid.injected.signing.store.password="android" \
-            -Pandroid.injected.signing.key.alias="androiddebugkey" \
-            -Pandroid.injected.signing.key.password="android" \
+            -PsigningStorePassword="aniyomi123" \
+            -PsigningKeyPassword="aniyomi123" \
+            -PsigningKeyAlias="aniyomikey" \
+            -PsigningStoreFile="$GITHUB_WORKSPACE/signing.keystore" \
+            -Pandroid.injected.signing.store.file="$GITHUB_WORKSPACE/signing.keystore" \
+            -Pandroid.injected.signing.store.password="aniyomi123" \
+            -Pandroid.injected.signing.key.alias="aniyomikey" \
+            -Pandroid.injected.signing.key.password="aniyomi123" \
             --stacktrace
 
       - name: Prepare repo and auto-generate index
@@ -148,8 +148,8 @@ jobs:
               display_name = label if label else "TVroom"
               source_name = "TVroom"
               base_domain = "https://tvwiki51.net"
-              # 실제 versionCode 기반의 파일명 생성
-              target_name = f"aniyomi-{pkg}-v14.{vcode}-release.apk"
+              # aapt가 읽은 진짜 vname을 파일명과 json에 반영
+              target_name = f"aniyomi-{pkg}-v{vname}-release.apk"
 
               for dest in [repo_dir, os.path.join(repo_dir, "anime"), os.path.join(repo_dir, "apk")]:
                   subprocess.run(["cp", "-v", apk, os.path.join(dest, target_name)])
@@ -174,7 +174,7 @@ jobs:
                   "apk": target_name,
                   "lang": "ko",
                   "code": vcode,
-                  "version": f"14.{vcode}",
+                  "version": vname,
                   "nsfw": 1,
                   "hasReadme": 0,
                   "hasChangelog": 0,
@@ -195,10 +195,9 @@ jobs:
               with open(p, "w", encoding="utf-8") as f:
                   json.dump(extensions, f, ensure_ascii=False, separators=(',', ':'))
 
-          print(f"인덱싱 완료 -> Name: {display_name}, Version: 14.{vcode}, Code: {vcode}, Pkg: {pkg}")
+          print(f"인덱싱 완료 -> Name: {display_name}, Version: {vname}, Code: {vcode}, Pkg: {pkg}")
           EOF
 
-          # Cloudflare Pages 엣지 캐시 완전 무효화 헤더
           cat << 'HEADER_EOF' > repo/_headers
           /*
             Access-Control-Allow-Origin: *
