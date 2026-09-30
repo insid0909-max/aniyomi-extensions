@@ -15,7 +15,7 @@ class LiveSports : AnimeHttpSource() {
 
     override val name = "실시간스포츠"
 
-    override val baseUrl = "https://livesports.example.com"
+    override val baseUrl = "https://njtv-01.com"
 
     override val lang = "ko"
 
@@ -23,7 +23,7 @@ class LiveSports : AnimeHttpSource() {
 
     override val client: OkHttpClient = network.client
 
-    // ================= Ninki (Popular) =================
+    // ================= 인기 목록 (Popular) =================
     override fun popularAnimeRequest(page: Int): Request {
         return GET("$baseUrl/")
     }
@@ -33,7 +33,7 @@ class LiveSports : AnimeHttpSource() {
         return AnimesPage(animeList, false)
     }
 
-    // ================= Saishin (Latest) =================
+    // ================= 최신 목록 (Latest) =================
     override fun latestUpdatesRequest(page: Int): Request {
         return popularAnimeRequest(page)
     }
@@ -42,7 +42,7 @@ class LiveSports : AnimeHttpSource() {
         return popularAnimeParse(response)
     }
 
-    // ================= Kensaku (Search) =================
+    // ================= 검색 (Search) =================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         return GET("$baseUrl/?s=$query")
     }
@@ -52,7 +52,7 @@ class LiveSports : AnimeHttpSource() {
         return AnimesPage(animeList, false)
     }
 
-    // ================= Shousai (Details) =================
+    // ================= 상세 정보 (Details) =================
     override fun animeDetailsParse(response: Response): SAnime {
         val anime = SAnime.create()
         anime.title = "실시간스포츠 채널"
@@ -60,13 +60,13 @@ class LiveSports : AnimeHttpSource() {
         return anime
     }
 
-    // ================= Episode Ichiran =================
+    // ================= 에피소드 / 방송 목록 (Episode List) =================
     override fun episodeListParse(response: Response): List<SEpisode> {
         val episodeList = mutableListOf<SEpisode>()
         return episodeList
     }
 
-    // ================= Douga Stream URL =================
+    // ================= 비디오 스트림 주소 (Video Stream) =================
     override fun videoListParse(response: Response): List<Video> {
         return emptyList()
     }
