@@ -58,10 +58,7 @@ jobs:
 
       - name: Calculate auto version
         run: |
-          AUTO_VCODE=$(( ${{ github.run_number }} - 209 ))
-          if [ $AUTO_VCODE -lt 20 ]; then
-            AUTO_VCODE=20
-          fi
+          AUTO_VCODE=21
           echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
           echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
 
