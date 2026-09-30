@@ -17,6 +17,24 @@ apply(from = "$rootDir/common.gradle")
 android {
     namespace = "eu.kanade.tachiyomi.animeextension.ko.livesports"
 
+    defaultConfig {
+        versionCode = extCode
+        versionName = "14.$extCode"
+    }
+
+    signingConfigs {
+        getByName("release") {
+            // common.gradle에 정의된 공용 릴리즈 서명 키 그대로 사용
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
     sourceSets {
         getByName("main") {
             res.srcDirs("res")
