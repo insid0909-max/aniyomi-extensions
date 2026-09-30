@@ -70,13 +70,15 @@ jobs:
           echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
           echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
 
-      # 경로를 직접 지정하지 않고 레포 내부의 모든 tvroom build.gradle을 자동으로 찾아 치환
+      # Kotlin DSL (.kts) 및 일반 Groovy build.gradle의 버전 코드/이름을 정밀 치환
       - name: Inject version into build.gradle
         run: |
           find . -type f -name "build.gradle*" | grep -i "tvroom" | while read -r file; do
             echo "Injecting version $AUTO_VCODE into $file"
-            sed -i "s/extVersionCode = .*/extVersionCode = $AUTO_VCODE/" "$file" || true
-            sed -i "s/extVersion = .*/extVersion = '$AUTO_VCODE'/" "$file" || true
+            sed -i -E "s/extVersionCode\s*=\s*[0-9]+/extVersionCode = $AUTO_VCODE/g" "$file"
+            sed -i -E "s/extVersion\s*=\s*[\"'][^\"']+[\"']/extVersion = \"$AUTO_VCODE\"/g" "$file" || true
+            sed -i -E "s/versionCode\s*=\s*[0-9]+/versionCode = $AUTO_VCODE/g" "$file" || true
+            sed -i -E "s/versionName\s*=\s*[\"'][^\"']+[\"']/versionName = \"14.$AUTO_VCODE\"/g" "$file" || true
           done
 
       - name: Build extensions
