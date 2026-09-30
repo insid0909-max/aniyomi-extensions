@@ -1,4 +1,4 @@
-name: CI
+Name: CI
 
 on:
   push:
@@ -60,12 +60,22 @@ jobs:
       - name: Calculate auto version
         run: |
           COMMIT_COUNT=$(git rev-list --count HEAD)
-          AUTO_VCODE=$COMMIT_COUNT
-          if [ $AUTO_VCODE -le 4384 ]; then
-            AUTO_VCODE=4385
+          BASE_OFFSET=4300
+          AUTO_VCODE=$((BASE_OFFSET + COMMIT_COUNT))
+          
+          # 현재 기기에 설치된 4387보다 무조건 높은 4388 이상을 보장
+          if [ $AUTO_VCODE -le 4387 ]; then
+            AUTO_VCODE=4388
           fi
+          
           echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
           echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
+
+      # 실제 APK 바이너리 내부의 versionCode/versionName을 치환
+      - name: Inject version into build.gradle
+        run: |
+          sed -i "s/extVersionCode = .*/extVersionCode = ${{ env.AUTO_VCODE }}/" src/ko/tvroom/build.gradle
+          sed -i "s/extVersion = .*/extVersion = '${{ env.AUTO_VCODE }}'/" src/ko/tvroom/build.gradle || true
 
       - name: Build extensions
         run: |
@@ -183,8 +193,20 @@ jobs:
               with open(p, "w", encoding="utf-8") as f:
                   json.dump(extensions, f, ensure_ascii=False, separators=(',', ':'))
 
+          # Cloudflare Pages 캐시 완전 차단 헤더
           with open(os.path.join(repo_dir, "_headers"), "w", encoding="utf-8") as f:
-              f.write("/*\n  Access-Control-Allow-Origin: *\n/index.min.json\n  Cache-Control: no-cache, no-store, must-revalidate\n/anime/index.min.json\n  Cache-Control: no-cache, no-store, must-revalidate\n/repo.json\n  Cache-Control: no-cache, no-store, must-revalidate\n")
+              f.write("""/*
+  Access-Control-Allow-Origin: *
+/index.min.json
+  Cache-Control: no-cache, no-store, must-revalidate, max-age=0, s-maxage=0
+  CDN-Cache-Control: no-store
+/anime/index.min.json
+  Cache-Control: no-cache, no-store, must-revalidate, max-age=0, s-maxage=0
+  CDN-Cache-Control: no-store
+/repo.json
+  Cache-Control: no-cache, no-store, must-revalidate, max-age=0, s-maxage=0
+  CDN-Cache-Control: no-store
+""")
 
           print(f"인덱싱 완료 -> Name: {display_name}, Version: {vname}, Code: {vcode}, Pkg: {pkg}")
           EOF
