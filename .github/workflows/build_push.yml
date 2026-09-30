@@ -70,16 +70,14 @@ jobs:
           echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
           echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
 
-      # Kotlin DSL (.kts) 및 일반 Groovy build.gradle의 버전 코드/이름을 정밀 치환
+      # build.gradle.kts 내부의 기본값과 versionCode/versionName을 확실히 강제 주입
       - name: Inject version into build.gradle
         run: |
-          find . -type f -name "build.gradle*" | grep -i "tvroom" | while read -r file; do
-            echo "Injecting version $AUTO_VCODE into $file"
-            sed -i -E "s/extVersionCode\s*=\s*[0-9]+/extVersionCode = $AUTO_VCODE/g" "$file"
-            sed -i -E "s/extVersion\s*=\s*[\"'][^\"']+[\"']/extVersion = \"$AUTO_VCODE\"/g" "$file" || true
-            sed -i -E "s/versionCode\s*=\s*[0-9]+/versionCode = $AUTO_VCODE/g" "$file" || true
-            sed -i -E "s/versionName\s*=\s*[\"'][^\"']+[\"']/versionName = \"14.$AUTO_VCODE\"/g" "$file" || true
-          done
+          target_file="src/ko/tvroom/build.gradle.kts"
+          echo "Injecting version $AUTO_VCODE into $target_file"
+          sed -i -E "s/21/$AUTO_VCODE/g" "$target_file"
+          sed -i -E "s/versionCode\s*=\s*extCode/versionCode = $AUTO_VCODE/g" "$target_file" || true
+          sed -i -E "s/versionName\s*=\s*\"14\.extCode\"/versionName = \"14.$AUTO_VCODE\"/g" "$target_file" || true
 
       - name: Build extensions
         run: |
