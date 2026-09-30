@@ -19,11 +19,13 @@ class LiveSports : AnimeHttpSource() {
 
     override val lang = "ko"
 
+    override val isNsfw = false
+
     override val supportsLatest = false
 
     override val client: OkHttpClient = network.client
 
-    // ================= 인기 목록 (Popular) =================
+    // ================= Ninki (Popular) =================
     override fun popularAnimeRequest(page: Int): Request {
         return GET("$baseUrl/")
     }
@@ -33,7 +35,7 @@ class LiveSports : AnimeHttpSource() {
         return AnimesPage(animeList, false)
     }
 
-    // ================= 최신 목록 (Latest) =================
+    // ================= Saishin (Latest) =================
     override fun latestUpdatesRequest(page: Int): Request {
         return popularAnimeRequest(page)
     }
@@ -42,7 +44,7 @@ class LiveSports : AnimeHttpSource() {
         return popularAnimeParse(response)
     }
 
-    // ================= 검색 (Search) =================
+    // ================= Kensaku (Search) =================
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         return GET("$baseUrl/?s=$query")
     }
@@ -52,7 +54,7 @@ class LiveSports : AnimeHttpSource() {
         return AnimesPage(animeList, false)
     }
 
-    // ================= 상세 정보 (Details) =================
+    // ================= Shousai (Details) =================
     override fun animeDetailsParse(response: Response): SAnime {
         val anime = SAnime.create()
         anime.title = "실시간스포츠 채널"
@@ -60,13 +62,13 @@ class LiveSports : AnimeHttpSource() {
         return anime
     }
 
-    // ================= 에피소드 / 방송 목록 (Episode List) =================
+    // ================= Episode Ichiran =================
     override fun episodeListParse(response: Response): List<SEpisode> {
         val episodeList = mutableListOf<SEpisode>()
         return episodeList
     }
 
-    // ================= 비디오 스트림 주소 (Video Stream) =================
+    // ================= Douga Stream URL =================
     override fun videoListParse(response: Response): List<Video> {
         return emptyList()
     }
