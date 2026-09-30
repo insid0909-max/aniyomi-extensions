@@ -120,18 +120,8 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             ?: imgNode?.attr("alt")?.trim()?.ifEmpty { null }
             ?: link.text().trim()
 
-        val baseTitle = cleanSeriesTitle(rawTitle)
-
-        // 목록 카드 텍스트에서 4자리 연도(19xx, 20xx) 추출하여 즉시 반영
-        val cardText = element.text()
-        val yearMatch = Regex("""\b(19\d{2}|20\d{2})\b""").find(cardText)
-        val releaseYear = yearMatch?.groupValues?.get(1)
-
-        title = if (!releaseYear.isNullOrEmpty() && !baseTitle.contains(releaseYear)) {
-            "$baseTitle ($releaseYear)"
-        } else {
-            baseTitle
-        }
+        // 목록 카드 제목은 연도 억지 주입 없이 순수 작품명으로 지정
+        title = cleanSeriesTitle(rawTitle)
 
         thumbnail_url = imgNode?.let { img ->
             val src = img.attr("data-original").ifEmpty {
@@ -215,17 +205,9 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
         val titleNode = document.selectFirst("#bo_v_title .bo_v_tit, #bo_v_title h1, h1, .view-title")
         val ogTitle = document.selectFirst("meta[property='og:title']")?.attr("content")
-        val baseTitle = cleanSeriesTitle(ogTitle ?: titleNode?.text() ?: "티비위키")
 
-        // 개봉년도: YYYY 또는 YYYY-MM-DD 에서 4자리 연도 추출
-        val yearMatch = Regex("""개봉년도\s*:\s*(\d{4})""").find(document.text())
-        val releaseYear = yearMatch?.groupValues?.get(1)
-
-        title = if (!releaseYear.isNullOrEmpty() && !baseTitle.contains(releaseYear)) {
-            "$baseTitle ($releaseYear)"
-        } else {
-            baseTitle
-        }
+        // 목록과 일치하는 순수 작품명 유지
+        title = cleanSeriesTitle(ogTitle ?: titleNode?.text() ?: "티비위키")
 
         thumbnail_url = document.selectFirst(".poster img, .thumb img, img.cover, #bo_v_img img")?.let { img ->
             val src = img.attr("data-original").ifEmpty {
@@ -236,7 +218,15 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             fixUrl(src)
         }
 
-        description = document.selectFirst(".thumb-desc, .desc, .summary, .content, #bo_v_con, p")?.text()?.trim()
+        val rawDesc = document.selectFirst(".thumb-desc, .desc, .summary, .content, #bo_v_con, p")?.text()?.trim()
+        val yearMatch = Regex("""개봉년도\s*:\s*(\d{4})""").find(document.text())
+        val releaseYear = yearMatch?.groupValues?.get(1)
+
+        // 연도 정보는 제목에 억지로 붙이지 않고 장르(Genre) 메타데이터로 명확히 배치
+        if (!releaseYear.isNullOrEmpty()) {
+            genre = "${releaseYear}년"
+        }
+        description = rawDesc
     }
 
     override fun episodeListSelector(): String =
