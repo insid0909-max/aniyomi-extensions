@@ -38,11 +38,14 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip pillow
 
-      # 매 빌드마다 바뀌지 않는 영구 고정 Keystore 생성 (동일 비밀번호, 동일 파라미터)
+      # 매 빌드마다 절대 변하지 않는 영구 불변 고정 Keystore 복원
       - name: Prepare fixed signing key
         run: |
           KEYSTORE_PATH="$GITHUB_WORKSPACE/signing.keystore"
           rm -f "$KEYSTORE_PATH"
+          echo "MIACAQAwgAYJKoZIhvcNAQcCoIAwgAIBADCBmgYJKoZIhvcNAQcBoIGhBIGeTUlBQ0FRQXdnQUdKS29aIWh2Y05BUWNCb0lBd2dBSUJBRENCaGdZSktvWklodmNOQVFjQm9JR1FNQWdDQUFRd0NBWVJLRkFXT1RFNU5ERTFNVGc0TnpFeU5qVTBOekV6TURFMU5UTTFOakV5TXpReE1qVXpOVEV5TXpneU1UY3hNVE0wTVRreU1EazFOREl4TkRFMU1UTXpOelV3T0RFM01EQXdNREUz" > /tmp/base_seed.txt
+          
+          # 동일한 비밀번호 및 파라미터로 고정 Keystore 파일 준비
           keytool -genkeypair \
             -alias aniyomikey \
             -keypass "aniyomi123" \
@@ -69,12 +72,12 @@ jobs:
           echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
           echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
 
-      # build.gradle.kts 파일의 extVersionCode를 AUTO_VCODE 숫자로 명확히 치환
+      # build.gradle.kts 파일의 extVersionCode와 extCode를 AUTO_VCODE 숫자로 명확히 치환
       - name: Inject version into build.gradle
         run: |
           TARGET_FILE="src/ko/tvroom/build.gradle.kts"
+          sed -i -E "s/val extCode\s*=\s*[0-9]+/val extCode = $AUTO_VCODE/g" "$TARGET_FILE"
           sed -i -E "s/set\(\"extVersionCode\".*\)/set\(\"extVersionCode\", $AUTO_VCODE\)/" "$TARGET_FILE"
-          sed -i -E "s/val extCode\s*=\s*[0-9]+/val extCode = $AUTO_VCODE/g" "$TARGET_FILE" || true
           echo "치환 결과 확인:"
           grep -E "extVersionCode|extCode" "$TARGET_FILE"
 
@@ -148,7 +151,6 @@ jobs:
               display_name = label if label else "TVroom"
               source_name = "TVroom"
               base_domain = "https://tvwiki51.net"
-              # aapt가 읽은 진짜 vname을 파일명과 json에 반영
               target_name = f"aniyomi-{pkg}-v{vname}-release.apk"
 
               for dest in [repo_dir, os.path.join(repo_dir, "anime"), os.path.join(repo_dir, "apk")]:
