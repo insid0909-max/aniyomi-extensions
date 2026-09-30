@@ -3,7 +3,6 @@ apply plugin: 'kotlin-android'
 
 ext {
     extName = '실시간스포츠'
-    pkgNameSuffix = 'ko.livesports'
     extClass = '.LiveSports'
     extVersionCode = 1
     libVersion = '14'
