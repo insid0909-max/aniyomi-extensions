@@ -70,19 +70,16 @@ jobs:
           echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
           echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
 
-      # build.gradle.kts 내부의 기본값과 versionCode/versionName을 확실히 강제 주입
+      # build.gradle.kts의 extVersionCode를 직접 치환
       - name: Inject version into build.gradle
         run: |
           target_file="src/ko/tvroom/build.gradle.kts"
           echo "Injecting version $AUTO_VCODE into $target_file"
-          sed -i -E "s/21/$AUTO_VCODE/g" "$target_file"
-          sed -i -E "s/versionCode\s*=\s*extCode/versionCode = $AUTO_VCODE/g" "$target_file" || true
-          sed -i -E "s/versionName\s*=\s*\"14\.extCode\"/versionName = \"14.$AUTO_VCODE\"/g" "$target_file" || true
+          sed -i -E "s/set\(\"extVersionCode\",\s*[0-9]+\)/set\(\"extVersionCode\", $AUTO_VCODE\)/g" "$target_file"
 
       - name: Build extensions
         run: |
           ./gradlew clean :src:ko:tvroom:assembleRelease \
-            -PextVersionCode=${{ env.AUTO_VCODE }} \
             -x lintKotlin -x lint \
             -PsigningStorePassword="android" \
             -PsigningKeyPassword="android" \
