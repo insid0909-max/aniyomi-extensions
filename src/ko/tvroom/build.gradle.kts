@@ -3,11 +3,8 @@ plugins {
     id("kotlin-android")
 }
 
-val extCode = if (project.hasProperty("extVersionCode")) {
-    project.property("extVersionCode").toString().toInt()
-} else {
-    4390
-}
+// CI의 sed 명령어로 주입되는 고정 버전 코드
+val extCode = 8705
 
 ext {
     set("extName", "TVroom")
