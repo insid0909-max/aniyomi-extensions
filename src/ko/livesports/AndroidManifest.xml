@@ -8,5 +8,11 @@
         <meta-data
             android:name="tachiyomi.animeextension.class"
             android:value=".LiveSports" />
+        <meta-data
+            android:name="tachiyomi.animeextension.lang"
+            android:value="ko" />
+        <meta-data
+            android:name="tachiyomi.animeextension.nsfw"
+            android:value="0" />
     </application>
 </manifest>
