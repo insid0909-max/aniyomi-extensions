@@ -61,8 +61,8 @@ jobs:
         run: |
           COMMIT_COUNT=$(git rev-list --count HEAD)
           AUTO_VCODE=$COMMIT_COUNT
-          if [ $AUTO_VCODE -le 21 ]; then
-            AUTO_VCODE=22
+          if [ $AUTO_VCODE -le 4384 ]; then
+            AUTO_VCODE=4385
           fi
           echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
           echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
@@ -135,7 +135,7 @@ jobs:
                   continue
 
               display_name = label if label else "TVroom"
-              source_name = "티비위키"
+              source_name = "TVroom"
               base_domain = "https://tvwiki51.net"
               target_name = f"aniyomi-{pkg}-v{vname}-release.apk"
 
