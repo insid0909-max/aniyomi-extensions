@@ -2,7 +2,7 @@ apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 
 ext {
-    extName = '실시간스포츠'
+    extName = 'LiveSports'
     extClass = '.LiveSports'
     extVersionCode = 1
 }
