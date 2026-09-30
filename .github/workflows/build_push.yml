@@ -68,17 +68,20 @@ jobs:
           echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
           echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
 
-      # build.gradle.kts 파일의 set("extVersionCode", ...) 라인을 AUTO_VCODE 숫자로 명확히 치환
+      # build.gradle.kts 파일 내부의 extVersionCode 및 기본값 21을 AUTO_VCODE 숫자로 명확히 치환
       - name: Inject version into build.gradle
         run: |
           TARGET_FILE="src/ko/tvroom/build.gradle.kts"
           sed -i -E "s/set\(\"extVersionCode\".*\)/set\(\"extVersionCode\", $AUTO_VCODE\)/" "$TARGET_FILE"
+          sed -i -E "s/val extCode\s*=\s*[0-9]+/val extCode = $AUTO_VCODE/g" "$TARGET_FILE" || true
           echo "치환 결과 확인:"
-          grep "extVersionCode" "$TARGET_FILE"
+          grep -E "extVersionCode|extCode" "$TARGET_FILE"
 
+      # -PextVersionCode 파라미터를 넘겨 Gradle 빌드 내부에서도 해당 버전을 가져가도록 주입
       - name: Build extensions
         run: |
           ./gradlew clean :src:ko:tvroom:assembleRelease \
+            -PextVersionCode=${{ env.AUTO_VCODE }} \
             -x lintKotlin -x lint \
             -PsigningStorePassword="android" \
             -PsigningKeyPassword="android" \
@@ -145,6 +148,7 @@ jobs:
               display_name = label if label else "TVroom"
               source_name = "TVroom"
               base_domain = "https://tvwiki51.net"
+              # 실제 versionCode 기반의 파일명 생성
               target_name = f"aniyomi-{pkg}-v14.{vcode}-release.apk"
 
               for dest in [repo_dir, os.path.join(repo_dir, "anime"), os.path.join(repo_dir, "apk")]:
@@ -194,7 +198,7 @@ jobs:
           print(f"인덱싱 완료 -> Name: {display_name}, Version: 14.{vcode}, Code: {vcode}, Pkg: {pkg}")
           EOF
 
-          # Cloudflare Pages 전용 엣지 캐시 완전 무효화 규칙
+          # Cloudflare Pages 엣지 캐시 완전 무효화 헤더
           cat << 'HEADER_EOF' > repo/_headers
           /*
             Access-Control-Allow-Origin: *
