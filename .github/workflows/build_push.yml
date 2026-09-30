@@ -62,20 +62,19 @@ jobs:
           COMMIT_COUNT=$(git rev-list --count HEAD)
           BASE_OFFSET=4300
           AUTO_VCODE=$((BASE_OFFSET + COMMIT_COUNT))
-          
           if [ $AUTO_VCODE -le 4387 ]; then
             AUTO_VCODE=4388
           fi
-          
           echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
           echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
 
-      # build.gradle.kts의 extVersionCode를 직접 치환
+      # build.gradle.kts 파일의 set("extVersionCode", ...) 라인을 AUTO_VCODE 숫자로 명확히 치환
       - name: Inject version into build.gradle
         run: |
-          target_file="src/ko/tvroom/build.gradle.kts"
-          echo "Injecting version $AUTO_VCODE into $target_file"
-          sed -i -E "s/set\(\"extVersionCode\",\s*[0-9]+\)/set\(\"extVersionCode\", $AUTO_VCODE\)/g" "$target_file"
+          TARGET_FILE="src/ko/tvroom/build.gradle.kts"
+          sed -i -E "s/set\(\"extVersionCode\".*\)/set\(\"extVersionCode\", $AUTO_VCODE\)/" "$TARGET_FILE"
+          echo "치환 결과 확인:"
+          grep "extVersionCode" "$TARGET_FILE"
 
       - name: Build extensions
         run: |
@@ -146,7 +145,8 @@ jobs:
               display_name = label if label else "TVroom"
               source_name = "TVroom"
               base_domain = "https://tvwiki51.net"
-              target_name = f"aniyomi-{pkg}-v{vname}-release.apk"
+              # 실제 versionCode(869x)를 기반으로 파일명 생성
+              target_name = f"aniyomi-{pkg}-v14.{vcode}-release.apk"
 
               for dest in [repo_dir, os.path.join(repo_dir, "anime"), os.path.join(repo_dir, "apk")]:
                   subprocess.run(["cp", "-v", apk, os.path.join(dest, target_name)])
@@ -171,7 +171,7 @@ jobs:
                   "apk": target_name,
                   "lang": "ko",
                   "code": vcode,
-                  "version": vname,
+                  "version": f"14.{vcode}",
                   "nsfw": 1,
                   "hasReadme": 0,
                   "hasChangelog": 0,
@@ -192,7 +192,7 @@ jobs:
               with open(p, "w", encoding="utf-8") as f:
                   json.dump(extensions, f, ensure_ascii=False, separators=(',', ':'))
 
-          print(f"인덱싱 완료 -> Name: {display_name}, Version: {vname}, Code: {vcode}, Pkg: {pkg}")
+          print(f"인덱싱 완료 -> Name: {display_name}, Version: 14.{vcode}, Code: {vcode}, Pkg: {pkg}")
           EOF
 
           cat << 'HEADER_EOF' > repo/_headers
