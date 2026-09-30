@@ -6,7 +6,7 @@ plugins {
 val extCode = if (project.hasProperty("extVersionCode")) {
     project.property("extVersionCode").toString().toInt()
 } else {
-    12
+    21 // 기존 12에서 21로 변경
 }
 
 ext {
@@ -23,8 +23,6 @@ android {
     defaultConfig {
         versionCode = extCode
         versionName = "14.$extCode"
-        // common.gradle이 매니페스트에 주입하는 앱 이름을 한글로 강제 치환
-        manifestPlaceholders["appName"] = "티비위키"
     }
 
     sourceSets {
