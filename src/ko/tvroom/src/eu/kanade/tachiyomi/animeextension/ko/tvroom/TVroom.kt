@@ -120,7 +120,18 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             ?: imgNode?.attr("alt")?.trim()?.ifEmpty { null }
             ?: link.text().trim()
 
-        title = cleanSeriesTitle(rawTitle)
+        val baseTitle = cleanSeriesTitle(rawTitle)
+
+        // 목록 카드 텍스트에서 4자리 연도(19xx, 20xx) 추출하여 즉시 반영
+        val cardText = element.text()
+        val yearMatch = Regex("""\b(19\d{2}|20\d{2})\b""").find(cardText)
+        val releaseYear = yearMatch?.groupValues?.get(1)
+
+        title = if (!releaseYear.isNullOrEmpty() && !baseTitle.contains(releaseYear)) {
+            "$baseTitle ($releaseYear)"
+        } else {
+            baseTitle
+        }
 
         thumbnail_url = imgNode?.let { img ->
             val src = img.attr("data-original").ifEmpty {
@@ -250,6 +261,11 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         val currentPath = response.request.url.encodedPath.trimEnd('/')
         val episodes = ArrayList<SEpisode>()
 
+        // 단일 에피소드(영화 등)일 때 사용할 작품 제목 추출
+        val titleNode = document.selectFirst("#bo_v_title .bo_v_tit, #bo_v_title h1, h1, .view-title")
+        val ogTitle = document.selectFirst("meta[property='og:title']")?.attr("content")
+        val pageTitle = cleanSeriesTitle(ogTitle ?: titleNode?.text() ?: "").ifEmpty { "본편" }
+
         val items = document.select("#other_list li")
         if (items.isNotEmpty()) {
             for (item in items) {
@@ -261,7 +277,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                     episodes.add(
                         SEpisode.create().apply {
                             setUrlWithoutDomain(href)
-                            name = formatEpisodeName(fullItemText)
+                            name = formatEpisodeName(fullItemText, pageTitle)
                             episode_number = match?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
                         },
                     )
@@ -282,7 +298,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                     episodes.add(
                         SEpisode.create().apply {
                             setUrlWithoutDomain(href)
-                            name = formatEpisodeName(text)
+                            name = formatEpisodeName(text, pageTitle)
                             episode_number = match?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
                         },
                     )
@@ -291,11 +307,20 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         }
 
         val uniqueList = episodes.distinctBy { it.url }
+
+        // 에피소드가 1개인 경우(단편 영화 등) 줄거리 오류 텍스트를 작품 제목으로 치환
+        if (uniqueList.size == 1) {
+            val singleEp = uniqueList.first()
+            if (singleEp.name.isBlank() || singleEp.name.contains("줄거리") || singleEp.name == "1화") {
+                singleEp.name = pageTitle
+            }
+        }
+
         if (uniqueList.isEmpty()) {
             return listOf(
                 SEpisode.create().apply {
                     setUrlWithoutDomain(response.request.url.encodedPath)
-                    name = "영상 재생"
+                    name = pageTitle
                     episode_number = 1f
                 },
             )
@@ -479,8 +504,13 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             .replace(Regex("""\s+다시보기(?:\s*-\s*티비위키)?\s*$"""), "")
             .trim()
 
-    private fun formatEpisodeName(raw: String): String {
-        val trimmed = raw.trim()
+    private fun formatEpisodeName(raw: String, fallbackTitle: String = "본편"): String {
+        var trimmed = raw.trim()
+
+        // '등록된 줄거리가 없습니다' 문구 및 불필요한 줄거리 안내 텍스트 필터링
+        if (trimmed.contains("줄거리가 없습니다") || trimmed.contains("등록된 줄거리")) {
+            trimmed = trimmed.replace(Regex("""등록된\s*줄거리가\s*없습니다\.?"""), "").trim()
+        }
 
         // 1. 회차 추출 (예: 820화, 820회)
         val epMatch = Regex("""(\d+(?:[-.]\d+)?)\s*[화회]""").find(trimmed)
@@ -497,7 +527,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             .replace(Regex("""^\s*[-:–]\s*"""), "")
             .trim()
 
-        return buildString {
+        val formatted = buildString {
             if (epText.isNotBlank()) append(epText)
             if (!dateText.isNullOrBlank()) {
                 if (isNotEmpty()) append(" - ")
@@ -507,7 +537,10 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 if (isNotEmpty()) append(" ")
                 append(subTitle)
             }
-        }.ifEmpty { trimmed }
+        }.trim()
+
+        // 줄거리가 없어서 공백이 되었거나 단편 영화일 경우 작품 제목으로 대체
+        return if (formatted.isBlank()) fallbackTitle else formatted
     }
 
     override fun videoListSelector(): String = throw UnsupportedOperationException()
