@@ -1,11 +1,12 @@
 /*
   Access-Control-Allow-Origin: *
-/index.min.json
+
+/*.json
   Cache-Control: no-cache, no-store, must-revalidate, max-age=0, s-maxage=0
   CDN-Cache-Control: no-store
-/anime/index.min.json
+  Cloudflare-CDN-Cache-Control: no-store
+
+/anime/*.json
   Cache-Control: no-cache, no-store, must-revalidate, max-age=0, s-maxage=0
   CDN-Cache-Control: no-store
-/repo.json
-  Cache-Control: no-cache, no-store, must-revalidate, max-age=0, s-maxage=0
-  CDN-Cache-Control: no-store
+  Cloudflare-CDN-Cache-Control: no-store
