@@ -95,7 +95,8 @@ jobs:
 
       - name: Build extensions
         run: |
-          ./gradlew clean assembleRelease \
+          mkdir -p src/ko/livesports/build src/ko/tvroom/build
+          ./gradlew :src:ko:tvroom:assembleRelease :src:ko:livesports:assembleRelease \
             -PextVersionCode=${{ env.AUTO_VCODE }} \
             -x lintKotlin -x lint \
             -PsigningStorePassword="aniyomi123" \
