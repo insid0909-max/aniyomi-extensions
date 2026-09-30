@@ -1,6 +1,5 @@
 ext {
     set("extName", "LiveSports")
-    set("pkgNameSuffix", null)
     set("extClass", ".LiveSports")
     set("extVersionCode", 1)
     set("libVersion", "14")
