@@ -4,7 +4,7 @@ plugins {
 }
 
 // CI의 sed 명령어로 주입되는 고정 버전 코드
-val extCode = 8736
+val extCode = 8705
 
 ext {
     set("extName", "LiveSports")
@@ -16,12 +16,6 @@ apply(from = "$rootDir/common.gradle")
 
 android {
     namespace = "eu.kanade.tachiyomi.animeextension.ko.livesports"
-
-    buildTypes {
-        named("release") {
-            signingConfig = signingConfigs.getByName("release")
-        }
-    }
 
     sourceSets {
         getByName("main") {
