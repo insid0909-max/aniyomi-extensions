@@ -19,8 +19,6 @@ class LiveSports : AnimeHttpSource() {
 
     override val lang = "ko"
 
-    override val isNsfw = false
-
     override val supportsLatest = false
 
     override val client: OkHttpClient = network.client
