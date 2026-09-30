@@ -7,12 +7,11 @@
         tools:replace="android:label">
         <meta-data
             android:name="tachiyomi.animeextension.class"
-            android:value=".LiveSports" />
+            android:value="eu.kanade.tachiyomi.animeextension.ko.livesports.LiveSports"
+            tools:replace="android:value" />
         <meta-data
-            android:name="tachiyomi.animeextension.lang"
-            android:value="ko" />
-        <meta-data
-            android:name="tachiyomi.animeextension.nsfw"
-            android:value="0" />
+            android:name="tachiyomi.animeextension.version"
+            android:value="14"
+            tools:replace="android:value" />
     </application>
 </manifest>
