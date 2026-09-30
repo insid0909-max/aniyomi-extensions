@@ -145,7 +145,6 @@ jobs:
               display_name = label if label else "TVroom"
               source_name = "TVroom"
               base_domain = "https://tvwiki51.net"
-              # 실제 versionCode(869x)를 기반으로 파일명 생성
               target_name = f"aniyomi-{pkg}-v14.{vcode}-release.apk"
 
               for dest in [repo_dir, os.path.join(repo_dir, "anime"), os.path.join(repo_dir, "apk")]:
@@ -195,18 +194,20 @@ jobs:
           print(f"인덱싱 완료 -> Name: {display_name}, Version: 14.{vcode}, Code: {vcode}, Pkg: {pkg}")
           EOF
 
+          # Cloudflare Pages 전용 엣지 캐시 완전 무효화 규칙
           cat << 'HEADER_EOF' > repo/_headers
           /*
             Access-Control-Allow-Origin: *
-          /index.min.json
+
+          /*.json
             Cache-Control: no-cache, no-store, must-revalidate, max-age=0, s-maxage=0
             CDN-Cache-Control: no-store
-          /anime/index.min.json
+            Cloudflare-CDN-Cache-Control: no-store
+
+          /anime/*.json
             Cache-Control: no-cache, no-store, must-revalidate, max-age=0, s-maxage=0
             CDN-Cache-Control: no-store
-          /repo.json
-            Cache-Control: no-cache, no-store, must-revalidate, max-age=0, s-maxage=0
-            CDN-Cache-Control: no-store
+            Cloudflare-CDN-Cache-Control: no-store
           HEADER_EOF
 
       - name: Deploy to GitHub Pages
