@@ -86,14 +86,16 @@ jobs:
       - name: Inject version into build.gradle
         run: |
           TARGET_FILE="src/ko/tvroom/build.gradle.kts"
-          sed -i -E "s/val extCode\s*=\s*[0-9]+/val extCode = $AUTO_VCODE/g" "$TARGET_FILE"
-          sed -i -E "s/set\(\"extVersionCode\".*\)/set\(\"extVersionCode\", $AUTO_VCODE\)/" "$TARGET_FILE"
-          echo "치환 결과 확인:"
-          grep -E "extVersionCode|extCode" "$TARGET_FILE"
+          if [ -f "$TARGET_FILE" ]; then
+            sed -i -E "s/val extCode\s*=\s*[0-9]+/val extCode = $AUTO_VCODE/g" "$TARGET_FILE"
+            sed -i -E "s/set\(\"extVersionCode\".*\)/set\(\"extVersionCode\", $AUTO_VCODE\)/" "$TARGET_FILE"
+            echo "치환 결과 확인:"
+            grep -E "extVersionCode|extCode" "$TARGET_FILE"
+          fi
 
       - name: Build extensions
         run: |
-          ./gradlew clean :src:ko:tvroom:assembleRelease \
+          ./gradlew clean assembleRelease \
             -PextVersionCode=${{ env.AUTO_VCODE }} \
             -x lintKotlin -x lint \
             -PsigningStorePassword="aniyomi123" \
@@ -158,9 +160,8 @@ jobs:
               if not pkg or not vcode or not vname:
                   continue
 
-              display_name = label if label else "TVroom"
-              source_name = "TVroom"
-              base_domain = "https://tvwiki51.net"
+              display_name = label if label else "Extension"
+              source_name = label if label else "Extension"
               target_name = f"aniyomi-{pkg}-v{vname}-release.apk"
 
               for dest in [repo_dir, os.path.join(repo_dir, "anime"), os.path.join(repo_dir, "apk")]:
@@ -196,8 +197,8 @@ jobs:
                       {
                           "name": source_name,
                           "lang": "ko",
-                          "id": "7894561230123456789",
-                          "baseUrl": base_domain,
+                          "id": str(abs(hash(pkg))),
+                          "baseUrl": "",
                           "versionId": 1
                       }
                   ]
@@ -207,7 +208,7 @@ jobs:
               with open(p, "w", encoding="utf-8") as f:
                   json.dump(extensions, f, ensure_ascii=False, separators=(',', ':'))
 
-          print(f"인덱싱 완료 -> Name: {display_name}, Version: {vname}, Code: {vcode}, Pkg: {pkg}")
+          print(f"총 {len(extensions)}개 확장 인덱싱 완료")
           EOF
 
           cat << 'HEADER_EOF' > repo/_headers
