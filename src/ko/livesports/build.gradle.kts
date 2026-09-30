@@ -4,6 +4,8 @@ ext {
     set("extVersionCode", 1)
 }
 
-val libVersion = "14"
+dependencies {
+    implementation("com.github.inorichi.injekt:injekt-core:fa53f28")
+}
 
 apply(from = "$rootDir/common.gradle")
