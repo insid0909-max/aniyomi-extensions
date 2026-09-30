@@ -4,7 +4,7 @@ plugins {
 }
 
 // CI의 sed 명령어로 주입되는 고정 버전 코드
-val extCode = 8705
+val extCode = 8736
 
 ext {
     set("extName", "LiveSports")
