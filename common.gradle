@@ -33,8 +33,11 @@ android {
         minSdkVersion AndroidConfig.minSdk
         targetSdkVersion AndroidConfig.targetSdk
         applicationIdSuffix "." + project.name
-        versionCode theme == null ? extVersionCode : theme.baseVersionCode + overrideVersionCode
-                versionName "14.$versionCode"
+
+        def finalCode = (theme == null ? extVersionCode : theme.baseVersionCode + overrideVersionCode) as Integer
+        versionCode finalCode
+        versionName "14.$finalCode"
+
         base {
             archivesName = "aniyomi-$applicationIdSuffix-v$versionName"
         }
