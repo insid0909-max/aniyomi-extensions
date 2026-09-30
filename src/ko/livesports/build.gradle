@@ -5,7 +5,6 @@ ext {
     extName = '실시간스포츠'
     extClass = '.LiveSports'
     extVersionCode = 1
-    libVersion = '14'
 }
 
 apply from: "$rootDir/common.gradle"
