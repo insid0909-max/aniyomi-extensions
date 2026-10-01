@@ -549,15 +549,32 @@ class LiveSports : AnimeHttpSource() {
             throw Exception("item=$firstItemDebug")
         }
 
-        // 완성 URL이면 그대로, 키만 있으면 호스트 후보로 조립
-        val playUrls: List<String> = if (data.startsWith("http")) {
-            listOf(data)
+        val mirrors = listOfNotNull(
+            liveHost,
+            "ol3ktizakokhjhnu.kjhsdfuie.work",
+            "daxnb7e8nd4e0hdj.kjhsdfuie.work",
+        ).distinct()
+
+        val parsed = if (data.startsWith("http")) {
+            try { data.toHttpUrl() } catch (e: Exception) { null }
         } else {
-            listOfNotNull(
-                liveHost,
-                "ol3ktizakokhjhnu.kjhsdfuie.work",
-                "daxnb7e8nd4e0hdj.kjhsdfuie.work",
-            ).distinct().map { "https://$it/live/$data/playlist.m3u8?site=njtv-01.com" }
+            null
+        }
+
+        // 완성 URL이면 원래 호스트를 먼저, 이어서 다른 호스트로 바꾼 주소도 시도
+        val playUrls: List<String> = when {
+            parsed != null && parsed.host.endsWith(".kjhsdfuie.work") ->
+                (listOf(parsed.host) + mirrors).distinct().map { h ->
+                    if (h == parsed.host) data else parsed.newBuilder().host(h).build().toString()
+                }
+            parsed != null -> listOf(data)
+            else -> mirrors.map { "https://$it/live/$data/playlist.m3u8?site=njtv-01.com" }
+        }
+
+        fun hostTag(u: String): String = try {
+            u.toHttpUrl().host.take(5)
+        } catch (e: Exception) {
+            "?"
         }
 
         val log = mutableListOf<String>()
@@ -566,18 +583,20 @@ class LiveSports : AnimeHttpSource() {
         for (u in playUrls) {
             for ((label, h) in headerVariants(u)) {
                 val r = probe(u, h)
-                log.add("$label:$r")
+                log.add("${hostTag(u)}:${r.take(9)}")
                 if (r.startsWith("m3u8=200")) {
                     ok.add(Candidate(r.contains("sub=200"), label, u, h, r))
                 }
-                // 하위 주소까지 통과한 조합을 찾으면 나머지는 검사하지 않음
-                if (r.contains("sub=200")) break
+                // 하위 주소까지 통과하면 중단, 404면 헤더를 바꿔도 같으므로 다음 호스트로
+                if (r.contains("sub=200") || r.startsWith("m3u8=404")) break
             }
             if (ok.isNotEmpty()) break
         }
 
         if (ok.isEmpty()) {
-            throw Exception("재생 실패 ${log.joinToString(" | ")} | data=${data.take(80)}")
+            val key = parsed?.encodedPath?.removePrefix("/live/")?.substringBefore("/") ?: data
+            val all404 = log.isNotEmpty() && log.all { it.contains("m3u8=404") }
+            throw Exception("[${key.take(14)}] " + (if (all404) "404 " else "") + log.joinToString(" | "))
         }
 
         val sorted = ok.sortedByDescending { it.sub200 }
