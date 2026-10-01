@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.animeextension.ko.tvroom
 
 import android.app.Application
 import android.content.SharedPreferences
+import android.os.Looper
 import android.util.Base64
 import android.widget.Toast
 import androidx.preference.EditTextPreference
@@ -28,6 +29,7 @@ import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
 
 class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
@@ -35,60 +37,88 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override val lang = "ko"
     override val supportsLatest = true
 
-    // 안드로이드 기본 프레임워크 리플렉션으로 안전하게 SharedPreferences 획득
+    // ================= 주소 관리 =================
+    @Volatile private var prefsCache: SharedPreferences? = null
+
+    // 안드로이드 기본 프레임워크 리플렉션으로 SharedPreferences 획득 (성공하면 재사용)
     private fun getAppPreferences(): SharedPreferences? {
+        prefsCache?.let { return it }
         return runCatching {
             val actThreadClass = Class.forName("android.app.ActivityThread")
             val currentAppMethod = actThreadClass.getMethod("currentApplication")
             val app = currentAppMethod.invoke(null) as? Application
             app?.getSharedPreferences("source_$id", 0)
+        }.getOrNull()?.also { prefsCache = it }
+    }
+
+    private fun customDomain(prefs: SharedPreferences?): String? =
+        prefs?.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/')
+            ?.takeIf { it.isNotBlank() && DOMAIN_REGEX.matches(it) }
+
+    private fun lastGoodDomain(prefs: SharedPreferences?): String =
+        prefs?.getString(PREF_LAST_GOOD_DOMAIN_KEY, DEFAULT_BASE_URL)
+            ?.takeIf { DOMAIN_REGEX.matches(it) } ?: DEFAULT_BASE_URL
+
+    // 네트워크를 호출하지 않는 현재 주소 (설정 화면 표시용)
+    private fun currentDomainNoNetwork(): String {
+        val prefs = getAppPreferences()
+        return customDomain(prefs) ?: cachedDomain ?: lastGoodDomain(prefs)
+    }
+
+    private val signalClient: OkHttpClient by lazy {
+        client.newBuilder().callTimeout(5, TimeUnit.SECONDS).build()
+    }
+
+    // 중앙신호등 조회 (잠금 안에서만 호출)
+    private fun resolveDomain(prefs: SharedPreferences?): String {
+        // 기다리는 사이 다른 스레드가 먼저 갱신했을 수 있음
+        cachedDomain?.let { if (System.currentTimeMillis() < cacheValidUntil) return it }
+
+        val lastGood = lastGoodDomain(prefs)
+        val fetched = runCatching {
+            val req = Request.Builder()
+                .url(SIGNAL_URL)
+                .header("User-Agent", defaultUserAgent)
+                .header("Accept", "application/json")
+                .build()
+            signalClient.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) return@use null
+                JSONObject(res.body.string()).optString("tvwiki").trim().trimEnd('/')
+            }
         }.getOrNull()
+
+        if (!fetched.isNullOrBlank() && DOMAIN_REGEX.matches(fetched)) {
+            cachedDomain = fetched
+            cacheValidUntil = System.currentTimeMillis() + CACHE_TTL_MS
+            if (fetched != lastGood) {
+                prefs?.edit()?.putString(PREF_LAST_GOOD_DOMAIN_KEY, fetched)?.apply()
+            }
+            return fetched
+        }
+
+        // 실패: 마지막 정상 주소를 쓰되 1분 뒤 다시 시도
+        cachedDomain = lastGood
+        cacheValidUntil = System.currentTimeMillis() + RETRY_TTL_MS
+        return lastGood
     }
 
     override val baseUrl: String
         get() {
             val prefs = getAppPreferences()
 
-            // 1순위: 사용자가 직접 지정한 도메인이 있으면 최우선 적용
-            val customUrl = prefs?.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/')
-            if (!customUrl.isNullOrBlank()) {
-                return customUrl
+            // 1순위: 사용자가 직접 지정한 주소
+            customDomain(prefs)?.let { return it }
+
+            // 2순위: 유효한 메모리 캐시
+            cachedDomain?.let { if (System.currentTimeMillis() < cacheValidUntil) return it }
+
+            // 메인 스레드에서는 네트워크를 호출하지 않고 캐시도 건드리지 않음
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                return cachedDomain ?: lastGoodDomain(prefs)
             }
 
-            // 2순위: 10분 이내 조회한 메모리 캐시가 유효하면 네트워크 요청 없이 즉시 반환
-            val now = System.currentTimeMillis()
-            if (cachedDomain != null && now - lastFetchTime < CACHE_TTL_MS) {
-                return cachedDomain!!
-            }
-
-            val lastGood = prefs?.getString(PREF_LAST_GOOD_DOMAIN_KEY, DEFAULT_BASE_URL)
-                ?.takeIf { it.isNotBlank() } ?: DEFAULT_BASE_URL
-
-            // 3순위: 중앙신호등 API 조회
-            val fetchedUrl = runCatching {
-                val req = Request.Builder()
-                    .url(SIGNAL_URL)
-                    .header("User-Agent", defaultUserAgent)
-                    .header("Accept", "application/json")
-                    .build()
-                val res = client.newCall(req).execute()
-                val body = res.body.string()
-                val json = JSONObject(body)
-                json.optString("tvwiki").takeIf { it.isNotBlank() }
-            }.getOrNull()
-
-            if (!fetchedUrl.isNullOrBlank()) {
-                val cleanUrl = fetchedUrl.trim().trimEnd('/')
-                cachedDomain = cleanUrl
-                lastFetchTime = now
-                prefs?.edit()?.putString(PREF_LAST_GOOD_DOMAIN_KEY, cleanUrl)?.apply()
-                return cleanUrl
-            }
-
-            // 4순위: 실패 시 캐시 갱신 후 마지막 정상 주소 반환
-            cachedDomain = lastGood
-            lastFetchTime = now
-            return lastGood
+            // 3~4순위: 신호등 조회, 실패하면 마지막 정상 주소
+            return synchronized(domainLock) { resolveDomain(prefs) }
         }
 
     override val client: OkHttpClient = network.client
@@ -102,8 +132,12 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         .add("User-Agent", defaultUserAgent)
         .add("Referer", "$baseUrl/")
 
+    // headers는 처음 한 번만 계산되므로, 주소가 바뀌어도 Referer가 맞도록 요청마다 새로 만든다
+    private fun h(): Headers = headersBuilder().build()
+
+    // ================= 목록 =================
     override fun popularAnimeRequest(page: Int): Request =
-        GET("$baseUrl/popular?page=$page", headers)
+        GET("$baseUrl/popular?page=$page", h())
 
     override fun popularAnimeSelector(): String =
         "#list_type .box, #line_type .box, #mov_con_list .box, div.box, .slide_popular .box"
@@ -123,14 +157,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         // 목록 카드 제목은 연도 억지 주입 없이 순수 작품명으로 지정
         title = cleanSeriesTitle(rawTitle)
 
-        thumbnail_url = imgNode?.let { img ->
-            val src = img.attr("data-original").ifEmpty {
-                img.attr("data-src").ifEmpty {
-                    img.attr("src")
-                }
-            }
-            fixUrl(src)
-        }
+        thumbnail_url = imgNode?.let { img -> fixUrl(imageSrc(img)) }
     }
 
     override fun popularAnimeNextPageSelector(): String? =
@@ -160,7 +187,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     override fun latestUpdatesRequest(page: Int): Request =
-        GET("$baseUrl/drama?page=$page", headers)
+        GET("$baseUrl/drama?page=$page", h())
 
     override fun latestUpdatesSelector(): String = popularAnimeSelector()
     override fun latestUpdatesFromElement(element: Element): SAnime = popularAnimeFromElement(element)
@@ -170,7 +197,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         if (query.isNotBlank()) {
             val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            return GET("$baseUrl/search?stx=$encodedQuery&sst=subIdx&page=$page", headers)
+            return GET("$baseUrl/search?stx=$encodedQuery&sst=subIdx&page=$page", h())
         }
 
         var category = "all"
@@ -194,7 +221,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             "$baseUrl/$path?page=$page"
         }
 
-        return GET(url, headers)
+        return GET(url, h())
     }
 
     override fun searchAnimeSelector(): String = popularAnimeSelector()
@@ -202,27 +229,32 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override fun searchAnimeNextPageSelector(): String? = popularAnimeNextPageSelector()
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
 
+    // ================= 상세 / 에피소드 =================
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(baseUrl + anime.url, h())
+    override fun episodeListRequest(anime: SAnime): Request = GET(baseUrl + anime.url, h())
+    override fun videoListRequest(episode: SEpisode): Request = GET(baseUrl + episode.url, h())
+
+    // og:title → 제목 노드 순으로 작품명을 찾고, 비어 있으면 fallback
+    private fun pageTitleOf(document: Document, fallback: String): String {
+        val og = document.selectFirst("meta[property='og:title']")?.attr("content")
+        val node = document.selectFirst(TITLE_SELECTOR)?.text()
+        return cleanSeriesTitle(og ?: node ?: "").ifEmpty { fallback }
+    }
+
+    private fun imageSrc(img: Element): String =
+        img.attr("data-original").ifEmpty { img.attr("data-src").ifEmpty { img.attr("src") } }
+
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
-        val titleNode = document.selectFirst("#bo_v_title .bo_v_tit, #bo_v_title h1, h1, .view-title")
-        val ogTitle = document.selectFirst("meta[property='og:title']")?.attr("content")
-
         // 목록과 일치하는 순수 작품명 유지
-        title = cleanSeriesTitle(ogTitle ?: titleNode?.text() ?: "티비위키")
+        title = pageTitleOf(document, "티비위키")
 
-        thumbnail_url = document.selectFirst(".poster img, .thumb img, img.cover, #bo_v_img img")?.let { img ->
-            val src = img.attr("data-original").ifEmpty {
-                img.attr("data-src").ifEmpty {
-                    img.attr("src")
-                }
-            }
-            fixUrl(src)
-        }
+        thumbnail_url = document.selectFirst(".poster img, .thumb img, img.cover, #bo_v_img img")
+            ?.let { img -> fixUrl(imageSrc(img)) }
 
         val rawDesc = document.selectFirst(".thumb-desc, .desc, .summary, .content, #bo_v_con, p")?.text()?.trim()
-        val yearMatch = Regex("""개봉년도\s*:\s*(\d{4})""").find(document.text())
-        val releaseYear = yearMatch?.groupValues?.get(1)
+        val releaseYear = YEAR_REGEX.find(document.text())?.groupValues?.get(1)
 
-        // 연도 정보는 제목에 억지로 붙이지 않고 장르(Genre) 메타데이터로 명확히 배치
+        // 연도 정보는 제목에 붙이지 않고 장르(Genre) 메타데이터로 배치
         if (!releaseYear.isNullOrEmpty()) {
             genre = "${releaseYear}년"
         }
@@ -241,9 +273,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         }
 
         name = formatEpisodeName(rawText)
-
-        val match = Regex("""(\d+(?:[-.]\d+)?)\s*[화회]""").find(rawText)
-        episode_number = match?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
+        episode_number = EP_REGEX.find(rawText)?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
@@ -251,10 +281,8 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         val currentPath = response.request.url.encodedPath.trimEnd('/')
         val episodes = ArrayList<SEpisode>()
 
-        // 단일 에피소드(영화 등)일 때 사용할 작품 제목 추출
-        val titleNode = document.selectFirst("#bo_v_title .bo_v_tit, #bo_v_title h1, h1, .view-title")
-        val ogTitle = document.selectFirst("meta[property='og:title']")?.attr("content")
-        val pageTitle = cleanSeriesTitle(ogTitle ?: titleNode?.text() ?: "").ifEmpty { "본편" }
+        // 단일 에피소드(영화 등)일 때 사용할 작품 제목
+        val pageTitle = pageTitleOf(document, "본편")
 
         val items = document.select("#other_list li")
         if (items.isNotEmpty()) {
@@ -263,12 +291,11 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                 val href = link.attr("href")
                 if (href.isNotBlank()) {
                     val fullItemText = item.text().trim()
-                    val match = Regex("""(\d+(?:[-.]\d+)?)\s*[화회]""").find(fullItemText)
                     episodes.add(
                         SEpisode.create().apply {
                             setUrlWithoutDomain(href)
                             name = formatEpisodeName(fullItemText, pageTitle)
-                            episode_number = match?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
+                            episode_number = EP_REGEX.find(fullItemText)?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
                         },
                     )
                 }
@@ -280,16 +307,15 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             for (link in links) {
                 val href = link.attr("href")
                 val text = link.text().trim()
-                val isEpisodeUrl = href.startsWith(currentPath) && href.matches(Regex(".*/\\d+$")) && href != currentPath
-                val hasEpText = text.matches(Regex(""".*\d+\s*[화회].*"""))
+                val isEpisodeUrl = href.startsWith(currentPath) && EP_URL_REGEX.matches(href) && href != currentPath
+                val hasEpText = HAS_EP_TEXT_REGEX.matches(text)
 
                 if (href.isNotBlank() && (isEpisodeUrl || hasEpText)) {
-                    val match = Regex("""(\d+(?:[-.]\d+)?)\s*[화회]""").find(text)
                     episodes.add(
                         SEpisode.create().apply {
                             setUrlWithoutDomain(href)
                             name = formatEpisodeName(text, pageTitle)
-                            episode_number = match?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
+                            episode_number = EP_REGEX.find(text)?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
                         },
                     )
                 }
@@ -318,6 +344,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         return uniqueList
     }
 
+    // ================= 재생 =================
     override fun videoListParse(response: Response): List<Video> {
         val currentBaseUrl = baseUrl
         val episodePath = response.request.url.encodedPath
@@ -415,7 +442,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         val playlistRes = client.newCall(GET(playlistUrl, streamHeaders)).execute()
         val playlistContent = playlistRes.body.string()
 
-        val keyMatch = Regex("""#EXT-X-KEY:[^\r\n]*URI="([^"]+)"""", RegexOption.IGNORE_CASE).find(playlistContent)
+        val keyMatch = KEY_REGEX.find(playlistContent)
         val videoList = ArrayList<Video>()
 
         if (keyMatch != null) {
@@ -463,6 +490,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         return list
     }
 
+    // ================= 유틸 =================
     private fun toBase64Url(value: String): String {
         return Base64.encodeToString(
             value.toByteArray(Charsets.UTF_8),
@@ -490,8 +518,8 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     private fun cleanSeriesTitle(raw: String): String =
-        raw.replace(Regex("""\s+\d+(?:[-.]\d+)?화(?:\s+다시보기)?\s*$"""), "")
-            .replace(Regex("""\s+다시보기(?:\s*-\s*티비위키)?\s*$"""), "")
+        raw.replace(TITLE_EP_SUFFIX_REGEX, "")
+            .replace(TITLE_REPLAY_SUFFIX_REGEX, "")
             .trim()
 
     private fun formatEpisodeName(raw: String, fallbackTitle: String = "본편"): String {
@@ -499,22 +527,20 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
         // '등록된 줄거리가 없습니다' 문구 및 불필요한 줄거리 안내 텍스트 필터링
         if (trimmed.contains("줄거리가 없습니다") || trimmed.contains("등록된 줄거리")) {
-            trimmed = trimmed.replace(Regex("""등록된\s*줄거리가\s*없습니다\.?"""), "").trim()
+            trimmed = trimmed.replace(NO_PLOT_REGEX, "").trim()
         }
 
         // 1. 회차 추출 (예: 820화, 820회)
-        val epMatch = Regex("""(\d+(?:[-.]\d+)?)\s*[화회]""").find(trimmed)
-        val epText = epMatch?.let { "${it.groupValues[1]}화" } ?: ""
+        val epText = EP_REGEX.find(trimmed)?.let { "${it.groupValues[1]}화" } ?: ""
 
         // 2. 방영 날짜 추출 (예: 2026-09-13)
-        val dateMatch = Regex("""(\d{4}[.-]\d{2}[.-]\d{2})""").find(trimmed)
-        val dateText = dateMatch?.groupValues?.get(1)
+        val dateText = DATE_REGEX.find(trimmed)?.groupValues?.get(1)
 
         // 3. 부제 추출 (회차와 날짜를 제거하고 남은 텍스트)
         val subTitle = trimmed
-            .replace(Regex("""^.*?(\d+(?:[-.]\d+)?\s*[화회])"""), "")
-            .replace(Regex("""\d{4}[.-]\d{2}[.-]\d{2}"""), "")
-            .replace(Regex("""^\s*[-:–]\s*"""), "")
+            .replace(SUBTITLE_PREFIX_REGEX, "")
+            .replace(DATE_REGEX, "")
+            .replace(LEADING_SEPARATOR_REGEX, "")
             .trim()
 
         val formatted = buildString {
@@ -543,11 +569,16 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         ModeFilter(MODES),
     )
 
+    // ================= 설정 화면 =================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        fun summaryOf(current: String) =
+            "빈 값이면 중앙신호등의 최신 주소를 사용하고, 실패하면 마지막 정상 주소로 복구합니다.\n현재 주소: $current"
+
         val domainPref = EditTextPreference(screen.context).apply {
             key = PREF_DOMAIN_KEY
             title = "티비위키 주소 직접 지정 (선택)"
-            summary = "빈 값이면 중앙신호등의 최신 주소를 사용하고, 실패하면 마지막 정상 주소로 복구합니다.\n현재 주소: $baseUrl"
+            // 메인 스레드에서 네트워크를 부르지 않도록 캐시 기반 주소를 표시
+            summary = summaryOf(currentDomainNoNetwork())
             dialogTitle = "기본값: $DEFAULT_BASE_URL"
             dialogMessage = "tvwiki숫자.net 형식의 HTTPS 주소만 허용됩니다."
             setDefaultValue("")
@@ -555,20 +586,25 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             setOnPreferenceChangeListener { _, newValue ->
                 val newUrl = (newValue as String).trim().trimEnd('/')
                 val prefs = getAppPreferences()
-                if (newUrl.isBlank()) {
-                    prefs?.edit()?.remove(PREF_DOMAIN_KEY)?.apply()
-                    cachedDomain = null
-                    summary = "빈 값이면 중앙신호등의 최신 주소를 사용하고, 실패하면 마지막 정상 주소로 복구합니다.\n현재 주소: $baseUrl"
-                    Toast.makeText(screen.context, "중앙신호등 모드로 전환되었습니다.", Toast.LENGTH_SHORT).show()
-                    true
-                } else if (newUrl.matches(Regex("""^https://tvwiki\d+\.net$"""))) {
-                    prefs?.edit()?.putString(PREF_DOMAIN_KEY, newUrl)?.apply()
-                    summary = "빈 값이면 중앙신호등의 최신 주소를 사용하고, 실패하면 마지막 정상 주소로 복구합니다.\n현재 주소: $newUrl"
-                    Toast.makeText(screen.context, "주소가 변경되었습니다: $newUrl", Toast.LENGTH_SHORT).show()
-                    true
-                } else {
-                    Toast.makeText(screen.context, "올바른 주소 형식이 아닙니다 (예: https://tvwiki51.net)", Toast.LENGTH_LONG).show()
-                    false
+                when {
+                    newUrl.isBlank() -> {
+                        prefs?.edit()?.remove(PREF_DOMAIN_KEY)?.apply()
+                        cachedDomain = null
+                        cacheValidUntil = 0L
+                        summary = summaryOf(currentDomainNoNetwork())
+                        Toast.makeText(screen.context, "중앙신호등 모드로 전환되었습니다.", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    DOMAIN_REGEX.matches(newUrl) -> {
+                        prefs?.edit()?.putString(PREF_DOMAIN_KEY, newUrl)?.apply()
+                        summary = summaryOf(newUrl)
+                        Toast.makeText(screen.context, "주소가 변경되었습니다: $newUrl", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    else -> {
+                        Toast.makeText(screen.context, "올바른 주소 형식이 아닙니다 (예: https://tvwiki51.net)", Toast.LENGTH_LONG).show()
+                        false
+                    }
                 }
             }
         }
@@ -592,8 +628,28 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         private const val SIGNAL_URL = "https://aniyomi-extensions.pages.dev/api/signal"
 
         private const val CACHE_TTL_MS = 10 * 60 * 1000L
-        private var cachedDomain: String? = null
-        private var lastFetchTime: Long = 0L
+        private const val RETRY_TTL_MS = 60 * 1000L
+
+        @Volatile private var cachedDomain: String? = null
+        @Volatile private var cacheValidUntil: Long = 0L
+        private val domainLock = Any()
+
+        private val DOMAIN_REGEX = Regex("""^https://tvwiki\d+\.net$""")
+
+        private const val TITLE_SELECTOR = "#bo_v_title .bo_v_tit, #bo_v_title h1, h1, .view-title"
+
+        // 반복 사용되는 정규식은 한 번만 만들어 재사용
+        private val EP_REGEX = Regex("""(\d+(?:[-.]\d+)?)\s*[화회]""")
+        private val DATE_REGEX = Regex("""(\d{4}[.-]\d{2}[.-]\d{2})""")
+        private val YEAR_REGEX = Regex("""개봉년도\s*:\s*(\d{4})""")
+        private val EP_URL_REGEX = Regex(".*/\\d+$")
+        private val HAS_EP_TEXT_REGEX = Regex(""".*\d+\s*[화회].*""")
+        private val NO_PLOT_REGEX = Regex("""등록된\s*줄거리가\s*없습니다\.?""")
+        private val SUBTITLE_PREFIX_REGEX = Regex("""^.*?(\d+(?:[-.]\d+)?\s*[화회])""")
+        private val LEADING_SEPARATOR_REGEX = Regex("""^\s*[-:–]\s*""")
+        private val TITLE_EP_SUFFIX_REGEX = Regex("""\s+\d+(?:[-.]\d+)?화(?:\s+다시보기)?\s*$""")
+        private val TITLE_REPLAY_SUFFIX_REGEX = Regex("""\s+다시보기(?:\s*-\s*티비위키)?\s*$""")
+        private val KEY_REGEX = Regex("""#EXT-X-KEY:[^\r\n]*URI="([^"]+)"""", RegexOption.IGNORE_CASE)
 
         private val CATEGORIES = arrayOf(
             Pair("전체", "all"),
@@ -623,4 +679,4 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             Pair("인기순", "popular"),
         )
     }
-}
+                                      }
