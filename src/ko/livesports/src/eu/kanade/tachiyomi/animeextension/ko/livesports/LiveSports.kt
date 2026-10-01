@@ -23,12 +23,23 @@ class LiveSports : AnimeHttpSource() {
 
     override val supportsLatest = false
 
-    // WebView 쿠키를 공유받아 처리하는 표준 클라이언트
+    // WebView의 세션 쿠키를 동기화하는 클라이언트
     override val client: OkHttpClient = network.cloudflareClient
 
-    override fun headersBuilder(): Headers.Builder = Headers.Builder()
-        .add("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36")
-        .add("Referer", "$baseUrl/")
+    // 시스템 기본 헤더 기반으로 실 브라우저 헤더 주입
+    override fun headersBuilder(): Headers.Builder = network.cloudflareClient.newBuilder().build().let {
+        super.headersBuilder()
+            .set("Referer", "$baseUrl/")
+            .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+            .set("Accept-Language", "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7")
+            .set("Sec-Ch-Ua-Mobile", "?1")
+            .set("Sec-Ch-Ua-Platform", "\"Android\"")
+            .set("Sec-Fetch-Dest", "document")
+            .set("Sec-Fetch-Mode", "navigate")
+            .set("Sec-Fetch-Site", "same-origin")
+            .set("Sec-Fetch-User", "?1")
+            .set("Upgrade-Insecure-Requests", "1")
+    }
 
     // ================= 목록 (Popular / Latest) =================
     override fun popularAnimeRequest(page: Int): Request = GET(baseUrl, headers)
@@ -37,6 +48,7 @@ class LiveSports : AnimeHttpSource() {
         val document = Jsoup.parse(response.body.string())
         val animeList = mutableListOf<SAnime>()
 
+        // 방송 중인 채널 및 경기 파싱
         document.select("a[href*=/]").forEach { element ->
             val title = element.text().trim()
             val href = element.attr("abs:href")
