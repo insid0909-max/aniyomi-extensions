@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.animeextension.ko.livesports
 
 import android.annotation.SuppressLint
 import android.app.Application
+import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -11,6 +12,10 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
+import androidx.preference.EditTextPreference
+import androidx.preference.PreferenceScreen
+import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -38,15 +43,40 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-class LiveSports : AnimeHttpSource() {
+class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
 
     override val name = "실시간스포츠"
-    override val baseUrl = "https://njtv-01.com"
     override val lang = "ko"
     override val supportsLatest = false
 
     private val tag = "LiveSports"
-    private val livePageUrl = "$baseUrl/bbs/page.php?hid=livetv_a"
+
+    // ================= 0. 사이트 주소 (직접 지정 설정) =================
+    private fun prefs(): SharedPreferences? = runCatching {
+        val app = Class.forName("android.app.ActivityThread")
+            .getMethod("currentApplication")
+            .invoke(null) as? Application
+        app?.getSharedPreferences("source_$id", 0)
+    }.getOrNull()
+
+    // 설정에 올바른 주소가 있으면 그것을, 아니면 기본 주소를 사용
+    override val baseUrl: String
+        get() {
+            val custom = prefs()?.getString(PREF_DOMAIN_KEY, "")
+                ?.trim()?.trimEnd('/').orEmpty()
+            return if (custom.isNotEmpty() && DOMAIN_REGEX.matches(custom)) custom else DEFAULT_BASE_URL
+        }
+
+    private val livePageUrl: String
+        get() = "$baseUrl/bbs/page.php?hid=livetv_a"
+
+    // 영상 주소의 ?site= 값 (현재 사이트 도메인에 맞춤)
+    private val siteHost: String
+        get() = try {
+            baseUrl.toHttpUrl().host
+        } catch (e: Exception) {
+            "njtv-01.com"
+        }
 
     // 페이지 로드 중 가로챈 값들 (호스트는 수시로 바뀌므로 매번 새로 읽음)
     @Volatile private var capturedJson: String? = null
@@ -55,6 +85,13 @@ class LiveSports : AnimeHttpSource() {
     @Volatile private var liveHost: String? = null
     @Volatile private var candidateHeads = ""
     @Volatile private var firstItemDebug = ""
+    @Volatile private var lastCaptureTime = 0L
+
+    // [임시] 경기 항목의 필드/종류 값을 확인하기 위한 DEBUG 줄 (확인 후 제거)
+    @Volatile private var debugRows: List<SEpisode> = emptyList()
+
+    // 목록 추출에 필요 없는 리소스 (이미지/폰트)는 차단해서 로딩을 줄임
+    private val blockedAssets = Regex(""".*\.(png|jpe?g|gif|webp|svg|ico|woff2?|ttf)$""", RegexOption.IGNORE_CASE)
 
     override val client: OkHttpClient = network.cloudflareClient
 
@@ -173,6 +210,25 @@ class LiveSports : AnimeHttpSource() {
         val array = findArray(jsonText) ?: return emptyList()
         firstItemDebug = array.opt(0).toString().take(400)
 
+        // [임시] 첫 경기 항목의 모든 필드와, 종류(category) 값별 대표 경기 제목을 DEBUG 줄로 만든다
+        val rows = mutableListOf<SEpisode>()
+        array.optJSONObject(0)?.let { o ->
+            val ks = o.keys()
+            while (ks.hasNext()) {
+                val k = ks.next()
+                rows.add(debugEpisode("$k=${o.opt(k).toString().take(40)}", rows.size + 1))
+            }
+        }
+        val seenCategories = mutableSetOf<String>()
+        for (i in 0 until array.length()) {
+            val o = array.optJSONObject(i) ?: continue
+            val c = o.opt("category")?.toString() ?: "?"
+            if (seenCategories.add(c)) {
+                rows.add(debugEpisode("종류 [$c] ${firstString(o, nameKeys).take(25)}", rows.size + 1))
+            }
+        }
+        debugRows = rows
+
         val list = mutableListOf<SEpisode>()
         var count = 1f
         for (i in 0 until array.length()) {
@@ -211,12 +267,24 @@ class LiveSports : AnimeHttpSource() {
         })();
     """.trimIndent()
 
+    // 동시에 두 번 실행되지 않게 하고, 1분 안에 다시 호출되면 이전 결과를 재사용
+    @Synchronized
+    private fun ensureCaptured() {
+        if (capturedJson == null || System.currentTimeMillis() - lastCaptureTime > 60_000) {
+            captureFromPage()
+            lastCaptureTime = System.currentTimeMillis()
+        }
+    }
+
+    @Synchronized
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
     private fun captureFromPage() {
         capturedJson = null
         capturedM3u8 = null
         candidateHeads = ""
 
+        val pageUrl = livePageUrl
+        val pageReferer = "$baseUrl/"
         val latch = CountDownLatch(1)
         val handler = Handler(Looper.getMainLooper())
         var webViewRef: WebView? = null
@@ -263,6 +331,15 @@ class LiveSports : AnimeHttpSource() {
                         val host = uri.host ?: ""
                         val path = uri.path ?: ""
 
+                        // 목록 추출에 필요 없는 채팅 위젯/이미지/폰트는 빈 응답으로 차단
+                        if (host.endsWith("vchat24.com") || blockedAssets.matches(path)) {
+                            return WebResourceResponse(
+                                "text/plain",
+                                "UTF-8",
+                                ByteArrayInputStream(ByteArray(0)),
+                            )
+                        }
+
                         if (host.endsWith(".xvqz.org") && path.startsWith("/build/")) {
                             iframeHost = host
                         }
@@ -300,7 +377,7 @@ class LiveSports : AnimeHttpSource() {
                     }
                 }
 
-                webView.loadUrl(livePageUrl, mutableMapOf("Referer" to "$baseUrl/"))
+                webView.loadUrl(pageUrl, mutableMapOf("Referer" to pageReferer))
             } catch (e: Exception) {
                 Log.d(tag, "webview error: ${e.message}")
                 latch.countDown()
@@ -308,9 +385,9 @@ class LiveSports : AnimeHttpSource() {
         }
 
         latch.await(15, TimeUnit.SECONDS)
-        // JSON 직후에 m3u8이 따라오므로 조금 더 기다림 (영상 호스트 확보용)
+        // 목록 JSON에 m3u8 주소가 이미 들어 있으면 기다리지 않음 (영상 호스트 확보용 대기)
         var waited = 0
-        while (capturedM3u8 == null && waited < 6000) {
+        while (capturedM3u8 == null && capturedJson?.contains(".m3u8") != true && waited < 6000) {
             Thread.sleep(250)
             waited += 250
         }
@@ -320,7 +397,11 @@ class LiveSports : AnimeHttpSource() {
             webViewRef?.destroy()
         }
 
-        capturedM3u8?.let { liveHost = Uri.parse(it).host }
+        // 영상 호스트: 가로챈 m3u8 요청에서, 없으면 목록 JSON 안의 m3u8 주소에서 읽음
+        val liveFromJson = capturedJson?.let {
+            Regex("""https?://[^"\\\s]+\.m3u8[^"\\\s]*""").find(it.replace("\\/", "/"))?.value
+        }
+        (capturedM3u8 ?: liveFromJson)?.let { liveHost = Uri.parse(it).host }
         Log.d(tag, "iframeHost=$iframeHost liveHost=$liveHost json=${capturedJson?.length}")
     }
 
@@ -331,14 +412,15 @@ class LiveSports : AnimeHttpSource() {
         this.url = "/play?stream_data=" + URLEncoder.encode(url, "UTF-8")
     }
 
-    private fun debugEpisode(msg: String) = SEpisode.create().apply {
+    // 줄마다 주소가 달라야 앱이 하나로 합치지 않으므로 n을 붙인다
+    private fun debugEpisode(msg: String, n: Int = 0) = SEpisode.create().apply {
         name = "DEBUG: $msg"
         episode_number = -1f
-        this.url = "/play?stream_data=debug"
+        this.url = "/play?stream_data=debug&n=$n"
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
-        captureFromPage()
+        ensureCaptured()
 
         val json = capturedJson
         val episodes = if (json != null) {
@@ -346,7 +428,8 @@ class LiveSports : AnimeHttpSource() {
         } else {
             emptyList()
         }
-        if (episodes.isNotEmpty()) return episodes.reversed()
+        // [임시] 확인 후 debugRows + 를 지우면 원래대로 돌아감
+        if (episodes.isNotEmpty()) return debugRows + episodes.reversed()
 
         // 실패 시: 자동감지 채널 + 원인 확인용 DEBUG 줄
         val result = mutableListOf<SEpisode>()
@@ -546,7 +629,7 @@ class LiveSports : AnimeHttpSource() {
             throw Exception("stream_data 비어있음")
         }
         if (data == "debug") {
-            throw Exception("item=$firstItemDebug")
+            throw Exception("DEBUG 줄입니다. 재생할 수 없습니다")
         }
 
         val mirrors = listOfNotNull(
@@ -561,6 +644,8 @@ class LiveSports : AnimeHttpSource() {
             null
         }
 
+        val site = siteHost
+
         // 완성 URL이면 원래 호스트를 먼저, 이어서 다른 호스트로 바꾼 주소도 시도
         val playUrls: List<String> = when {
             parsed != null && parsed.host.endsWith(".kjhsdfuie.work") ->
@@ -568,7 +653,7 @@ class LiveSports : AnimeHttpSource() {
                     if (h == parsed.host) data else parsed.newBuilder().host(h).build().toString()
                 }
             parsed != null -> listOf(data)
-            else -> mirrors.map { "https://$it/live/$data/playlist.m3u8?site=njtv-01.com" }
+            else -> mirrors.map { "https://$it/live/$data/playlist.m3u8?site=$site" }
         }
 
         fun hostTag(u: String): String = try {
@@ -599,10 +684,9 @@ class LiveSports : AnimeHttpSource() {
             throw Exception("[${key.take(14)}] " + (if (all404) "404 " else "") + log.joinToString(" | "))
         }
 
-        val sorted = ok.sortedByDescending { it.sub200 }
-        val best = sorted.first()
+        val best = ok.sortedByDescending { it.sub200 }.first()
 
-        // 1순위: 로컬 프록시 (앱이 통과한 헤더로 대신 요청)
+        // 로컬 프록시 (앱이 통과한 헤더로 대신 요청). 직접 재생은 플레이어에서 400이라 제외
         val port = ensureProxy()
         proxyHeaders = best.headers
         try {
@@ -611,13 +695,56 @@ class LiveSports : AnimeHttpSource() {
             // 무시
         }
         val proxied = proxyUrl(port, best.url)
-        val proxyVideo = Video(proxied, "프록시 [${best.label}]", proxied, Headers.Builder().build())
-
-        // 2순위: 직접 재생 (조합별)
-        val direct = sorted.map { Video(it.url, "${it.label} [${it.result}]", it.url, it.headers) }
-
-        return listOf(proxyVideo) + direct
+        return listOf(Video(proxied, "프록시 [${best.label}]", proxied, Headers.Builder().build()))
     }
 
     override fun videoUrlParse(response: Response): String = ""
+
+    // ================= 7. 설정 화면 (주소 직접 지정) =================
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        fun summaryOf(current: String) =
+            "빈 값이면 기본 주소($DEFAULT_BASE_URL)를 사용합니다.\n현재 주소: $current"
+
+        val domainPref = EditTextPreference(screen.context).apply {
+            key = PREF_DOMAIN_KEY
+            title = "사이트 주소 직접 지정 (선택)"
+            summary = summaryOf(baseUrl)
+            dialogTitle = "기본값: $DEFAULT_BASE_URL"
+            dialogMessage = "https:// 로 시작하는 주소를 입력하세요. 예: https://njtv-02.com"
+            setDefaultValue("")
+
+            setOnPreferenceChangeListener { _, newValue ->
+                val input = (newValue as String).trim().trimEnd('/')
+                when {
+                    input.isEmpty() -> {
+                        summary = summaryOf(DEFAULT_BASE_URL)
+                        lastCaptureTime = 0L
+                        Toast.makeText(screen.context, "기본 주소로 되돌렸습니다.", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    DOMAIN_REGEX.matches(input) -> {
+                        summary = summaryOf(input)
+                        lastCaptureTime = 0L
+                        Toast.makeText(screen.context, "주소가 변경되었습니다: $input", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    else -> {
+                        Toast.makeText(
+                            screen.context,
+                            "올바른 주소 형식이 아닙니다 (예: https://njtv-02.com)",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                        false
+                    }
+                }
+            }
+        }
+        screen.addPreference(domainPref)
+    }
+
+    companion object {
+        private const val PREF_DOMAIN_KEY = "pref_domain_key"
+        private const val DEFAULT_BASE_URL = "https://njtv-01.com"
+        private val DOMAIN_REGEX = Regex("""^https://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$""")
+    }
 }
