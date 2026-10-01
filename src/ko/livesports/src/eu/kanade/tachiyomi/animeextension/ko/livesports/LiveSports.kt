@@ -7,9 +7,11 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.jsoup.Jsoup
 
 class LiveSports : AnimeHttpSource() {
 
@@ -21,57 +23,67 @@ class LiveSports : AnimeHttpSource() {
 
     override val supportsLatest = false
 
-    override val client: OkHttpClient = network.client
+    // WebView의 세션 쿠키를 동기화하여 사용하는 Aniyomi 표준 클라이언트
+    override val client: OkHttpClient = network.cloudflareClient
 
-    // ================= 인기 목록 (Popular) =================
-    override fun popularAnimeRequest(page: Int): Request {
-        return GET("$baseUrl/")
-    }
+    override fun headersBuilder(): Headers.Builder = Headers.Builder()
+        .add("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36")
+        .add("Referer", "$baseUrl/")
+
+    // ================= 목록 (Popular / Latest) =================
+    override fun popularAnimeRequest(page: Int): Request = GET(baseUrl, headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
+        val document = Jsoup.parse(response.body.string())
         val animeList = mutableListOf<SAnime>()
-        return AnimesPage(animeList, false)
+
+        // 사이트 구조에 맞춰 경기/채널 항목 파싱 (기본 골격)
+        document.select("a[href*=/]").forEach { element ->
+            val title = element.text().trim()
+            val href = element.attr("abs:href")
+            if (title.isNotEmpty() && href.startsWith(baseUrl)) {
+                val anime = SAnime.create().apply {
+                    this.title = title
+                    this.setUrlWithoutDomain(href)
+                    this.thumbnail_url = ""
+                }
+                animeList.add(anime)
+            }
+        }
+
+        return AnimesPage(animeList.distinctBy { it.url }, false)
     }
 
-    // ================= 최신 목록 (Latest) =================
-    override fun latestUpdatesRequest(page: Int): Request {
-        return popularAnimeRequest(page)
-    }
+    override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
+    override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
-    override fun latestUpdatesParse(response: Response): AnimesPage {
-        return popularAnimeParse(response)
-    }
+    // ================= 검색 =================
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request =
+        GET("$baseUrl/?s=$query", headers)
 
-    // ================= 검색 (Search) =================
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        return GET("$baseUrl/?s=$query")
-    }
+    override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
 
-    override fun searchAnimeParse(response: Response): AnimesPage {
-        val animeList = mutableListOf<SAnime>()
-        return AnimesPage(animeList, false)
-    }
-
-    // ================= 상세 정보 (Details) =================
+    // ================= 상세 정보 =================
     override fun animeDetailsParse(response: Response): SAnime {
-        val anime = SAnime.create()
-        anime.title = "실시간스포츠 채널"
-        anime.status = SAnime.COMPLETED
-        return anime
+        return SAnime.create().apply {
+            title = "실시간 경기 중계"
+            status = SAnime.LIVE
+        }
     }
 
-    // ================= 에피소드 / 방송 목록 (Episode List) =================
+    // ================= 방송 회차 / 스트림 링크 =================
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val episodeList = mutableListOf<SEpisode>()
-        return episodeList
+        val episode = SEpisode.create().apply {
+            name = "실시간 스트리밍"
+            episode_number = 1f
+            setUrlWithoutDomain(response.request.url.toString())
+        }
+        return listOf(episode)
     }
 
-    // ================= 비디오 스트림 주소 (Video Stream) =================
     override fun videoListParse(response: Response): List<Video> {
         return emptyList()
     }
 
-    override fun videoUrlParse(response: Response): String {
-        return ""
-    }
+    override fun videoUrlParse(response: Response): String = ""
 }
