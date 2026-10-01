@@ -327,7 +327,7 @@ class LiveSports : AnimeHttpSource() {
 
     private fun debugEpisode(msg: String) = SEpisode.create().apply {
         name = "DEBUG: $msg"
-        episode_number = 9999f
+        episode_number = -1f
         this.url = "/play?stream_data=debug"
     }
 
@@ -340,12 +340,7 @@ class LiveSports : AnimeHttpSource() {
         } else {
             emptyList()
         }
-
-        if (episodes.isNotEmpty()) {
-            // 확인용: 맨 위에 항목 구조 + 선택된 키 표시 (구조 확인 후 이 줄 삭제)
-            val sample = episodes.first().url.substringAfter("stream_data=", "")
-            return listOf(debugEpisode("pick=$sample item=$firstItemDebug")) + episodes.reversed()
-        }
+        if (episodes.isNotEmpty()) return episodes.reversed()
 
         // 실패 시: 자동감지 채널 + 원인 확인용 DEBUG 줄
         val result = mutableListOf<SEpisode>()
@@ -359,6 +354,55 @@ class LiveSports : AnimeHttpSource() {
     }
 
     // ================= 5. 비디오 재생 =================
+    // Referer/Origin 조합 후보 (항목 이름에 쓰이는 라벨 포함)
+    private fun headerVariants(): List<Pair<String, Headers>> {
+        val ua = headersBuilder().build()["User-Agent"]!!
+        val iframeRef = iframeHost?.let { "https://$it/" }
+
+        fun build(ref: String?, withOrigin: Boolean): Headers {
+            val b = Headers.Builder().set("User-Agent", ua).set("Accept", "*/*")
+            if (ref != null) {
+                b.set("Referer", ref)
+                if (withOrigin) b.set("Origin", ref.trimEnd('/'))
+            }
+            return b.build()
+        }
+
+        val list = mutableListOf<Pair<String, Headers>>()
+        if (iframeRef != null) {
+            list.add("iframe+Origin" to build(iframeRef, true))
+            list.add("iframe" to build(iframeRef, false))
+        }
+        list.add("xvqz+Origin" to build("https://xvqz.org/", true))
+        list.add("njtv+Origin" to build("$baseUrl/", true))
+        list.add("njtv" to build("$baseUrl/", false))
+        list.add("UA만" to build(null, false))
+        return list
+    }
+
+    // m3u8과 그 안의 첫 하위 주소(조각/변형 목록)까지 요청해 결과 코드를 문자열로 반환
+    private fun probe(url: String, h: Headers): String {
+        return try {
+            val res = client.newCall(GET(url, h)).execute()
+            val code = res.code
+            val body = res.use { it.body?.string() ?: "" }
+            if (code != 200 || !body.startsWith("#EXTM3U")) return "m3u8=$code"
+
+            val next = body.lineSequence().map { it.trim() }
+                .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
+                ?: return "m3u8=200"
+            val subUrl = try {
+                java.net.URI(url).resolve(next).toString()
+            } catch (e: Exception) {
+                next
+            }
+            val subCode = client.newCall(GET(subUrl, h)).execute().use { it.code }
+            "m3u8=200 sub=$subCode"
+        } catch (e: Exception) {
+            "예외 ${e.message?.take(30)}"
+        }
+    }
+
     override fun videoListParse(response: Response): List<Video> {
         val data = response.request.url.queryParameter("stream_data") ?: ""
         if (data.isEmpty()) {
@@ -368,56 +412,37 @@ class LiveSports : AnimeHttpSource() {
             throw Exception("item=$firstItemDebug")
         }
 
-        // 호스트 후보: 가로챈 호스트 + 확인된 호스트 2개 (순서대로 시도)
-        val hosts: List<String?> = if (data.startsWith("http")) {
-            listOf(null)
+        // 완성 URL이면 그대로, 키만 있으면 호스트 후보로 조립
+        val playUrls: List<String> = if (data.startsWith("http")) {
+            listOf(data)
         } else {
             listOfNotNull(
                 liveHost,
                 "ol3ktizakokhjhnu.kjhsdfuie.work",
                 "daxnb7e8nd4e0hdj.kjhsdfuie.work",
-            ).distinct()
+            ).distinct().map { "https://$it/live/$data/playlist.m3u8?site=njtv-01.com" }
         }
-        // Referer 후보: iframe 호스트 → xvqz.org → 메인 사이트
-        val referers = listOfNotNull(
-            iframeHost?.let { "https://$it/" },
-            "https://xvqz.org/",
-            "$baseUrl/",
-        ).distinct()
 
-        val ua = headersBuilder().build()["User-Agent"]!!
-        var lastError = ""
+        val log = mutableListOf<String>()
+        val ok = mutableListOf<Pair<Boolean, Video>>()
 
-        for (host in hosts) {
-            val playUrl = if (host == null) {
-                data
-            } else {
-                "https://$host/live/$data/playlist.m3u8?site=njtv-01.com"
-            }
-
-            for (ref in referers) {
-                val mediaHeaders = Headers.Builder()
-                    .set("User-Agent", ua)
-                    .set("Referer", ref)
-                    .set("Origin", ref.trimEnd('/'))
-                    .set("Accept", "*/*")
-                    .build()
-                try {
-                    val res = client.newCall(GET(playUrl, mediaHeaders)).execute()
-                    val code = res.code
-                    val head = res.use { it.body?.string()?.take(12) ?: "" }
-                    if (code == 200 && head.startsWith("#EXTM3U")) {
-                        return listOf(Video(playUrl, "실시간 라이브 (HLS)", playUrl, mediaHeaders))
-                    }
-                    lastError = "code=$code head=$head host=$host ref=$ref"
-                } catch (e: Exception) {
-                    lastError = "예외 ${e.message} host=$host"
+        for (u in playUrls) {
+            for ((label, h) in headerVariants()) {
+                val r = probe(u, h)
+                log.add("$label:$r")
+                if (r.startsWith("m3u8=200")) {
+                    ok.add((r.contains("sub=200")) to Video(u, "$label [$r]", u, h))
                 }
             }
+            if (ok.isNotEmpty()) break
         }
 
-        // 실패하면 원인을 토스트로 보여줌
-        throw Exception("재생 실패 data=$data | $lastError | item=$firstItemDebug")
+        if (ok.isEmpty()) {
+            throw Exception("재생 실패 ${log.joinToString(" | ")} | data=${data.take(80)}")
+        }
+
+        // 하위 주소까지 통과한 항목을 앞에 둠 (플레이어 HQ 버튼에서 선택 가능)
+        return ok.sortedByDescending { it.first }.map { it.second }
     }
 
     override fun videoUrlParse(response: Response): String = ""
