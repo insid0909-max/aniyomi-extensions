@@ -157,7 +157,7 @@ class LiveSports : AnimeHttpSource() {
     // ================= 3. 웹뷰 후킹 (복호화 실패 시 폴백) =================
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
     private fun getDecryptedDataViaWebView(targetUrl: String): String {
-        @Volatile var result = ""
+        var result = ""
         val latch = CountDownLatch(1)
         val handler = Handler(Looper.getMainLooper())
         var webViewRef: WebView? = null
