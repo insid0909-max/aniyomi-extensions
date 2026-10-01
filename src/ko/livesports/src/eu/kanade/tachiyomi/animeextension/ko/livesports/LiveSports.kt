@@ -21,8 +21,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONArray
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.io.ByteArrayInputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -69,7 +67,7 @@ class LiveSports : AnimeHttpSource() {
         status = SAnime.ONGOING
     }
 
-    // ================= 2. 웹뷰 기반 자바스크립트 후킹 (핵심) =================
+    // ================= 2. 웹뷰 기반 자바스크립트 후킹 (핵심 수정됨) =================
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
     private fun getDecryptedDataViaWebView(targetUrl: String): String {
         var result = ""
@@ -78,7 +76,11 @@ class LiveSports : AnimeHttpSource() {
 
         handler.post {
             try {
-                val context = Injekt.get<Application>()
+                // Injekt 에러 해결: 안드로이드 내부 Reflection을 사용해 의존성 없이 Context 강제 획득
+                val context = Class.forName("android.app.ActivityThread")
+                    .getMethod("currentApplication")
+                    .invoke(null) as Application
+                
                 val webView = WebView(context)
                 webView.settings.javaScriptEnabled = true
                 webView.settings.domStorageEnabled = true
@@ -127,7 +129,7 @@ class LiveSports : AnimeHttpSource() {
                             }
                         }
                         
-                        // 혹시 JSON 후킹보다 m3u8 요청이 먼저 지나가면 그것이라도 낚아챔 (백업 플랜)
+                        // JSON 후킹 실패 대비: m3u8 요청이 지나가면 주소를 낚아챔
                         if (url.contains(".m3u8")) {
                             if (result.isEmpty()) {
                                 result = url
