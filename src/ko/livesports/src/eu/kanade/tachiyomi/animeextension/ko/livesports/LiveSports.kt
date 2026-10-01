@@ -23,10 +23,10 @@ class LiveSports : AnimeHttpSource() {
 
     override val supportsLatest = false
 
-    // WebView의 세션 쿠키를 동기화하는 클라이언트
+    // WebView의 세션 쿠키를 동기화하여 사용하는 Aniyomi 표준 클라이언트
     override val client: OkHttpClient = network.cloudflareClient
 
-    // 시스템 기본 헤더 기반으로 실 브라우저 헤더 주입
+    // 기기 WebView와 동일한 고유 지문 및 헤더 유지
     override fun headersBuilder(): Headers.Builder = network.cloudflareClient.newBuilder().build().let {
         super.headersBuilder()
             .set("Referer", "$baseUrl/")
@@ -48,11 +48,13 @@ class LiveSports : AnimeHttpSource() {
         val document = Jsoup.parse(response.body.string())
         val animeList = mutableListOf<SAnime>()
 
-        // 방송 중인 채널 및 경기 파싱
+        // 사이트 내 경기/채널 링크 수집
         document.select("a[href*=/]").forEach { element ->
             val title = element.text().trim()
             val href = element.attr("abs:href")
-            if (title.isNotEmpty() && href.startsWith(baseUrl)) {
+
+            // 기본 필터링 (너무 짧거나 불필요한 링크 제외)
+            if (title.isNotEmpty() && href.startsWith(baseUrl) && title.length > 2) {
                 val anime = SAnime.create().apply {
                     this.title = title
                     this.setUrlWithoutDomain(href)
@@ -82,18 +84,37 @@ class LiveSports : AnimeHttpSource() {
         }
     }
 
-    // ================= 방송 회차 / 스트림 링크 =================
+    // ================= 회차 목록 =================
     override fun episodeListParse(response: Response): List<SEpisode> {
         val episode = SEpisode.create().apply {
-            name = "실시간 스트리밍"
+            name = "실시간 라이브"
             episode_number = 1f
             setUrlWithoutDomain(response.request.url.toString())
         }
         return listOf(episode)
     }
 
+    // ================= 비디오 스트림 주소 (m3u8 추출) =================
     override fun videoListParse(response: Response): List<Video> {
-        return emptyList()
+        val html = response.body.string()
+        val videoList = mutableListOf<Video>()
+
+        // HTML 본문 또는 스크립트에 포함된 m3u8 주소 추출 (정규식 탐색)
+        val m3u8Regex = """https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""".toRegex()
+        val match = m3u8Regex.find(html)
+
+        val streamUrl = match?.value
+
+        if (!streamUrl.isNullOrEmpty()) {
+            val videoHeaders = headersBuilder()
+                .set("Referer", "$baseUrl/")
+                .set("Origin", baseUrl)
+                .build()
+
+            videoList.add(Video(streamUrl, "실시간 중계 (HLS)", streamUrl, videoHeaders))
+        }
+
+        return videoList
     }
 
     override fun videoUrlParse(response: Response): String = ""
