@@ -11,7 +11,8 @@ import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
-import org.jsoup.Jsoup
+import org.json.JSONArray
+import org.json.JSONObject
 
 class LiveSports : AnimeHttpSource() {
 
@@ -19,8 +20,9 @@ class LiveSports : AnimeHttpSource() {
 
     override val baseUrl = "https://njtv-01.com"
 
-    // 스포츠중계 전용 주소
     private val livePageUrl = "$baseUrl/bbs/page.php?hid=livetv_a"
+    private val iframeUrl = "https://xvqz.org/content/V28Ew6LP/modern/dark"
+    private val streamJsonUrl = "https://v8ca6dfp7jzt47dx.xvqz.org/data/iframe-streams.json"
 
     override val lang = "ko"
 
@@ -31,134 +33,141 @@ class LiveSports : AnimeHttpSource() {
     override fun headersBuilder(): Headers.Builder = network.cloudflareClient.newBuilder().build().let {
         super.headersBuilder()
             .set("Referer", "$baseUrl/")
-            .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+            .set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
             .set("Accept-Language", "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7")
             .set("Sec-Ch-Ua-Mobile", "?1")
             .set("Sec-Ch-Ua-Platform", "\"Android\"")
             .set("Sec-Fetch-Dest", "document")
             .set("Sec-Fetch-Mode", "navigate")
             .set("Sec-Fetch-Site", "same-origin")
-            .set("Sec-Fetch-User", "?1")
             .set("Upgrade-Insecure-Requests", "1")
     }
 
-    // ================= 목록 (Popular / Latest) =================
-    // 메인 홈 대신 스포츠중계 전용 페이지를 직접 호출
-    override fun popularAnimeRequest(page: Int): Request = GET(livePageUrl, headers)
+    private fun iframeHeaders(): Headers = headersBuilder()
+        .set("Referer", iframeUrl)
+        .set("Origin", "https://xvqz.org")
+        .set("Accept", "application/json, text/plain, */*")
+        .set("Sec-Fetch-Dest", "empty")
+        .set("Sec-Fetch-Mode", "cors")
+        .set("Sec-Fetch-Site", "same-site")
+        .build()
+
+    // ================= 1. 종목 목록 (Anime Page) =================
+    override fun popularAnimeRequest(page: Int): Request = GET(streamJsonUrl, iframeHeaders())
 
     override fun popularAnimeParse(response: Response): AnimesPage {
-        val document = Jsoup.parse(response.body.string())
-        val animeList = mutableListOf<SAnime>()
+        val bodyStr = response.body.string()
+        val sportsSet = LinkedHashSet<String>()
 
-        // 1. 페이지 내 iframe(플레이어) 태그 탐색
-        val iframe = document.selectFirst("iframe#player, iframe[src*=xvqz.org]")
-        val iframeSrc = iframe?.attr("src")
-
-        if (!iframeSrc.isNullOrEmpty()) {
-            val fullIframeUrl = if (iframeSrc.startsWith("http")) iframeSrc else "https:$iframeSrc"
-
-            // iframe 내부의 실제 방송 목록 요청 (Referer에 njtv-01.com 동봉)
-            val iframeRequest = GET(fullIframeUrl, headersBuilder().set("Referer", livePageUrl).build())
-            runCatching {
-                val iframeResponse = client.newCall(iframeRequest).execute()
-                if (iframeResponse.isSuccessful) {
-                    val iframeDoc = Jsoup.parse(iframeResponse.body.string())
-
-                    // iframe 내 채널/경기 버튼 및 링크 추출
-                    iframeDoc.select("button, a, div[onclick], li").forEach { el ->
-                        val text = el.text().trim()
-                        if (text.contains("ch") || text.contains("vs") || text.contains("중계") || text.contains("리그")) {
-                            val anime = SAnime.create().apply {
-                                this.title = text
-                                // 상세 페이지 대신 해당 iframe 주소 또는 livePageUrl 사용
-                                this.setUrlWithoutDomain(livePageUrl)
-                                this.thumbnail_url = ""
-                            }
-                            animeList.add(anime)
-                        }
-                    }
+        runCatching {
+            val root = if (bodyStr.trim().startsWith("[")) JSONArray(bodyStr) else JSONObject(bodyStr).optJSONArray("streams") ?: JSONArray()
+            for (i in 0 until root.length()) {
+                val item = root.optJSONObject(i) ?: continue
+                val sport = item.optString("sport", item.optString("category", item.optString("type", ""))).trim()
+                if (sport.isNotEmpty()) {
+                    sportsSet.add(sport)
                 }
             }
         }
 
-        // iframe 파싱에 실패하거나 목록이 비어있을 경우 기본 채널 고정 등록
-        if (animeList.isEmpty()) {
-            val defaultChannels = listOf("실시간 스포츠 중계 A", "실시간 스포츠 중계 B")
-            defaultChannels.forEachIndexed { idx, chName ->
-                val anime = SAnime.create().apply {
-                    this.title = chName
-                    this.setUrlWithoutDomain("/bbs/page.php?hid=livetv_${if (idx == 0) "a" else "b"}")
-                    this.thumbnail_url = ""
-                }
-                animeList.add(anime)
+        if (sportsSet.isEmpty()) {
+            sportsSet.addAll(listOf("전체 경기 중계", "야구", "축구", "농구", "기타 중계"))
+        }
+
+        val animeList = sportsSet.map { sportName ->
+            SAnime.create().apply {
+                this.title = sportName
+                this.setUrlWithoutDomain("/sport?name=$sportName")
+                this.thumbnail_url = ""
             }
         }
 
-        return AnimesPage(animeList.distinctBy { it.title }, false)
+        return AnimesPage(animeList, false)
     }
 
     override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
 
-    // ================= 검색 =================
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request =
-        GET("$baseUrl/?s=$query", headers)
-
+    // ================= 2. 검색 =================
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = popularAnimeRequest(1)
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
 
-    // ================= 상세 정보 =================
-    override fun animeDetailsParse(response: Response): SAnime {
-        return SAnime.create().apply {
-            title = "실시간 경기 중계"
-            status = SAnime.ONGOING
-        }
+    // ================= 3. 종목 상세 =================
+    override fun animeDetailsParse(response: Response): SAnime = SAnime.create().apply {
+        title = "실시간 경기 중계"
+        status = SAnime.ONGOING
     }
 
-    // ================= 방송 회차 =================
+    // ================= 4. 경기 목록 (SEpisode) =================
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val episode = SEpisode.create().apply {
-            name = "실시간 라이브 시청"
-            episode_number = 1f
-            setUrlWithoutDomain(response.request.url.toString())
-        }
-        return listOf(episode)
-    }
+        val targetSport = response.request.url.queryParameter("name") ?: ""
+        val jsonReq = GET(streamJsonUrl, iframeHeaders())
+        val jsonRes = client.newCall(jsonReq).execute()
+        val bodyStr = jsonRes.body.string()
 
-    // ================= 비디오 스트림 주소 (m3u8 추출) =================
-    override fun videoListParse(response: Response): List<Video> {
-        val html = response.body.string()
-        val videoList = mutableListOf<Video>()
+        val episodeList = mutableListOf<SEpisode>()
 
-        // 1. 본문 또는 iframe 내에서 m3u8 주소 직접 추출
-        var m3u8Regex = """https?://[^\s"'<>]+\.m3u8[^\s"'<>]*""".toRegex()
-        var match = m3u8Regex.find(html)
+        runCatching {
+            val root = if (bodyStr.trim().startsWith("[")) JSONArray(bodyStr) else JSONObject(bodyStr).optJSONArray("streams") ?: JSONArray()
+            var count = 1f
 
-        // 2. 만약 본문에 m3u8이 없고 iframe 태그만 있는 경우 iframe 내부 한 단계 더 탐색
-        if (match == null) {
-            val iframeSrc = Jsoup.parse(html).selectFirst("iframe#player, iframe[src*=xvqz.org]")?.attr("src")
-            if (!iframeSrc.isNullOrEmpty()) {
-                val fullIframeUrl = if (iframeSrc.startsWith("http")) iframeSrc else "https:$iframeSrc"
-                val iframeReq = GET(fullIframeUrl, headersBuilder().set("Referer", response.request.url.toString()).build())
-                runCatching {
-                    val iframeRes = client.newCall(iframeReq).execute()
-                    val iframeHtml = iframeRes.body.string()
-                    match = m3u8Regex.find(iframeHtml)
+            for (i in 0 until root.length()) {
+                val item = root.optJSONObject(i) ?: continue
+                val sport = item.optString("sport", item.optString("category", item.optString("type", ""))).trim()
+
+                if (targetSport.isNotEmpty() && !targetSport.contains("전체") && sport.isNotEmpty() && !sport.contains(targetSport, true)) {
+                    continue
+                }
+
+                val title = item.optString("name", item.optString("title", item.optString("match", "라이브 채널 $i"))).trim()
+                val streamKey = item.optString("stream", item.optString("key", item.optString("id", item.optString("file", "")))).trim()
+                val directUrl = item.optString("url", item.optString("m3u8", "")).trim()
+
+                val playTarget = when {
+                    directUrl.isNotEmpty() -> directUrl
+                    streamKey.isNotEmpty() -> "https://daxnb7e8nd4e0hdj.kjhsdfuie.work/live/$streamKey/playlist.m3u8?site=njtv-01.com"
+                    else -> ""
+                }
+
+                if (playTarget.isNotEmpty()) {
+                    episodeList.add(
+                        SEpisode.create().apply {
+                            this.name = if (sport.isNotEmpty()) "[$sport] $title" else title
+                            this.episode_number = count++
+                            this.setUrlWithoutDomain("/watch?url=" + java.net.URLEncoder.encode(playTarget, "UTF-8"))
+                        }
+                    )
                 }
             }
         }
 
-        val streamUrl = match?.value
-
-        if (!streamUrl.isNullOrEmpty()) {
-            val videoHeaders = headersBuilder()
-                .set("Referer", "$baseUrl/")
-                .set("Origin", baseUrl)
-                .build()
-
-            videoList.add(Video(streamUrl, "실시간 중계 (HLS)", streamUrl, videoHeaders))
+        if (episodeList.isEmpty()) {
+            episodeList.add(
+                SEpisode.create().apply {
+                    this.name = "실시간 활성 라이브 (기본 채널)"
+                    this.episode_number = 1f
+                    this.setUrlWithoutDomain("/watch?url=" + java.net.URLEncoder.encode("https://daxnb7e8nd4e0hdj.kjhsdfuie.work/live/NAU9HRalA2x/playlist.m3u8?site=njtv-01.com", "UTF-8"))
+                }
+            )
         }
 
-        return videoList
+        return episodeList
+    }
+
+    // ================= 5. 스트림 URL 재생 =================
+    override fun videoListParse(response: Response): List<Video> {
+        val fullUrl = response.request.url.toString()
+        val rawUrl = response.request.url.queryParameter("url") ?: fullUrl
+
+        val playUrl = if (rawUrl.startsWith("http")) rawUrl else java.net.URLDecoder.decode(rawUrl, "UTF-8")
+
+        val videoHeaders = headersBuilder()
+            .set("Referer", "$baseUrl/")
+            .set("Origin", baseUrl)
+            .set("Accept", "*/*")
+            .build()
+
+        return listOf(Video(playUrl, "실시간 고화질 중계", playUrl, videoHeaders))
     }
 
     override fun videoUrlParse(response: Response): String = ""
