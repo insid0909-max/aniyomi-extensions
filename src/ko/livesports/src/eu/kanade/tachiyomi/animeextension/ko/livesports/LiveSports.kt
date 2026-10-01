@@ -23,7 +23,7 @@ class LiveSports : AnimeHttpSource() {
 
     override val supportsLatest = false
 
-    // WebView의 세션 쿠키를 동기화하여 사용하는 Aniyomi 표준 클라이언트
+    // WebView 쿠키를 공유받아 처리하는 표준 클라이언트
     override val client: OkHttpClient = network.cloudflareClient
 
     override fun headersBuilder(): Headers.Builder = Headers.Builder()
@@ -37,7 +37,6 @@ class LiveSports : AnimeHttpSource() {
         val document = Jsoup.parse(response.body.string())
         val animeList = mutableListOf<SAnime>()
 
-        // 사이트 구조에 맞춰 경기/채널 항목 파싱 (기본 골격)
         document.select("a[href*=/]").forEach { element ->
             val title = element.text().trim()
             val href = element.attr("abs:href")
@@ -67,7 +66,7 @@ class LiveSports : AnimeHttpSource() {
     override fun animeDetailsParse(response: Response): SAnime {
         return SAnime.create().apply {
             title = "실시간 경기 중계"
-            status = SAnime.LIVE
+            status = SAnime.ONGOING
         }
     }
 
