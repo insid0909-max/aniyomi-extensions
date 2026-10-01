@@ -87,9 +87,6 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
     @Volatile private var firstItemDebug = ""
     @Volatile private var lastCaptureTime = 0L
 
-    // [임시] 경기 항목의 필드/종류 값을 확인하기 위한 DEBUG 줄 (확인 후 제거)
-    @Volatile private var debugRows: List<SEpisode> = emptyList()
-
     // 목록 추출에 필요 없는 리소스 (이미지/폰트)는 차단해서 로딩을 줄임
     private val blockedAssets = Regex(""".*\.(png|jpe?g|gif|webp|svg|ico|woff2?|ttf)$""", RegexOption.IGNORE_CASE)
 
@@ -206,28 +203,28 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         return firstString(item, urlKeys)
     }
 
+    // 경기 종류(category)를 한글 종목명으로 바꿈. 모르는 값은 영어 원문 그대로 표시
+    private fun categoryLabel(item: JSONObject): String {
+        val raw = item.optString("category").ifEmpty { item.optString("categoryName") }.trim()
+        if (raw.isEmpty()) return ""
+        return when (raw.lowercase().replace(CATEGORY_SEPARATOR_REGEX, "")) {
+            "football", "soccer" -> "축구"
+            "basketball" -> "농구"
+            "baseball" -> "야구"
+            "volleyball" -> "배구"
+            "hockey", "icehockey" -> "하키"
+            "tennis" -> "테니스"
+            "americanfootball", "nfl" -> "미식축구"
+            "lol", "esports", "leagueoflegends" -> "롤"
+            "boxing" -> "복싱"
+            "tv" -> "TV"
+            else -> raw
+        }
+    }
+
     private fun parseEpisodes(jsonText: String): List<SEpisode> {
         val array = findArray(jsonText) ?: return emptyList()
         firstItemDebug = array.opt(0).toString().take(400)
-
-        // [임시] 첫 경기 항목의 모든 필드와, 종류(category) 값별 대표 경기 제목을 DEBUG 줄로 만든다
-        val rows = mutableListOf<SEpisode>()
-        array.optJSONObject(0)?.let { o ->
-            val ks = o.keys()
-            while (ks.hasNext()) {
-                val k = ks.next()
-                rows.add(debugEpisode("$k=${o.opt(k).toString().take(40)}", rows.size + 1))
-            }
-        }
-        val seenCategories = mutableSetOf<String>()
-        for (i in 0 until array.length()) {
-            val o = array.optJSONObject(i) ?: continue
-            val c = o.opt("category")?.toString() ?: "?"
-            if (seenCategories.add(c)) {
-                rows.add(debugEpisode("종류 [$c] ${firstString(o, nameKeys).take(25)}", rows.size + 1))
-            }
-        }
-        debugRows = rows
 
         val list = mutableListOf<SEpisode>()
         var count = 1f
@@ -235,7 +232,11 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
             val item = array.optJSONObject(i) ?: continue
             val streamData = pickStreamData(item)
             if (streamData.isEmpty()) continue
-            val title = firstString(item, nameKeys).ifEmpty { "실시간 경기 ${count.toInt()}" }
+
+            val baseTitle = firstString(item, nameKeys).ifEmpty { "실시간 경기 ${count.toInt()}" }
+            val label = categoryLabel(item)
+            val title = if (label.isNotEmpty()) "[$label] $baseTitle" else baseTitle
+
             list.add(
                 SEpisode.create().apply {
                     this.name = title
@@ -412,11 +413,11 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         this.url = "/play?stream_data=" + URLEncoder.encode(url, "UTF-8")
     }
 
-    // 줄마다 주소가 달라야 앱이 하나로 합치지 않으므로 n을 붙인다
-    private fun debugEpisode(msg: String, n: Int = 0) = SEpisode.create().apply {
+    // 목록을 불러오지 못했을 때 원인을 보여주는 줄
+    private fun debugEpisode(msg: String) = SEpisode.create().apply {
         name = "DEBUG: $msg"
         episode_number = -1f
-        this.url = "/play?stream_data=debug&n=$n"
+        this.url = "/play?stream_data=debug"
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
@@ -428,8 +429,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         } else {
             emptyList()
         }
-        // [임시] 확인 후 debugRows + 를 지우면 원래대로 돌아감
-        if (episodes.isNotEmpty()) return debugRows + episodes.reversed()
+        if (episodes.isNotEmpty()) return episodes.reversed()
 
         // 실패 시: 자동감지 채널 + 원인 확인용 DEBUG 줄
         val result = mutableListOf<SEpisode>()
@@ -629,7 +629,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
             throw Exception("stream_data 비어있음")
         }
         if (data == "debug") {
-            throw Exception("DEBUG 줄입니다. 재생할 수 없습니다")
+            throw Exception("원인 확인용 줄입니다. item=$firstItemDebug")
         }
 
         val mirrors = listOfNotNull(
@@ -746,5 +746,6 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
         private const val DEFAULT_BASE_URL = "https://njtv-01.com"
         private val DOMAIN_REGEX = Regex("""^https://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$""")
+        private val CATEGORY_SEPARATOR_REGEX = Regex("""[\s_-]""")
     }
 }
