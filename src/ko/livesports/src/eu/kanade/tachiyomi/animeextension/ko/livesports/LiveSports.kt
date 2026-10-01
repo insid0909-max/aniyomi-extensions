@@ -77,7 +77,7 @@ class LiveSports : AnimeHttpSource() {
         val animeList = sportsSet.map { sportName ->
             SAnime.create().apply {
                 this.title = sportName
-                this.setUrlWithoutDomain("/sport?name=$sportName")
+                this.setUrlWithoutDomain("/sport?name=" + java.net.URLEncoder.encode(sportName, "UTF-8"))
                 this.thumbnail_url = ""
             }
         }
@@ -102,12 +102,11 @@ class LiveSports : AnimeHttpSource() {
     override fun episodeListParse(response: Response): List<SEpisode> {
         val targetSport = response.request.url.queryParameter("name") ?: ""
         val jsonReq = GET(streamJsonUrl, iframeHeaders())
-        val jsonRes = client.newCall(jsonReq).execute()
-        val bodyStr = jsonRes.body.string()
-
         val episodeList = mutableListOf<SEpisode>()
 
         runCatching {
+            val jsonRes = client.newCall(jsonReq).execute()
+            val bodyStr = jsonRes.body.string()
             val root = if (bodyStr.trim().startsWith("[")) JSONArray(bodyStr) else JSONObject(bodyStr).optJSONArray("streams") ?: JSONArray()
             var count = 1f
 
@@ -134,7 +133,7 @@ class LiveSports : AnimeHttpSource() {
                         SEpisode.create().apply {
                             this.name = if (sport.isNotEmpty()) "[$sport] $title" else title
                             this.episode_number = count++
-                            this.setUrlWithoutDomain("/watch?url=" + java.net.URLEncoder.encode(playTarget, "UTF-8"))
+                            this.url = "/live_stream?play_url=" + java.net.URLEncoder.encode(playTarget, "UTF-8")
                         }
                     )
                 }
@@ -142,11 +141,12 @@ class LiveSports : AnimeHttpSource() {
         }
 
         if (episodeList.isEmpty()) {
+            val defaultStream = "https://daxnb7e8nd4e0hdj.kjhsdfuie.work/live/NAU9HRalA2x/playlist.m3u8?site=njtv-01.com"
             episodeList.add(
                 SEpisode.create().apply {
                     this.name = "실시간 활성 라이브 (기본 채널)"
                     this.episode_number = 1f
-                    this.setUrlWithoutDomain("/watch?url=" + java.net.URLEncoder.encode("https://daxnb7e8nd4e0hdj.kjhsdfuie.work/live/NAU9HRalA2x/playlist.m3u8?site=njtv-01.com", "UTF-8"))
+                    this.url = "/live_stream?play_url=" + java.net.URLEncoder.encode(defaultStream, "UTF-8")
                 }
             )
         }
@@ -156,18 +156,22 @@ class LiveSports : AnimeHttpSource() {
 
     // ================= 5. 스트림 URL 재생 =================
     override fun videoListParse(response: Response): List<Video> {
-        val fullUrl = response.request.url.toString()
-        val rawUrl = response.request.url.queryParameter("url") ?: fullUrl
+        val encodedUrl = response.request.url.queryParameter("play_url")
+        val playUrl = if (!encodedUrl.isNullOrEmpty()) {
+            java.net.URLDecoder.decode(encodedUrl, "UTF-8")
+        } else {
+            "https://daxnb7e8nd4e0hdj.kjhsdfuie.work/live/NAU9HRalA2x/playlist.m3u8?site=njtv-01.com"
+        }
 
-        val playUrl = if (rawUrl.startsWith("http")) rawUrl else java.net.URLDecoder.decode(rawUrl, "UTF-8")
-
-        val videoHeaders = headersBuilder()
+        // 미디어 CDN 서버 전용 클린 헤더
+        val cleanMediaHeaders = Headers.Builder()
+            .set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
             .set("Referer", "$baseUrl/")
             .set("Origin", baseUrl)
             .set("Accept", "*/*")
             .build()
 
-        return listOf(Video(playUrl, "실시간 고화질 중계", playUrl, videoHeaders))
+        return listOf(Video(playUrl, "실시간 고화질 중계", playUrl, cleanMediaHeaders))
     }
 
     override fun videoUrlParse(response: Response): String = ""
