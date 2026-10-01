@@ -372,5 +372,7 @@ class LiveSports : AnimeHttpSource() {
         throw Exception("재생 실패 data=$data | $lastError | item=$firstItemDebug")
     }
 
+    
     override fun videoUrlParse(response: Response): String = ""
 }
+
