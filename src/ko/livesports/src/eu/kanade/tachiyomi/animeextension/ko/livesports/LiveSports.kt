@@ -91,8 +91,9 @@ class LiveSports : AnimeHttpSource() {
     }
 
     // ================= 2. JSON 해석 =================
-    private val nameKeys = listOf("name", "title", "label", "channel", "text")
-    private val urlKeys = listOf("url", "stream", "key", "id", "src", "file", "hls", "slug", "path")
+    private val nameKeys = listOf("name", "title", "label", "channel", "text", "match", "game")
+    private val urlKeys = listOf("stream", "streamKey", "key", "url", "src", "file", "hls", "slug", "path", "id")
+    private val skipKeys = listOf("date", "time", "image", "img", "logo", "thumb", "poster", "icon", "league", "status")
 
     // 최상위 배열이거나, 객체 안의 첫 번째 "객체 배열"을 찾음 (암호문 래퍼 {"iv","value"}는 null)
     private fun findArray(text: String): JSONArray? {
@@ -110,7 +111,7 @@ class LiveSports : AnimeHttpSource() {
 
     private fun looksLikeStreams(arr: JSONArray): Boolean {
         val first = arr.optJSONObject(0) ?: return false
-        return urlKeys.any { first.has(it) }
+        return first.length() >= 2
     }
 
     private fun firstString(item: JSONObject, keys: List<String>): String {
@@ -122,16 +123,55 @@ class LiveSports : AnimeHttpSource() {
         return ""
     }
 
+    // 중첩된 객체/배열까지 포함해 (키, 문자열 값) 목록을 수집
+    private fun collectStrings(node: Any?, key: String, out: MutableList<Pair<String, String>>) {
+        when (node) {
+            is JSONObject -> {
+                val it = node.keys()
+                while (it.hasNext()) {
+                    val k = it.next()
+                    collectStrings(node.opt(k), k, out)
+                }
+            }
+            is JSONArray -> for (i in 0 until node.length()) collectStrings(node.opt(i), key, out)
+            is String -> out.add(key to node)
+            else -> {}
+        }
+    }
+
+    // 영상 키처럼 보이는 값: 8~24자, 영문 대/소문자 + 숫자가 모두 섞여 있음 (예: OK1jlJ6naKK)
+    private fun looksLikeStreamKey(v: String): Boolean {
+        if (!Regex("^[A-Za-z0-9_-]{8,24}$").matches(v)) return false
+        return v.any { it.isUpperCase() } && v.any { it.isLowerCase() } && v.any { it.isDigit() }
+    }
+
+    private fun pickStreamData(item: JSONObject): String {
+        val all = mutableListOf<Pair<String, String>>()
+        collectStrings(item, "", all)
+
+        // 1순위: m3u8이 들어간 완성 URL
+        all.firstOrNull { it.second.startsWith("http") && it.second.contains(".m3u8") }
+            ?.let { return it.second }
+
+        // 2순위: 영상 키처럼 생긴 값 (이름/날짜/이미지 계열 필드는 제외)
+        all.firstOrNull { (k, v) ->
+            k.lowercase() !in nameKeys && skipKeys.none { s -> k.lowercase().contains(s) } && looksLikeStreamKey(v)
+        }?.let { return it.second }
+
+        // 3순위: 알려진 필드명
+        return firstString(item, urlKeys)
+    }
+
     private fun parseEpisodes(jsonText: String): List<SEpisode> {
         val array = findArray(jsonText) ?: return emptyList()
         Log.d(tag, "first item: ${array.opt(0)}")
-        firstItemDebug = array.opt(0).toString().take(300)
+        firstItemDebug = array.opt(0).toString().take(400)
 
         val list = mutableListOf<SEpisode>()
         var count = 1f
         for (i in 0 until array.length()) {
             val item = array.optJSONObject(i) ?: continue
-            val streamData = firstString(item, urlKeys)
+            val streamData = pickStreamData(item)
             if (streamData.isEmpty()) continue
             val title = firstString(item, nameKeys).ifEmpty { "실시간 경기 ${count.toInt()}" }
             list.add(
@@ -287,7 +327,7 @@ class LiveSports : AnimeHttpSource() {
 
     private fun debugEpisode(msg: String) = SEpisode.create().apply {
         name = "DEBUG: $msg"
-        episode_number = 2f
+        episode_number = 9999f
         this.url = "/play?stream_data=debug"
     }
 
@@ -300,7 +340,12 @@ class LiveSports : AnimeHttpSource() {
         } else {
             emptyList()
         }
-        if (episodes.isNotEmpty()) return episodes.reversed()
+
+        if (episodes.isNotEmpty()) {
+            // 확인용: 맨 위에 항목 구조 + 선택된 키 표시 (구조 확인 후 이 줄 삭제)
+            val sample = episodes.first().url.substringAfter("stream_data=", "")
+            return listOf(debugEpisode("pick=$sample item=$firstItemDebug")) + episodes.reversed()
+        }
 
         // 실패 시: 자동감지 채널 + 원인 확인용 DEBUG 줄
         val result = mutableListOf<SEpisode>()
@@ -316,8 +361,11 @@ class LiveSports : AnimeHttpSource() {
     // ================= 5. 비디오 재생 =================
     override fun videoListParse(response: Response): List<Video> {
         val data = response.request.url.queryParameter("stream_data") ?: ""
-        if (data.isEmpty() || data == "debug") {
-            throw Exception("stream_data 비어있음 item=$firstItemDebug")
+        if (data.isEmpty()) {
+            throw Exception("stream_data 비어있음")
+        }
+        if (data == "debug") {
+            throw Exception("item=$firstItemDebug")
         }
 
         // 호스트 후보: 가로챈 호스트 + 확인된 호스트 2개 (순서대로 시도)
@@ -372,7 +420,5 @@ class LiveSports : AnimeHttpSource() {
         throw Exception("재생 실패 data=$data | $lastError | item=$firstItemDebug")
     }
 
-    
     override fun videoUrlParse(response: Response): String = ""
 }
-
