@@ -4,7 +4,7 @@
 
     <application
         android:label="LiveSports"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@mipmap/tv_icon"
         tools:replace="android:label">
         
         <meta-data
