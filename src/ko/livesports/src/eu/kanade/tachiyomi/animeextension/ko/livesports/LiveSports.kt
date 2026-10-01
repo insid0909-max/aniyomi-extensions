@@ -19,14 +19,22 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedReader
 import java.io.ByteArrayInputStream
+import java.io.InputStreamReader
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class LiveSports : AnimeHttpSource() {
@@ -353,29 +361,151 @@ class LiveSports : AnimeHttpSource() {
         return result
     }
 
-    // ================= 5. 비디오 재생 =================
-    // Referer/Origin 조합 후보 (항목 이름에 쓰이는 라벨 포함)
-    private fun headerVariants(): List<Pair<String, Headers>> {
+    // ================= 5. 로컬 프록시 =================
+    // 플레이어(mpv)가 보내는 요청은 400을 받지만 앱(OkHttp) 요청은 통과하므로,
+    // 플레이어는 127.0.0.1로 요청하고 실제 요청은 OkHttp가 대신 보낸다.
+    @Volatile private var proxyServer: ServerSocket? = null
+    @Volatile private var proxyHeaders: Headers = Headers.Builder().build()
+    private val proxyPool = Executors.newCachedThreadPool()
+
+    private fun ensureProxy(): Int {
+        proxyServer?.let { if (!it.isClosed) return it.localPort }
+        synchronized(this) {
+            proxyServer?.let { if (!it.isClosed) return it.localPort }
+            val ss = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+            proxyServer = ss
+            Thread {
+                while (!ss.isClosed) {
+                    try {
+                        val s = ss.accept()
+                        proxyPool.execute { handleProxy(s) }
+                    } catch (e: Exception) {
+                        break
+                    }
+                }
+            }.apply { isDaemon = true }.start()
+            return ss.localPort
+        }
+    }
+
+    private fun proxyUrl(port: Int, target: String): String =
+        "http://127.0.0.1:$port/p?u=" + URLEncoder.encode(target, "UTF-8")
+
+    // 재생목록 안의 주소(조각, 하위 목록, 키)를 모두 프록시 주소로 바꾼다
+    private fun rewritePlaylist(base: String, body: String, port: Int): String {
+        fun wrap(u: String): String {
+            val abs = try {
+                java.net.URI(base).resolve(u).toString()
+            } catch (e: Exception) {
+                u
+            }
+            return proxyUrl(port, abs)
+        }
+        return body.lineSequence().joinToString("\n") { line ->
+            val t = line.trim()
+            when {
+                t.isEmpty() -> line
+                t.startsWith("#") ->
+                    Regex("URI=\"([^\"]+)\"").replace(line) { m -> "URI=\"" + wrap(m.groupValues[1]) + "\"" }
+                else -> wrap(t)
+            }
+        }
+    }
+
+    private fun handleProxy(s: Socket) {
+        try {
+            s.soTimeout = 30000
+            val reader = BufferedReader(InputStreamReader(s.getInputStream()))
+            val requestLine = reader.readLine() ?: return
+            while (true) {
+                val l = reader.readLine() ?: break
+                if (l.isEmpty()) break
+            }
+            val enc = requestLine.substringAfter("u=", "").substringBefore(" ")
+            val target = URLDecoder.decode(enc, "UTF-8")
+            val out = s.getOutputStream()
+
+            if (!target.startsWith("http")) {
+                out.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n".toByteArray())
+                out.flush()
+                return
+            }
+
+            val req = Request.Builder().url(target).headers(proxyHeaders).build()
+            client.newCall(req).execute().use { res ->
+                val ct = res.header("Content-Type") ?: ""
+                val isPlaylist = target.substringBefore("?").endsWith(".m3u8") ||
+                    ct.contains("mpegurl", true)
+
+                if (isPlaylist && res.isSuccessful) {
+                    val text = res.body?.string() ?: ""
+                    val bytes = rewritePlaylist(target, text, s.localPort).toByteArray(Charsets.UTF_8)
+                    out.write(
+                        (
+                            "HTTP/1.1 200 OK\r\n" +
+                                "Content-Type: application/vnd.apple.mpegurl\r\n" +
+                                "Content-Length: ${bytes.size}\r\n" +
+                                "Connection: close\r\n\r\n"
+                            ).toByteArray(),
+                    )
+                    out.write(bytes)
+                } else {
+                    val status = if (res.isSuccessful) "200 OK" else "${res.code} Error"
+                    val type = ct.ifEmpty { "application/octet-stream" }
+                    out.write(
+                        ("HTTP/1.1 $status\r\nContent-Type: $type\r\nConnection: close\r\n\r\n").toByteArray(),
+                    )
+                    res.body?.byteStream()?.copyTo(out)
+                }
+                out.flush()
+            }
+        } catch (e: Exception) {
+            Log.d(tag, "proxy error: ${e.message}")
+        } finally {
+            try {
+                s.close()
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+    }
+
+    // ================= 6. 비디오 재생 =================
+    private data class Candidate(
+        val sub200: Boolean,
+        val label: String,
+        val url: String,
+        val headers: Headers,
+        val result: String,
+    )
+
+    private fun cookieHeader(url: String): String = try {
+        client.cookieJar.loadForRequest(url.toHttpUrl()).joinToString("; ") { "${it.name}=${it.value}" }
+    } catch (e: Exception) {
+        ""
+    }
+
+    // Referer/Origin(/쿠키) 조합 후보 (항목 이름에 쓰이는 라벨 포함)
+    private fun headerVariants(url: String): List<Pair<String, Headers>> {
         val ua = headersBuilder().build()["User-Agent"]!!
         val iframeRef = iframeHost?.let { "https://$it/" }
+        val cookie = cookieHeader(url)
 
-        fun build(ref: String?, withOrigin: Boolean): Headers {
+        fun build(ref: String?, withOrigin: Boolean, withCookie: Boolean = false): Headers {
             val b = Headers.Builder().set("User-Agent", ua).set("Accept", "*/*")
             if (ref != null) {
                 b.set("Referer", ref)
                 if (withOrigin) b.set("Origin", ref.trimEnd('/'))
             }
+            if (withCookie && cookie.isNotEmpty()) b.set("Cookie", cookie)
             return b.build()
         }
 
         val list = mutableListOf<Pair<String, Headers>>()
-        if (iframeRef != null) {
-            list.add("iframe+Origin" to build(iframeRef, true))
-            list.add("iframe" to build(iframeRef, false))
-        }
+        if (iframeRef != null) list.add("iframe+Origin" to build(iframeRef, true))
         list.add("xvqz+Origin" to build("https://xvqz.org/", true))
+        if (cookie.isNotEmpty()) list.add("xvqz+Origin+쿠키" to build("https://xvqz.org/", true, true))
         list.add("njtv+Origin" to build("$baseUrl/", true))
-        list.add("njtv" to build("$baseUrl/", false))
         list.add("UA만" to build(null, false))
         return list
     }
@@ -424,14 +554,14 @@ class LiveSports : AnimeHttpSource() {
         }
 
         val log = mutableListOf<String>()
-        val ok = mutableListOf<Pair<Boolean, Video>>()
+        val ok = mutableListOf<Candidate>()
 
         for (u in playUrls) {
-            for ((label, h) in headerVariants()) {
+            for ((label, h) in headerVariants(u)) {
                 val r = probe(u, h)
                 log.add("$label:$r")
                 if (r.startsWith("m3u8=200")) {
-                    ok.add((r.contains("sub=200")) to Video(u, "$label [$r]", u, h))
+                    ok.add(Candidate(r.contains("sub=200"), label, u, h, r))
                 }
             }
             if (ok.isNotEmpty()) break
@@ -441,8 +571,19 @@ class LiveSports : AnimeHttpSource() {
             throw Exception("재생 실패 ${log.joinToString(" | ")} | data=${data.take(80)}")
         }
 
-        // 하위 주소까지 통과한 항목을 앞에 둠 (플레이어 HQ 버튼에서 선택 가능)
-        return ok.sortedByDescending { it.first }.map { it.second }
+        val sorted = ok.sortedByDescending { it.sub200 }
+        val best = sorted.first()
+
+        // 1순위: 로컬 프록시 (앱이 통과한 헤더로 대신 요청)
+        val port = ensureProxy()
+        proxyHeaders = best.headers
+        val proxied = proxyUrl(port, best.url)
+        val proxyVideo = Video(proxied, "프록시 [${best.label}]", proxied, Headers.Builder().build())
+
+        // 2순위: 직접 재생 (조합별)
+        val direct = sorted.map { Video(it.url, "${it.label} [${it.result}]", it.url, it.headers) }
+
+        return listOf(proxyVideo) + direct
     }
 
     override fun videoUrlParse(response: Response): String = ""
