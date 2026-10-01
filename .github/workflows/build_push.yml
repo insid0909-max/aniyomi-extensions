@@ -82,16 +82,18 @@ jobs:
           echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
           echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
 
-      # build.gradle.kts 파일의 extVersionCode와 extCode를 AUTO_VCODE 숫자로 명확히 치환
+      # build.gradle.kts 파일의 extVersionCode와 extCode를 AUTO_VCODE 숫자로 명확히 치환 (tvroom 및 livesports 모두 적용)
       - name: Inject version into build.gradle
         run: |
-          TARGET_FILE="src/ko/tvroom/build.gradle.kts"
-          if [ -f "$TARGET_FILE" ]; then
-            sed -i -E "s/val extCode\s*=\s*[0-9]+/val extCode = $AUTO_VCODE/g" "$TARGET_FILE"
-            sed -i -E "s/set\(\"extVersionCode\".*\)/set\(\"extVersionCode\", $AUTO_VCODE\)/" "$TARGET_FILE"
-            echo "치환 결과 확인:"
-            grep -E "extVersionCode|extCode" "$TARGET_FILE"
-          fi
+          TARGET_FILES=("src/ko/tvroom/build.gradle.kts" "src/ko/livesports/build.gradle.kts")
+          for TARGET_FILE in "${TARGET_FILES[@]}"; do
+            if [ -f "$TARGET_FILE" ]; then
+              sed -i -E "s/val extCode\s*=\s*[0-9]+/val extCode = $AUTO_VCODE/g" "$TARGET_FILE"
+              sed -i -E "s/set\(\"extVersionCode\".*\)/set\(\"extVersionCode\", $AUTO_VCODE\)/" "$TARGET_FILE"
+              echo "치환 결과 확인 ($TARGET_FILE):"
+              grep -E "extVersionCode|extCode" "$TARGET_FILE" || true
+            fi
+          done
 
       - name: Build extensions
         run: |
