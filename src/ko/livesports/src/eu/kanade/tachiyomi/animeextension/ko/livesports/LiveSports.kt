@@ -45,6 +45,7 @@ class LiveSports : AnimeHttpSource() {
     @Volatile private var iframeHost: String? = null
     @Volatile private var liveHost: String? = null
     @Volatile private var candidateHeads = ""
+    @Volatile private var firstItemDebug = ""
 
     override val client: OkHttpClient = network.cloudflareClient
 
@@ -124,6 +125,8 @@ class LiveSports : AnimeHttpSource() {
     private fun parseEpisodes(jsonText: String): List<SEpisode> {
         val array = findArray(jsonText) ?: return emptyList()
         Log.d(tag, "first item: ${array.opt(0)}")
+        firstItemDebug = array.opt(0).toString().take(300)
+
         val list = mutableListOf<SEpisode>()
         var count = 1f
         for (i in 0 until array.length()) {
@@ -313,27 +316,60 @@ class LiveSports : AnimeHttpSource() {
     // ================= 5. 비디오 재생 =================
     override fun videoListParse(response: Response): List<Video> {
         val data = response.request.url.queryParameter("stream_data") ?: ""
-        if (data.isEmpty() || data == "debug") return emptyList()
-
-        val playUrl = if (data.startsWith("http")) {
-            data
-        } else {
-            if (liveHost == null) captureFromPage()
-            val host = liveHost ?: return emptyList()
-            "https://$host/live/$data/playlist.m3u8?site=njtv-01.com"
+        if (data.isEmpty() || data == "debug") {
+            throw Exception("stream_data 비어있음 item=$firstItemDebug")
         }
-        Log.d(tag, "data=$data play=$playUrl")
 
-        // hls.js가 iframe 페이지에서 요청하므로 Referer/Origin도 iframe 호스트로 맞춤
-        val referer = iframeHost?.let { "https://$it/" } ?: "https://xvqz.org/"
-        val mediaHeaders = Headers.Builder()
-            .set("User-Agent", headersBuilder().build()["User-Agent"]!!)
-            .set("Referer", referer)
-            .set("Origin", referer.trimEnd('/'))
-            .set("Accept", "*/*")
-            .build()
+        // 호스트 후보: 가로챈 호스트 + 확인된 호스트 2개 (순서대로 시도)
+        val hosts: List<String?> = if (data.startsWith("http")) {
+            listOf(null)
+        } else {
+            listOfNotNull(
+                liveHost,
+                "ol3ktizakokhjhnu.kjhsdfuie.work",
+                "daxnb7e8nd4e0hdj.kjhsdfuie.work",
+            ).distinct()
+        }
+        // Referer 후보: iframe 호스트 → xvqz.org → 메인 사이트
+        val referers = listOfNotNull(
+            iframeHost?.let { "https://$it/" },
+            "https://xvqz.org/",
+            "$baseUrl/",
+        ).distinct()
 
-        return listOf(Video(playUrl, "실시간 라이브 (HLS)", playUrl, mediaHeaders))
+        val ua = headersBuilder().build()["User-Agent"]!!
+        var lastError = ""
+
+        for (host in hosts) {
+            val playUrl = if (host == null) {
+                data
+            } else {
+                "https://$host/live/$data/playlist.m3u8?site=njtv-01.com"
+            }
+
+            for (ref in referers) {
+                val mediaHeaders = Headers.Builder()
+                    .set("User-Agent", ua)
+                    .set("Referer", ref)
+                    .set("Origin", ref.trimEnd('/'))
+                    .set("Accept", "*/*")
+                    .build()
+                try {
+                    val res = client.newCall(GET(playUrl, mediaHeaders)).execute()
+                    val code = res.code
+                    val head = res.use { it.body?.string()?.take(12) ?: "" }
+                    if (code == 200 && head.startsWith("#EXTM3U")) {
+                        return listOf(Video(playUrl, "실시간 라이브 (HLS)", playUrl, mediaHeaders))
+                    }
+                    lastError = "code=$code head=$head host=$host ref=$ref"
+                } catch (e: Exception) {
+                    lastError = "예외 ${e.message} host=$host"
+                }
+            }
+        }
+
+        // 실패하면 원인을 토스트로 보여줌
+        throw Exception("재생 실패 data=$data | $lastError | item=$firstItemDebug")
     }
 
     override fun videoUrlParse(response: Response): String = ""
