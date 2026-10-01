@@ -33,6 +33,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -65,18 +66,16 @@ class LiveSports : AnimeHttpSource() {
             "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
         )
 
-    // ================= 1. 종목 카테고리 =================
+    // ================= 1. 카드 (하나만 표시) =================
     override fun popularAnimeRequest(page: Int): Request = GET(livePageUrl, headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
-        val categories = listOf("전체 경기", "축구", "야구", "농구", "배구", "기타")
-        val animeList = categories.map { catName ->
-            SAnime.create().apply {
-                title = catName
-                setUrlWithoutDomain("/live2?cat=" + URLEncoder.encode(catName, "UTF-8"))
-            }
+        val anime = SAnime.create().apply {
+            title = "실시간 스포츠 중계"
+            // 기존 "전체 경기" 카드와 같은 주소를 써서 앱에 저장된 항목과 이어지게 함
+            setUrlWithoutDomain("/live2?cat=" + URLEncoder.encode("전체 경기", "UTF-8"))
         }
-        return AnimesPage(animeList, false)
+        return AnimesPage(listOf(anime), false)
     }
 
     override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
@@ -172,7 +171,6 @@ class LiveSports : AnimeHttpSource() {
 
     private fun parseEpisodes(jsonText: String): List<SEpisode> {
         val array = findArray(jsonText) ?: return emptyList()
-        Log.d(tag, "first item: ${array.opt(0)}")
         firstItemDebug = array.opt(0).toString().take(400)
 
         val list = mutableListOf<SEpisode>()
@@ -310,7 +308,7 @@ class LiveSports : AnimeHttpSource() {
         }
 
         latch.await(15, TimeUnit.SECONDS)
-        // JSON 직후에 m3u8이 따라오므로 조금 더 기다림
+        // JSON 직후에 m3u8이 따라오므로 조금 더 기다림 (영상 호스트 확보용)
         var waited = 0
         while (capturedM3u8 == null && waited < 6000) {
             Thread.sleep(250)
@@ -362,11 +360,14 @@ class LiveSports : AnimeHttpSource() {
     }
 
     // ================= 5. 로컬 프록시 =================
-    // 플레이어(mpv)가 보내는 요청은 400을 받지만 앱(OkHttp) 요청은 통과하므로,
-    // 플레이어는 127.0.0.1로 요청하고 실제 요청은 OkHttp가 대신 보낸다.
+    // 플레이어(mpv)가 직접 요청하면 400을 받으므로, 플레이어는 127.0.0.1로 요청하고
+    // 실제 요청은 앱(OkHttp)이 대신 보낸다. 재생목록 안의 주소도 모두 이 프록시로 돌린다.
     @Volatile private var proxyServer: ServerSocket? = null
     @Volatile private var proxyHeaders: Headers = Headers.Builder().build()
     private val proxyPool = Executors.newCachedThreadPool()
+
+    // 재생목록에서 확인된 호스트만 프록시가 대신 요청하도록 허용
+    private val allowedHosts: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     private fun ensureProxy(): Int {
         proxyServer?.let { if (!it.isClosed) return it.localPort }
@@ -399,6 +400,11 @@ class LiveSports : AnimeHttpSource() {
             } catch (e: Exception) {
                 u
             }
+            try {
+                allowedHosts.add(abs.toHttpUrl().host)
+            } catch (e: Exception) {
+                // 잘못된 주소는 무시
+            }
             return proxyUrl(port, abs)
         }
         return body.lineSequence().joinToString("\n") { line ->
@@ -425,7 +431,8 @@ class LiveSports : AnimeHttpSource() {
             val target = URLDecoder.decode(enc, "UTF-8")
             val out = s.getOutputStream()
 
-            if (!target.startsWith("http")) {
+            val targetHost = try { target.toHttpUrl().host } catch (e: Exception) { "" }
+            if (targetHost !in allowedHosts) {
                 out.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n".toByteArray())
                 out.flush()
                 return
@@ -485,7 +492,7 @@ class LiveSports : AnimeHttpSource() {
         ""
     }
 
-    // Referer/Origin(/쿠키) 조합 후보 (항목 이름에 쓰이는 라벨 포함)
+    // Referer/Origin(/쿠키) 조합 후보. 확인된 xvqz+Origin을 맨 앞에 둠
     private fun headerVariants(url: String): List<Pair<String, Headers>> {
         val ua = headersBuilder().build()["User-Agent"]!!
         val iframeRef = iframeHost?.let { "https://$it/" }
@@ -502,8 +509,8 @@ class LiveSports : AnimeHttpSource() {
         }
 
         val list = mutableListOf<Pair<String, Headers>>()
-        if (iframeRef != null) list.add("iframe+Origin" to build(iframeRef, true))
         list.add("xvqz+Origin" to build("https://xvqz.org/", true))
+        if (iframeRef != null) list.add("iframe+Origin" to build(iframeRef, true))
         if (cookie.isNotEmpty()) list.add("xvqz+Origin+쿠키" to build("https://xvqz.org/", true, true))
         list.add("njtv+Origin" to build("$baseUrl/", true))
         list.add("UA만" to build(null, false))
@@ -563,6 +570,8 @@ class LiveSports : AnimeHttpSource() {
                 if (r.startsWith("m3u8=200")) {
                     ok.add(Candidate(r.contains("sub=200"), label, u, h, r))
                 }
+                // 하위 주소까지 통과한 조합을 찾으면 나머지는 검사하지 않음
+                if (r.contains("sub=200")) break
             }
             if (ok.isNotEmpty()) break
         }
@@ -577,6 +586,11 @@ class LiveSports : AnimeHttpSource() {
         // 1순위: 로컬 프록시 (앱이 통과한 헤더로 대신 요청)
         val port = ensureProxy()
         proxyHeaders = best.headers
+        try {
+            allowedHosts.add(best.url.toHttpUrl().host)
+        } catch (e: Exception) {
+            // 무시
+        }
         val proxied = proxyUrl(port, best.url)
         val proxyVideo = Video(proxied, "프록시 [${best.label}]", proxied, Headers.Builder().build())
 
