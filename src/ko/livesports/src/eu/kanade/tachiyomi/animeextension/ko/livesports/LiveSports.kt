@@ -233,8 +233,15 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         val title: String,
         val streamData: String,
         val league: String,
-        val isTv: Boolean,
+        val label: String,
     )
+
+    // 정렬 순서: 알려진 종목(CATEGORY_ORDER 순) → 그 밖의 종목(영어 원문) → 종목 없음 → TV 채널
+    private fun categoryRank(label: String): Int = when {
+        label == LABEL_TV -> CATEGORY_ORDER.size + 2
+        label.isEmpty() -> CATEGORY_ORDER.size + 1
+        else -> CATEGORY_ORDER.indexOf(label).let { if (it >= 0) it else CATEGORY_ORDER.size }
+    }
 
     private fun parseEpisodes(jsonText: String): List<SEpisode> {
         val array = findArray(jsonText) ?: return emptyList()
@@ -255,13 +262,19 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
                     title = if (label.isNotEmpty()) "[$label] $baseTitle" else baseTitle,
                     streamData = streamData,
                     league = league,
-                    isTv = label == LABEL_TV,
+                    label = label,
                 ),
             )
         }
 
-        // 경기가 위, TV 채널은 아래. 각 그룹 안에서는 기존처럼 목록 순서를 뒤집어 표시
-        val ordered = items.filter { !it.isTv }.reversed() + items.filter { it.isTv }.reversed()
+        // 같은 종목끼리 모아서 정렬. 같은 종목 안에서는 기존처럼 목록 순서를 뒤집어 표시
+        // (sortedWith는 순서를 유지하는 안정 정렬이라 같은 값끼리는 위 순서가 그대로 남음)
+        val ordered = items.reversed().sortedWith(
+            compareBy<ParsedItem>(
+                { categoryRank(it.label) },
+                { if (categoryRank(it.label) == CATEGORY_ORDER.size) it.label else "" },
+            ),
+        )
 
         // 앱이 "Missing N items"를 표시하지 않도록 위에서 아래로 번호를 연속으로 매김
         return ordered.mapIndexed { index, p ->
@@ -470,7 +483,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
             emptyList()
         }
 
-        // 성공: 정상 목록을 기억해 두고 반환 (parseEpisodes가 이미 경기 → TV 채널 순으로 정렬)
+        // 성공: 정상 목록을 기억해 두고 반환 (parseEpisodes가 이미 종목별로 정렬)
         if (episodes.isNotEmpty()) {
             lastGoodEpisodes = episodes
             lastGoodTime = System.currentTimeMillis()
@@ -807,6 +820,11 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
 
         // 가져오기에 실패했을 때 직전 정상 목록을 보여줄 수 있는 최대 시간
         private const val LAST_GOOD_MAX_AGE_MS = 30 * 60 * 1000L
+
+        // 목록에 보이는 종목 순서 (바꾸고 싶으면 이 목록의 순서를 고치세요)
+        private val CATEGORY_ORDER = listOf(
+            "축구", "야구", "농구", "배구", "하키", "테니스", "미식축구", "롤", "복싱",
+        )
 
         private val DOMAIN_REGEX = Regex("""^https://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$""")
         private val CATEGORY_SEPARATOR_REGEX = Regex("""[\s_-]""")
