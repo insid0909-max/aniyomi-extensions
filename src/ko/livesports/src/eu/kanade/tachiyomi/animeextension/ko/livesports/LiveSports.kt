@@ -13,6 +13,7 @@ import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
+import org.jsoup.Jsoup
 
 class LiveSports : AnimeHttpSource() {
 
@@ -22,7 +23,6 @@ class LiveSports : AnimeHttpSource() {
 
     private val livePageUrl = "$baseUrl/bbs/page.php?hid=livetv_a"
     private val iframeUrl = "https://xvqz.org/content/V28Ew6LP/modern/dark"
-    private val streamJsonUrl = "https://v8ca6dfp7jzt47dx.xvqz.org/data/iframe-streams.json"
 
     override val lang = "ko"
 
@@ -46,38 +46,26 @@ class LiveSports : AnimeHttpSource() {
     private fun iframeHeaders(): Headers = headersBuilder()
         .set("Referer", iframeUrl)
         .set("Origin", "https://xvqz.org")
-        .set("Accept", "application/json, text/plain, */*")
-        .set("Sec-Fetch-Dest", "empty")
-        .set("Sec-Fetch-Mode", "cors")
-        .set("Sec-Fetch-Site", "same-site")
+        .set("Accept", "*/*")
         .build()
 
-    // ================= 1. 종목 목록 (Anime Page) =================
-    override fun popularAnimeRequest(page: Int): Request = GET(streamJsonUrl, iframeHeaders())
+    // ================= 1. 종목 카테고리 (Anime Page) =================
+    override fun popularAnimeRequest(page: Int): Request = GET(livePageUrl, headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
-        val bodyStr = response.body.string()
-        val sportsSet = LinkedHashSet<String>()
+        val categories = listOf(
+            "실시간 인기 경기 (전체)",
+            "축구 중계",
+            "야구 중계",
+            "농구 중계",
+            "배구 중계",
+            "기타 스포츠 중계"
+        )
 
-        runCatching {
-            val root = if (bodyStr.trim().startsWith("[")) JSONArray(bodyStr) else JSONObject(bodyStr).optJSONArray("streams") ?: JSONArray()
-            for (i in 0 until root.length()) {
-                val item = root.optJSONObject(i) ?: continue
-                val sport = item.optString("sport", item.optString("category", item.optString("type", ""))).trim()
-                if (sport.isNotEmpty()) {
-                    sportsSet.add(sport)
-                }
-            }
-        }
-
-        if (sportsSet.isEmpty()) {
-            sportsSet.addAll(listOf("전체 경기 중계", "야구", "축구", "농구", "기타 중계"))
-        }
-
-        val animeList = sportsSet.map { sportName ->
+        val animeList = categories.map { catName ->
             SAnime.create().apply {
-                this.title = sportName
-                this.setUrlWithoutDomain("/sport?name=" + java.net.URLEncoder.encode(sportName, "UTF-8"))
+                this.title = catName
+                this.setUrlWithoutDomain("/sport?cat=" + java.net.URLEncoder.encode(catName, "UTF-8"))
                 this.thumbnail_url = ""
             }
         }
@@ -92,61 +80,68 @@ class LiveSports : AnimeHttpSource() {
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = popularAnimeRequest(1)
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
 
-    // ================= 3. 종목 상세 =================
+    // ================= 3. 상세 정보 =================
     override fun animeDetailsParse(response: Response): SAnime = SAnime.create().apply {
-        title = "실시간 경기 중계"
+        title = "실시간 스포츠 중계"
         status = SAnime.ONGOING
     }
 
-    // ================= 4. 경기 목록 (SEpisode) =================
+    // ================= 4. 실시간 경기 목록 (SEpisode) =================
     override fun episodeListParse(response: Response): List<SEpisode> {
-        val targetSport = response.request.url.queryParameter("name") ?: ""
-        val jsonReq = GET(streamJsonUrl, iframeHeaders())
         val episodeList = mutableListOf<SEpisode>()
 
-        runCatching {
-            val jsonRes = client.newCall(jsonReq).execute()
-            val bodyStr = jsonRes.body.string()
-            val root = if (bodyStr.trim().startsWith("[")) JSONArray(bodyStr) else JSONObject(bodyStr).optJSONArray("streams") ?: JSONArray()
-            var count = 1f
+        // iframe 내부 소스 호출
+        val iframeReq = GET(iframeUrl, headersBuilder().set("Referer", livePageUrl).build())
+        val iframeRes = runCatching { client.newCall(iframeReq).execute() }.getOrNull()
+        val iframeHtml = iframeRes?.body?.string().orEmpty()
 
-            for (i in 0 until root.length()) {
-                val item = root.optJSONObject(i) ?: continue
-                val sport = item.optString("sport", item.optString("category", item.optString("type", ""))).trim()
+        // 1) 내부 JSON API 주소 동적 탐색 (v8ca...xvqz.org/data/iframe-streams.json 등)
+        val jsonApiRegex = """https?://[a-zA-Z0-9_\-\.]+\.xvqz\.org/data/iframe-streams\.json""".toRegex()
+        val jsonApiUrl = jsonApiRegex.find(iframeHtml)?.value
 
-                if (targetSport.isNotEmpty() && !targetSport.contains("전체") && sport.isNotEmpty() && !sport.contains(targetSport, true)) {
-                    continue
-                }
+        if (!jsonApiUrl.isNullOrEmpty()) {
+            val apiReq = GET(jsonApiUrl, iframeHeaders())
+            runCatching {
+                val apiRes = client.newCall(apiReq).execute()
+                val jsonStr = apiRes.body.string()
+                val root = if (jsonStr.trim().startsWith("[")) JSONArray(jsonStr) else JSONObject(jsonStr).optJSONArray("streams") ?: JSONArray()
+                
+                var count = 1f
+                for (i in 0 until root.length()) {
+                    val item = root.optJSONObject(i) ?: continue
+                    val name = item.optString("name", item.optString("title", item.optString("match", "라이브 채널 $i"))).trim()
+                    val key = item.optString("stream", item.optString("key", item.optString("id", ""))).trim()
 
-                val title = item.optString("name", item.optString("title", item.optString("match", "라이브 채널 $i"))).trim()
-                val streamKey = item.optString("stream", item.optString("key", item.optString("id", item.optString("file", "")))).trim()
-                val directUrl = item.optString("url", item.optString("m3u8", "")).trim()
-
-                val playTarget = when {
-                    directUrl.isNotEmpty() -> directUrl
-                    streamKey.isNotEmpty() -> "https://daxnb7e8nd4e0hdj.kjhsdfuie.work/live/$streamKey/playlist.m3u8?site=njtv-01.com"
-                    else -> ""
-                }
-
-                if (playTarget.isNotEmpty()) {
-                    episodeList.add(
-                        SEpisode.create().apply {
-                            this.name = if (sport.isNotEmpty()) "[$sport] $title" else title
-                            this.episode_number = count++
-                            this.url = "/live_stream?play_url=" + java.net.URLEncoder.encode(playTarget, "UTF-8")
-                        }
-                    )
+                    if (key.isNotEmpty()) {
+                        episodeList.add(
+                            SEpisode.create().apply {
+                                this.name = name
+                                this.episode_number = count++
+                                this.url = "/play?key=$key"
+                            }
+                        )
+                    }
                 }
             }
         }
 
+        // 2) JSON 파싱에 실패했거나 비어있는 경우 HTML 내부에서 활성 스트림 키 자동 포획
         if (episodeList.isEmpty()) {
-            val defaultStream = "https://daxnb7e8nd4e0hdj.kjhsdfuie.work/live/NAU9HRalA2x/playlist.m3u8?site=njtv-01.com"
+            val keyRegex = """(?:/live/|streamKey["']?\s*[:=]\s*["'])([a-zA-Z0-9_\-]{8,25})""".toRegex()
+            val capturedKey = keyRegex.find(iframeHtml)?.groupValues?.get(1) ?: "gWsOolRJHgz"
+
             episodeList.add(
                 SEpisode.create().apply {
-                    this.name = "실시간 활성 라이브 (기본 채널)"
+                    this.name = "실시간 라이브 채널 1"
                     this.episode_number = 1f
-                    this.url = "/live_stream?play_url=" + java.net.URLEncoder.encode(defaultStream, "UTF-8")
+                    this.url = "/play?key=$capturedKey"
+                }
+            )
+            episodeList.add(
+                SEpisode.create().apply {
+                    this.name = "실시간 라이브 채널 2"
+                    this.episode_number = 2f
+                    this.url = "/play?key=$capturedKey"
                 }
             )
         }
@@ -154,24 +149,28 @@ class LiveSports : AnimeHttpSource() {
         return episodeList
     }
 
-    // ================= 5. 스트림 URL 재생 =================
+    // ================= 5. 스트림 미디어 재생 =================
     override fun videoListParse(response: Response): List<Video> {
-        val encodedUrl = response.request.url.queryParameter("play_url")
-        val playUrl = if (!encodedUrl.isNullOrEmpty()) {
-            java.net.URLDecoder.decode(encodedUrl, "UTF-8")
-        } else {
-            "https://daxnb7e8nd4e0hdj.kjhsdfuie.work/live/NAU9HRalA2x/playlist.m3u8?site=njtv-01.com"
-        }
+        val streamKey = response.request.url.queryParameter("key") ?: "gWsOolRJHgz"
+        val videoList = mutableListOf<Video>()
 
-        // 미디어 CDN 서버 전용 클린 헤더
-        val cleanMediaHeaders = Headers.Builder()
+        // CDN 전용 필수 헤더
+        val mediaHeaders = Headers.Builder()
             .set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
             .set("Referer", "$baseUrl/")
             .set("Origin", baseUrl)
             .set("Accept", "*/*")
             .build()
 
-        return listOf(Video(playUrl, "실시간 고화질 중계", playUrl, cleanMediaHeaders))
+        // 1번 메인 서버 (daxnb7e8nd4e0hdj)
+        val server1 = "https://daxnb7e8nd4e0hdj.kjhsdfuie.work/live/$streamKey/playlist.m3u8?site=njtv-01.com"
+        videoList.add(Video(server1, "메인 고화질 서버", server1, mediaHeaders))
+
+        // 2번 미러 서버 (ol3ktizakokhjhnu)
+        val server2 = "https://ol3ktizakokhjhnu.kjhsdfuie.work/live/$streamKey/playlist.m3u8?site=njtv-01.com"
+        videoList.add(Video(server2, "보조 백업 서버", server2, mediaHeaders))
+
+        return videoList
     }
 
     override fun videoUrlParse(response: Response): String = ""
