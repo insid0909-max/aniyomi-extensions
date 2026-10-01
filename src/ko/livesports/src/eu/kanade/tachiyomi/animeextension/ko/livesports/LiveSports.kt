@@ -43,9 +43,13 @@ class LiveSports : AnimeHttpSource() {
     private val livePageUrl = "$baseUrl/bbs/page.php?hid=livetv_a"
     private val iframeUrl = "https://xvqz.org/content/V28Ew6LP/modern/dark"
 
-    // 재생 요청 시 Referer/Origin. 400이 계속 나면 baseUrl 쪽으로도 바꿔서 테스트
+    // 재생 요청 Referer/Origin. 400이 계속 나면 baseUrl 쪽으로도 테스트
     private val playReferer = "https://xvqz.org/"
     private val playOrigin = "https://xvqz.org"
+
+    // 실패 단계를 화면(에피소드 이름)에 보여주기 위한 디버그 문자열
+    @Volatile
+    private var lastDebug = "init"
 
     override val client: OkHttpClient = network.cloudflareClient
 
@@ -65,7 +69,8 @@ class LiveSports : AnimeHttpSource() {
         val animeList = categories.map { catName ->
             SAnime.create().apply {
                 title = catName
-                setUrlWithoutDomain("/sport?cat=" + URLEncoder.encode(catName, "UTF-8"))
+                // URL을 바꿔서 앱 DB에 남은 옛 항목과 분리 (/live2)
+                setUrlWithoutDomain("/live2?cat=" + URLEncoder.encode(catName, "UTF-8"))
             }
         }
         return AnimesPage(animeList, false)
@@ -76,7 +81,7 @@ class LiveSports : AnimeHttpSource() {
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = popularAnimeRequest(1)
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
 
-    // 가짜 경로(/sport?cat=...)로 요청하지 않도록 실제 페이지로 고정
+    // 가짜 경로로 요청하지 않도록 실제 페이지로 고정
     override fun animeDetailsRequest(anime: SAnime): Request = GET(livePageUrl, headers)
 
     override fun animeDetailsParse(response: Response): SAnime = SAnime.create().apply {
@@ -86,7 +91,7 @@ class LiveSports : AnimeHttpSource() {
 
     override fun episodeListRequest(anime: SAnime): Request = GET(livePageUrl, headers)
 
-    // 재생 요청도 실제 페이지로 보내되 stream_data만 쿼리로 실어 전달
+    // 재생 요청도 실제 페이지로 보내되 stream_data만 쿼리로 전달
     override fun videoListRequest(episode: SEpisode): Request {
         val data = episode.url.substringAfter("stream_data=", "")
         return GET("$livePageUrl&stream_data=$data", headers)
@@ -115,22 +120,43 @@ class LiveSports : AnimeHttpSource() {
     @Volatile
     private var cachedKey: String? = null
 
-    private fun decryptWith(key: String, iv: ByteArray, data: ByteArray): String? = try {
-        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-        cipher.init(
-            Cipher.DECRYPT_MODE,
-            SecretKeySpec(key.toByteArray(Charsets.UTF_8), "AES"),
-            IvParameterSpec(iv),
-        )
-        val text = String(cipher.doFinal(data), Charsets.UTF_8).trim()
-        // 우연히 패딩이 맞는 오답 키를 거르기 위해 실제 JSON 파싱까지 검증
-        when {
-            text.startsWith("[") -> JSONArray(text)
-            text.startsWith("{") -> JSONObject(text)
-            else -> null
-        }?.let { text }
-    } catch (e: Exception) {
-        null
+    // 원문 UTF-8 바이트, Base64 디코드 바이트 중 AES 키 길이(16/24/32)에 맞는 것만 후보
+    private fun keyVariants(key: String): List<ByteArray> {
+        val validSizes = listOf(16, 24, 32)
+        val list = mutableListOf<ByteArray>()
+        val raw = key.toByteArray(Charsets.UTF_8)
+        if (raw.size in validSizes) list.add(raw)
+        try {
+            val dec = Base64.decode(key, Base64.DEFAULT)
+            if (dec.size in validSizes) list.add(dec)
+        } catch (e: Exception) {
+            // Base64가 아니면 무시
+        }
+        return list
+    }
+
+    private fun decryptWith(key: String, iv: ByteArray, data: ByteArray): String? {
+        for (keyBytes in keyVariants(key)) {
+            try {
+                val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+                cipher.init(
+                    Cipher.DECRYPT_MODE,
+                    SecretKeySpec(keyBytes, "AES"),
+                    IvParameterSpec(iv),
+                )
+                val text = String(cipher.doFinal(data), Charsets.UTF_8).trim()
+                // 우연히 패딩이 맞는 오답 키를 거르기 위해 실제 JSON 파싱까지 검증
+                val ok = when {
+                    text.startsWith("[") -> JSONArray(text)
+                    text.startsWith("{") -> JSONObject(text)
+                    else -> null
+                }
+                if (ok != null) return text
+            } catch (e: Exception) {
+                // 키가 틀리면 예외 발생. 다음 후보로
+            }
+        }
+        return null
     }
 
     private fun findValidKeyAndDecrypt(payload: String): String? {
@@ -153,9 +179,11 @@ class LiveSports : AnimeHttpSource() {
                 return result
             }
             Log.d(tag, "no key matched")
+            lastDebug += " / 키 불일치(55개 모두 실패)"
             null
         } catch (e: Exception) {
             Log.d(tag, "payload parse failed: ${e.message}")
+            lastDebug += " / 페이로드 형식 오류: ${e.message}"
             null
         }
     }
@@ -182,23 +210,28 @@ class LiveSports : AnimeHttpSource() {
 
             if (host == null) {
                 Log.d(tag, "dynamic host not found")
+                lastDebug = "host 못 찾음(iframe 길이=${iframeHtml.length})"
                 return null
             }
 
             val jsonUrl = "https://$host/data/iframe-streams.json"
             Log.d(tag, "Target JSON URL: $jsonUrl")
+            lastDebug = "url=$jsonUrl"
 
             val jsonHeaders = headersBuilder()
                 .set("Referer", iframeUrl)
                 .set("Origin", "https://$host")
                 .build()
-            val body = client.newCall(GET(jsonUrl, jsonHeaders)).execute()
-                .use { it.body?.string() }
-            Log.d(tag, "json body length=${body?.length}, head=${body?.take(60)}")
+            val res = client.newCall(GET(jsonUrl, jsonHeaders)).execute()
+            val code = res.code
+            val body = res.use { it.body?.string() }
+            Log.d(tag, "json code=$code length=${body?.length}, head=${body?.take(60)}")
+            lastDebug = "code=$code len=${body?.length} head=${body?.take(40)} url=$jsonUrl"
 
             if (body.isNullOrBlank()) null else findValidKeyAndDecrypt(body)
         } catch (e: Exception) {
             Log.d(tag, "fetch failed: ${e.message}")
+            lastDebug = "예외: ${e.message}"
             null
         }
     }
@@ -283,6 +316,7 @@ class LiveSports : AnimeHttpSource() {
 
                 webView.loadUrl(targetUrl, mutableMapOf("Referer" to livePageUrl))
             } catch (e: Exception) {
+                lastDebug += " / 웹뷰 예외: ${e.message}"
                 latch.countDown()
             }
         }
@@ -333,30 +367,39 @@ class LiveSports : AnimeHttpSource() {
         this.url = "/play?stream_data=" + URLEncoder.encode(url, "UTF-8")
     }
 
+    private fun debugEpisode(msg: String) = SEpisode.create().apply {
+        name = "DEBUG: $msg"
+        episode_number = 1f
+        this.url = "/play?stream_data=debug"
+    }
+
     override fun episodeListParse(response: Response): List<SEpisode> {
+        lastDebug = "시작"
+
         // 1순위: iframe-streams.json 직접 요청 + AES 복호화
         val decrypted = fetchDecryptedStreams()
         if (decrypted != null) {
             try {
                 val episodes = parseEpisodes(decrypted)
                 if (episodes.isNotEmpty()) return episodes.reversed()
+                lastDebug = "복호화 OK, 항목 0개 head=${decrypted.take(120)}"
             } catch (e: Exception) {
-                e.printStackTrace()
+                lastDebug = "복호화 OK, 파싱 예외 ${e.message} head=${decrypted.take(80)}"
             }
         }
 
         // 2순위: 웹뷰 후킹
-        Log.d(tag, "fallback to WebView hook")
+        Log.d(tag, "fallback to WebView hook: $lastDebug")
+        val debugBeforeHook = lastDebug
         val hooked = getDecryptedDataViaWebView(iframeUrl).trim()
         return try {
             when {
                 hooked.startsWith("[") || hooked.startsWith("{") -> parseEpisodes(hooked).reversed()
                 hooked.contains(".m3u8") -> listOf(m3u8Episode(hooked))
-                else -> emptyList()
+                else -> listOf(debugEpisode("후킹도 실패 | $debugBeforeHook"))
             }
         } catch (e: Exception) {
-            e.printStackTrace()
-            emptyList()
+            listOf(debugEpisode("후킹 파싱예외 ${e.message} | $debugBeforeHook"))
         }
     }
 
