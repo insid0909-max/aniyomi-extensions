@@ -134,7 +134,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
     override fun episodeListRequest(anime: SAnime): Request = GET(livePageUrl, headers)
 
     override fun videoListRequest(episode: SEpisode): Request {
-        val data = episode.url.substringAfter("stream_data=", "")
+        val data = episode.url.substringAfter("stream_data=", "").substringBefore("&n=")
         return GET("$livePageUrl&stream_data=$data", headers)
     }
 
@@ -229,11 +229,34 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         }
     }
 
+    // 종목별 이모지 (색이 있어서 목록에서 종목이 눈에 띄게 구분됨). 모르는 종목은 🏅
+    private fun categoryEmoji(label: String): String = when (label) {
+        "" -> ""
+        "축구" -> "⚽"
+        "야구" -> "⚾"
+        "농구" -> "🏀"
+        "배구" -> "🏐"
+        "하키" -> "🏒"
+        "테니스" -> "🎾"
+        "미식축구" -> "🏈"
+        "롤" -> "🎮"
+        "복싱" -> "🥊"
+        LABEL_TV -> "📺"
+        else -> "🏅"
+    }
+
     private class ParsedItem(
         val title: String,
         val streamData: String,
         val league: String,
         val label: String,
+    )
+
+    // 목록에 실제로 표시되는 한 줄 (경기 또는 구분 줄)
+    private class Row(
+        val name: String,
+        val url: String,
+        val scanlator: String?,
     )
 
     // 정렬 순서: 알려진 종목(CATEGORY_ORDER 순) → 그 밖의 종목(영어 원문) → 종목 없음 → TV 채널
@@ -254,15 +277,14 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
             if (streamData.isEmpty()) continue
 
             val baseTitle = firstString(item, nameKeys).ifEmpty { "실시간 경기 ${items.size + 1}" }
-            val label = categoryLabel(item)
             val league = item.optString("league").trim().takeIf { it != "null" }.orEmpty()
 
             items.add(
                 ParsedItem(
-                    title = if (label.isNotEmpty()) "[$label] $baseTitle" else baseTitle,
+                    title = baseTitle,
                     streamData = streamData,
                     league = league,
-                    label = label,
+                    label = categoryLabel(item),
                 ),
             )
         }
@@ -276,14 +298,41 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
             ),
         )
 
+        // 종목별 개수 (구분 줄에 표시)
+        val counts = ordered.groupingBy { it.label }.eachCount()
+
+        val rows = mutableListOf<Row>()
+        var lastLabel: String? = null
+        for (p in ordered) {
+            val emoji = categoryEmoji(p.label)
+
+            // 종목이 바뀔 때 구분 줄을 넣음 (같은 주소로 합쳐지지 않도록 줄 번호를 붙임)
+            if (SHOW_SECTION_HEADERS && p.label != lastLabel) {
+                val head = listOf(emoji, p.label.ifEmpty { "기타" }, "(${counts[p.label]})")
+                    .filter { it.isNotEmpty() }
+                    .joinToString(" ")
+                rows.add(Row("━━ $head ━━", "/play?stream_data=header&n=${rows.size}", null))
+            }
+            lastLabel = p.label
+
+            rows.add(
+                Row(
+                    name = if (emoji.isNotEmpty()) "$emoji ${p.title}" else p.title,
+                    url = "/play?stream_data=" + URLEncoder.encode(p.streamData, "UTF-8"),
+                    // 종목명과 대회명은 날짜 옆 줄에 표시 (제목이 길어도 잘리지 않음)
+                    scanlator = listOf(p.label, p.league).filter { it.isNotEmpty() }
+                        .joinToString(" · ").ifEmpty { null },
+                ),
+            )
+        }
+
         // 앱이 "Missing N items"를 표시하지 않도록 위에서 아래로 번호를 연속으로 매김
-        return ordered.mapIndexed { index, p ->
+        return rows.mapIndexed { index, r ->
             SEpisode.create().apply {
-                this.name = p.title
-                this.episode_number = (ordered.size - index).toFloat()
-                // 대회명은 날짜 옆 줄에 표시 (제목이 길어도 잘리지 않음)
-                this.scanlator = p.league.ifEmpty { null }
-                this.url = "/play?stream_data=" + URLEncoder.encode(p.streamData, "UTF-8")
+                this.name = r.name
+                this.episode_number = (rows.size - index).toFloat()
+                this.scanlator = r.scanlator
+                this.url = r.url
             }
         }
     }
@@ -694,6 +743,9 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         if (data.isEmpty()) {
             throw Exception("stream_data 비어있음")
         }
+        if (data == "header") {
+            throw Exception("구분 줄입니다. 아래의 경기를 선택하세요")
+        }
         if (data == "debug") {
             throw Exception("원인 확인용 줄입니다. item=$firstItemDebug")
         }
@@ -814,6 +866,9 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
         private const val DEFAULT_BASE_URL = "https://njtv-01.com"
         private const val LABEL_TV = "TV"
+
+        // 종목이 바뀔 때 "━━ ⚽ 축구 (5) ━━" 구분 줄을 넣을지 (끄려면 false)
+        private const val SHOW_SECTION_HEADERS = true
 
         // 목록 캐시 시간 (이 시간 안에 다시 열면 숨은 화면을 다시 열지 않음)
         private const val CACHE_MS = 20_000L
