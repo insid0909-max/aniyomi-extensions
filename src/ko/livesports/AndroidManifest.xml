@@ -5,7 +5,7 @@
     <application
         android:label="LiveSports"
         android:icon="@mipmap/tv_icon"
-        tools:replace="android:label">
+        tools:replace="android:label, android:icon">
         
         <meta-data
             android:name="tachiyomi.animeextension.class"
