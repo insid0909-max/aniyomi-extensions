@@ -13,7 +13,6 @@ import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
-import org.jsoup.Jsoup
 
 class LiveSports : AnimeHttpSource() {
 
@@ -43,13 +42,7 @@ class LiveSports : AnimeHttpSource() {
             .set("Upgrade-Insecure-Requests", "1")
     }
 
-    private fun iframeHeaders(): Headers = headersBuilder()
-        .set("Referer", iframeUrl)
-        .set("Origin", "https://xvqz.org")
-        .set("Accept", "*/*")
-        .build()
-
-    // ================= 1. 종목 카테고리 (Anime Page) =================
+    // ================= 1. 종목 카테고리 =================
     override fun popularAnimeRequest(page: Int): Request = GET(livePageUrl, headers)
 
     override fun popularAnimeParse(response: Response): AnimesPage {
@@ -86,62 +79,43 @@ class LiveSports : AnimeHttpSource() {
         status = SAnime.ONGOING
     }
 
-    // ================= 4. 실시간 경기 목록 (SEpisode) =================
+    // ================= 4. 실시간 경기 목록 =================
     override fun episodeListParse(response: Response): List<SEpisode> {
         val episodeList = mutableListOf<SEpisode>()
 
-        // iframe 내부 소스 호출
         val iframeReq = GET(iframeUrl, headersBuilder().set("Referer", livePageUrl).build())
         val iframeRes = runCatching { client.newCall(iframeReq).execute() }.getOrNull()
         val iframeHtml = iframeRes?.body?.string().orEmpty()
 
-        // 1) 내부 JSON API 주소 동적 탐색 (v8ca...xvqz.org/data/iframe-streams.json 등)
-        val jsonApiRegex = """https?://[a-zA-Z0-9_\-\.]+\.xvqz\.org/data/iframe-streams\.json""".toRegex()
-        val jsonApiUrl = jsonApiRegex.find(iframeHtml)?.value
+        // 실제 감지된 index.m3u8 풀 주소 정규식 추출
+        val fullM3u8Regex = """https?://[a-zA-Z0-9_\-\.]+\.kjhsdfuie\.work/live/[^"'\s\\]+index\.m3u8\?site=njtv-01\.com""".toRegex()
+        val foundStreams = fullM3u8Regex.findAll(iframeHtml).map { it.value }.toSet()
 
-        if (!jsonApiUrl.isNullOrEmpty()) {
-            val apiReq = GET(jsonApiUrl, iframeHeaders())
-            runCatching {
-                val apiRes = client.newCall(apiReq).execute()
-                val jsonStr = apiRes.body.string()
-                val root = if (jsonStr.trim().startsWith("[")) JSONArray(jsonStr) else JSONObject(jsonStr).optJSONArray("streams") ?: JSONArray()
-                
-                var count = 1f
-                for (i in 0 until root.length()) {
-                    val item = root.optJSONObject(i) ?: continue
-                    val name = item.optString("name", item.optString("title", item.optString("match", "라이브 채널 $i"))).trim()
-                    val key = item.optString("stream", item.optString("key", item.optString("id", ""))).trim()
-
-                    if (key.isNotEmpty()) {
-                        episodeList.add(
-                            SEpisode.create().apply {
-                                this.name = name
-                                this.episode_number = count++
-                                this.url = "/play?key=$key"
-                            }
-                        )
-                    }
-                }
-            }
-        }
-
-        // 2) JSON 파싱에 실패했거나 비어있는 경우 HTML 내부에서 활성 스트림 키 자동 포획
-        if (episodeList.isEmpty()) {
-            val keyRegex = """(?:/live/|streamKey["']?\s*[:=]\s*["'])([a-zA-Z0-9_\-]{8,25})""".toRegex()
-            val capturedKey = keyRegex.find(iframeHtml)?.groupValues?.get(1) ?: "gWsOolRJHgz"
-
+        var count = 1f
+        for (m3u8Url in foundStreams) {
             episodeList.add(
                 SEpisode.create().apply {
-                    this.name = "실시간 라이브 채널 1"
-                    this.episode_number = 1f
-                    this.url = "/play?key=$capturedKey"
+                    this.name = "실시간 라이브 채널 $count"
+                    this.episode_number = count++
+                    this.url = "/play?stream_url=" + java.net.URLEncoder.encode(m3u8Url, "UTF-8")
                 }
             )
+        }
+
+        // 탐색되지 않았을 경우 1DM 패킷에서 확인된 정확한 주소 규격 적용
+        if (episodeList.isEmpty()) {
+            val livePathRegex = """live/([0-9]+)/([a-zA-Z0-9]+)""".toRegex()
+            val match = livePathRegex.find(iframeHtml)
+            val channelId = match?.groupValues?.get(1) ?: "131"
+            val token = match?.groupValues?.get(2) ?: "56ad7640b9ad"
+
+            val targetUrl = "https://ct7p46hmd4x9bic2.kjhsdfuie.work/live/$channelId/$token/index.m3u8?site=njtv-01.com"
+
             episodeList.add(
                 SEpisode.create().apply {
-                    this.name = "실시간 라이브 채널 2"
-                    this.episode_number = 2f
-                    this.url = "/play?key=$capturedKey"
+                    this.name = "실시간 라이브 중계 (농구/실시간)"
+                    this.episode_number = 1f
+                    this.url = "/play?stream_url=" + java.net.URLEncoder.encode(targetUrl, "UTF-8")
                 }
             )
         }
@@ -149,12 +123,16 @@ class LiveSports : AnimeHttpSource() {
         return episodeList
     }
 
-    // ================= 5. 스트림 미디어 재생 =================
+    // ================= 5. 비디오 재생 =================
     override fun videoListParse(response: Response): List<Video> {
-        val streamKey = response.request.url.queryParameter("key") ?: "gWsOolRJHgz"
-        val videoList = mutableListOf<Video>()
+        val encodedUrl = response.request.url.queryParameter("stream_url")
+        val playUrl = if (!encodedUrl.isNullOrEmpty()) {
+            java.net.URLDecoder.decode(encodedUrl, "UTF-8")
+        } else {
+            "https://ct7p46hmd4x9bic2.kjhsdfuie.work/live/131/56ad7640b9ad/index.m3u8?site=njtv-01.com"
+        }
 
-        // CDN 전용 필수 헤더
+        // 1DM 패킷과 동일한 클린 헤더 구성
         val mediaHeaders = Headers.Builder()
             .set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
             .set("Referer", "$baseUrl/")
@@ -162,15 +140,9 @@ class LiveSports : AnimeHttpSource() {
             .set("Accept", "*/*")
             .build()
 
-        // 1번 메인 서버 (daxnb7e8nd4e0hdj)
-        val server1 = "https://daxnb7e8nd4e0hdj.kjhsdfuie.work/live/$streamKey/playlist.m3u8?site=njtv-01.com"
-        videoList.add(Video(server1, "메인 고화질 서버", server1, mediaHeaders))
-
-        // 2번 미러 서버 (ol3ktizakokhjhnu)
-        val server2 = "https://ol3ktizakokhjhnu.kjhsdfuie.work/live/$streamKey/playlist.m3u8?site=njtv-01.com"
-        videoList.add(Video(server2, "보조 백업 서버", server2, mediaHeaders))
-
-        return videoList
+        return listOf(
+            Video(playUrl, "실시간 라이브 스트림", playUrl, mediaHeaders)
+        )
     }
 
     override fun videoUrlParse(response: Response): String = ""
