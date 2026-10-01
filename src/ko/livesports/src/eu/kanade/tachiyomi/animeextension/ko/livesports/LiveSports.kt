@@ -25,7 +25,6 @@ import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
-import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -40,11 +39,13 @@ class LiveSports : AnimeHttpSource() {
     override val lang = "ko"
     override val supportsLatest = false
 
+    private val tag = "LiveSports"
     private val livePageUrl = "$baseUrl/bbs/page.php?hid=livetv_a"
     private val iframeUrl = "https://xvqz.org/content/V28Ew6LP/modern/dark"
 
-    // TODO: 실제 iframe-streams.json 주소로 교체 (개발자도구 Network 탭에서 확인)
-    private val streamsJsonUrl = "https://xvqz.org/iframe-streams.json"
+    // 재생 요청 시 Referer/Origin. 400이 계속 나면 baseUrl 쪽으로도 바꿔서 테스트
+    private val playReferer = "https://xvqz.org/"
+    private val playOrigin = "https://xvqz.org"
 
     override val client: OkHttpClient = network.cloudflareClient
 
@@ -74,9 +75,21 @@ class LiveSports : AnimeHttpSource() {
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = popularAnimeRequest(1)
     override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
+
+    // 가짜 경로(/sport?cat=...)로 요청하지 않도록 실제 페이지로 고정
+    override fun animeDetailsRequest(anime: SAnime): Request = GET(livePageUrl, headers)
+
     override fun animeDetailsParse(response: Response): SAnime = SAnime.create().apply {
         title = "실시간 스포츠 중계"
         status = SAnime.ONGOING
+    }
+
+    override fun episodeListRequest(anime: SAnime): Request = GET(livePageUrl, headers)
+
+    // 재생 요청도 실제 페이지로 보내되 stream_data만 쿼리로 실어 전달
+    override fun videoListRequest(episode: SEpisode): Request {
+        val data = episode.url.substringAfter("stream_data=", "")
+        return GET("$livePageUrl&stream_data=$data", headers)
     }
 
     // ================= 2. AES 복호화 (키 후보 순회) =================
@@ -98,7 +111,7 @@ class LiveSports : AnimeHttpSource() {
         "yLdcPSo7hSkKpwGk", "zmoUWPRcT0KLemk3",
     )
 
-    // 한 번 찾은 키는 메모리에 캐시 (키를 확정하면 candidateKeys를 지우고 여기에 하드코딩)
+    // 정답 키를 찾으면 캐시. 확정되면 candidateKeys를 지우고 이 값만 하드코딩
     @Volatile
     private var cachedKey: String? = null
 
@@ -136,22 +149,58 @@ class LiveSports : AnimeHttpSource() {
             for (key in candidateKeys) {
                 val result = decryptWith(key, iv, value) ?: continue
                 cachedKey = key
-                Log.d("LiveSports", "Found key: $key")
+                Log.d(tag, "Found key: $key")
                 return result
             }
+            Log.d(tag, "no key matched")
             null
         } catch (e: Exception) {
-            Log.d("LiveSports", "payload parse failed: ${e.message}")
+            Log.d(tag, "payload parse failed: ${e.message}")
             null
         }
     }
 
-    private fun fetchDecryptedStreams(): String? = try {
-        val body = client.newCall(GET(streamsJsonUrl, headers)).execute().use { it.body?.string() }
-        if (body.isNullOrBlank()) null else findValidKeyAndDecrypt(body)
-    } catch (e: Exception) {
-        Log.d("LiveSports", "fetch failed: ${e.message}")
-        null
+    private fun fetchDecryptedStreams(): String? {
+        return try {
+            val domainRegex = """https?://([a-zA-Z0-9-]+\.xvqz\.org)""".toRegex()
+
+            // 1순위: iframe 페이지를 열어 리다이렉트된 실제 서브도메인 사용
+            val iframeRes = client.newCall(GET(iframeUrl, headers)).execute()
+            val iframeHtml = iframeRes.use { it.body?.string() ?: "" }
+            var host: String? = iframeRes.request.url.host
+                .takeIf { it.endsWith(".xvqz.org") }
+
+            // 2순위: iframe HTML에서 탐색
+            if (host == null) host = domainRegex.find(iframeHtml)?.groupValues?.get(1)
+
+            // 3순위: 메인 페이지 HTML에서 탐색
+            if (host == null) {
+                val mainHtml = client.newCall(GET(livePageUrl, headers)).execute()
+                    .use { it.body?.string() ?: "" }
+                host = domainRegex.find(mainHtml)?.groupValues?.get(1)
+            }
+
+            if (host == null) {
+                Log.d(tag, "dynamic host not found")
+                return null
+            }
+
+            val jsonUrl = "https://$host/data/iframe-streams.json"
+            Log.d(tag, "Target JSON URL: $jsonUrl")
+
+            val jsonHeaders = headersBuilder()
+                .set("Referer", iframeUrl)
+                .set("Origin", "https://$host")
+                .build()
+            val body = client.newCall(GET(jsonUrl, jsonHeaders)).execute()
+                .use { it.body?.string() }
+            Log.d(tag, "json body length=${body?.length}, head=${body?.take(60)}")
+
+            if (body.isNullOrBlank()) null else findValidKeyAndDecrypt(body)
+        } catch (e: Exception) {
+            Log.d(tag, "fetch failed: ${e.message}")
+            null
+        }
     }
 
     // ================= 3. 웹뷰 후킹 (복호화 실패 시 폴백) =================
@@ -188,10 +237,14 @@ class LiveSports : AnimeHttpSource() {
                 )
 
                 webView.webViewClient = object : WebViewClient() {
-                    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                    override fun shouldInterceptRequest(
+                        view: WebView,
+                        request: WebResourceRequest,
+                    ): WebResourceResponse? {
                         val url = request.url.toString()
 
-                        if (url.endsWith(".js") && url.contains("xvqz.org")) {
+                        // 쿼리가 붙은 js(app.js?v=1)도 잡도록 쿼리 제거 후 확인
+                        if (url.substringBefore("?").endsWith(".js") && url.contains("xvqz.org")) {
                             try {
                                 val req = Request.Builder().url(url).header("Referer", targetUrl).build()
                                 val originalJs = client.newCall(req).execute().use { it.body?.string() ?: "" }
@@ -251,6 +304,10 @@ class LiveSports : AnimeHttpSource() {
                 it.optJSONArray("streams") ?: it.optJSONArray("data") ?: JSONArray()
             }
         }
+        if (array.length() > 0) {
+            Log.d(tag, "first item: ${array.opt(0)}")
+        }
+
         val list = mutableListOf<SEpisode>()
         var count = 1f
         for (i in 0 until array.length()) {
@@ -289,10 +346,11 @@ class LiveSports : AnimeHttpSource() {
         }
 
         // 2순위: 웹뷰 후킹
+        Log.d(tag, "fallback to WebView hook")
         val hooked = getDecryptedDataViaWebView(iframeUrl).trim()
         return try {
             when {
-                hooked.startsWith("[") -> parseEpisodes(hooked).reversed()
+                hooked.startsWith("[") || hooked.startsWith("{") -> parseEpisodes(hooked).reversed()
                 hooked.contains(".m3u8") -> listOf(m3u8Episode(hooked))
                 else -> emptyList()
             }
@@ -304,21 +362,22 @@ class LiveSports : AnimeHttpSource() {
 
     // ================= 5. 비디오 재생 =================
     override fun videoListParse(response: Response): List<Video> {
-        val encodedData = response.request.url.queryParameter("stream_data") ?: ""
-        val decodedData = URLDecoder.decode(encodedData, "UTF-8")
+        // queryParameter가 이미 디코딩해 주므로 추가 디코딩하지 않음
+        val data = response.request.url.queryParameter("stream_data") ?: ""
 
         val playUrl = when {
-            decodedData.startsWith("http") -> decodedData
-            decodedData.contains("/") ->
-                "https://ct7p46hmd4x9bic2.kjhsdfuie.work/live/$decodedData/index.m3u8?site=njtv-01.com"
+            data.startsWith("http") -> data
+            data.contains("/") ->
+                "https://ct7p46hmd4x9bic2.kjhsdfuie.work/live/$data/index.m3u8?site=njtv-01.com"
             else ->
-                "https://ct7p46hmd4x9bic2.kjhsdfuie.work/live/$decodedData/playlist.m3u8?site=njtv-01.com"
+                "https://ct7p46hmd4x9bic2.kjhsdfuie.work/live/$data/playlist.m3u8?site=njtv-01.com"
         }
+        Log.d(tag, "decoded=$data play=$playUrl")
 
         val mediaHeaders = Headers.Builder()
             .set("User-Agent", headersBuilder().build()["User-Agent"]!!)
-            .set("Referer", "$baseUrl/")
-            .set("Origin", baseUrl)
+            .set("Referer", playReferer)
+            .set("Origin", playOrigin)
             .set("Accept", "*/*")
             .build()
 
