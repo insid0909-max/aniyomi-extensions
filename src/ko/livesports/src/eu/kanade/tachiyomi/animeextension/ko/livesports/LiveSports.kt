@@ -38,6 +38,9 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -86,6 +89,10 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
     @Volatile private var candidateHeads = ""
     @Volatile private var firstItemDebug = ""
     @Volatile private var lastCaptureTime = 0L
+
+    // 마지막으로 정상 가져온 목록 (가져오기에 실패해도 이걸 보여줌)
+    @Volatile private var lastGoodEpisodes: List<SEpisode> = emptyList()
+    @Volatile private var lastGoodTime = 0L
 
     // 목록 추출에 필요 없는 리소스 (이미지/폰트)는 차단해서 로딩을 줄임
     private val blockedAssets = Regex(""".*\.(png|jpe?g|gif|webp|svg|ico|woff2?|ttf)$""", RegexOption.IGNORE_CASE)
@@ -217,35 +224,55 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
             "americanfootball", "nfl" -> "미식축구"
             "lol", "esports", "leagueoflegends" -> "롤"
             "boxing" -> "복싱"
-            "tv" -> "TV"
+            "tv" -> LABEL_TV
             else -> raw
         }
     }
+
+    private class ParsedItem(
+        val title: String,
+        val streamData: String,
+        val league: String,
+        val isTv: Boolean,
+    )
 
     private fun parseEpisodes(jsonText: String): List<SEpisode> {
         val array = findArray(jsonText) ?: return emptyList()
         firstItemDebug = array.opt(0).toString().take(400)
 
-        val list = mutableListOf<SEpisode>()
-        var count = 1f
+        val items = mutableListOf<ParsedItem>()
         for (i in 0 until array.length()) {
             val item = array.optJSONObject(i) ?: continue
             val streamData = pickStreamData(item)
             if (streamData.isEmpty()) continue
 
-            val baseTitle = firstString(item, nameKeys).ifEmpty { "실시간 경기 ${count.toInt()}" }
+            val baseTitle = firstString(item, nameKeys).ifEmpty { "실시간 경기 ${items.size + 1}" }
             val label = categoryLabel(item)
-            val title = if (label.isNotEmpty()) "[$label] $baseTitle" else baseTitle
+            val league = item.optString("league").trim().takeIf { it != "null" }.orEmpty()
 
-            list.add(
-                SEpisode.create().apply {
-                    this.name = title
-                    episode_number = count++
-                    this.url = "/play?stream_data=" + URLEncoder.encode(streamData, "UTF-8")
-                },
+            items.add(
+                ParsedItem(
+                    title = if (label.isNotEmpty()) "[$label] $baseTitle" else baseTitle,
+                    streamData = streamData,
+                    league = league,
+                    isTv = label == LABEL_TV,
+                ),
             )
         }
-        return list
+
+        // 경기가 위, TV 채널은 아래. 각 그룹 안에서는 기존처럼 목록 순서를 뒤집어 표시
+        val ordered = items.filter { !it.isTv }.reversed() + items.filter { it.isTv }.reversed()
+
+        // 앱이 "Missing N items"를 표시하지 않도록 위에서 아래로 번호를 연속으로 매김
+        return ordered.mapIndexed { index, p ->
+            SEpisode.create().apply {
+                this.name = p.title
+                this.episode_number = (ordered.size - index).toFloat()
+                // 대회명은 날짜 옆 줄에 표시 (제목이 길어도 잘리지 않음)
+                this.scanlator = p.league.ifEmpty { null }
+                this.url = "/play?stream_data=" + URLEncoder.encode(p.streamData, "UTF-8")
+            }
+        }
     }
 
     // ================= 3. 부모 페이지를 WebView로 열어 가로채기 =================
@@ -268,10 +295,10 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         })();
     """.trimIndent()
 
-    // 동시에 두 번 실행되지 않게 하고, 1분 안에 다시 호출되면 이전 결과를 재사용
+    // 동시에 두 번 실행되지 않게 하고, 짧은 시간 안에 다시 호출되면 이전 결과를 재사용
     @Synchronized
     private fun ensureCaptured() {
-        if (capturedJson == null || System.currentTimeMillis() - lastCaptureTime > 60_000) {
+        if (capturedJson == null || System.currentTimeMillis() - lastCaptureTime > CACHE_MS) {
             captureFromPage()
             lastCaptureTime = System.currentTimeMillis()
         }
@@ -420,6 +447,19 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         this.url = "/play?stream_data=debug"
     }
 
+    // 직전 정상 목록을 "이전 목록 (HH:mm)" 표시를 붙여 복사
+    private fun staleCopy(list: List<SEpisode>, savedAt: Long): List<SEpisode> {
+        val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(savedAt))
+        return list.map { e ->
+            SEpisode.create().apply {
+                name = e.name
+                url = e.url
+                episode_number = e.episode_number
+                scanlator = listOfNotNull("이전 목록 ($time)", e.scanlator).joinToString(" · ")
+            }
+        }
+    }
+
     override fun episodeListParse(response: Response): List<SEpisode> {
         ensureCaptured()
 
@@ -429,9 +469,22 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         } else {
             emptyList()
         }
-        if (episodes.isNotEmpty()) return episodes.reversed()
 
-        // 실패 시: 자동감지 채널 + 원인 확인용 DEBUG 줄
+        // 성공: 정상 목록을 기억해 두고 반환 (parseEpisodes가 이미 경기 → TV 채널 순으로 정렬)
+        if (episodes.isNotEmpty()) {
+            lastGoodEpisodes = episodes
+            lastGoodTime = System.currentTimeMillis()
+            return episodes
+        }
+
+        // 실패: 직전 정상 목록이 최근(30분 이내)이면 그것을 표시
+        val saved = lastGoodEpisodes
+        if (saved.isNotEmpty() && System.currentTimeMillis() - lastGoodTime < LAST_GOOD_MAX_AGE_MS) {
+            Log.d(tag, "목록 가져오기 실패, 이전 목록 사용 json=${json?.take(60)} iframe=$iframeHost")
+            return staleCopy(saved, lastGoodTime)
+        }
+
+        // 이전 목록도 없으면: 자동감지 채널 + 원인 확인용 DEBUG 줄
         val result = mutableListOf<SEpisode>()
         capturedM3u8?.let { result.add(m3u8Episode(it)) }
         result.add(
@@ -719,12 +772,14 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
                     input.isEmpty() -> {
                         summary = summaryOf(DEFAULT_BASE_URL)
                         lastCaptureTime = 0L
+                        lastGoodEpisodes = emptyList()
                         Toast.makeText(screen.context, "기본 주소로 되돌렸습니다.", Toast.LENGTH_SHORT).show()
                         true
                     }
                     DOMAIN_REGEX.matches(input) -> {
                         summary = summaryOf(input)
                         lastCaptureTime = 0L
+                        lastGoodEpisodes = emptyList()
                         Toast.makeText(screen.context, "주소가 변경되었습니다: $input", Toast.LENGTH_SHORT).show()
                         true
                     }
@@ -745,6 +800,14 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
         private const val DEFAULT_BASE_URL = "https://njtv-01.com"
+        private const val LABEL_TV = "TV"
+
+        // 목록 캐시 시간 (이 시간 안에 다시 열면 숨은 화면을 다시 열지 않음)
+        private const val CACHE_MS = 20_000L
+
+        // 가져오기에 실패했을 때 직전 정상 목록을 보여줄 수 있는 최대 시간
+        private const val LAST_GOOD_MAX_AGE_MS = 30 * 60 * 1000L
+
         private val DOMAIN_REGEX = Regex("""^https://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$""")
         private val CATEGORY_SEPARATOR_REGEX = Regex("""[\s_-]""")
     }
