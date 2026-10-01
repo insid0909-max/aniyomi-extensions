@@ -4,7 +4,9 @@
 
     <application
         android:label="LiveSports"
+        android:icon="@mipmap/ic_launcher"
         tools:replace="android:label">
+        
         <meta-data
             android:name="tachiyomi.animeextension.class"
             android:value="eu.kanade.tachiyomi.animeextension.ko.livesports.LiveSports"
@@ -13,5 +15,6 @@
             android:name="tachiyomi.animeextension.version"
             android:value="14"
             tools:replace="android:value" />
+            
     </application>
 </manifest>
