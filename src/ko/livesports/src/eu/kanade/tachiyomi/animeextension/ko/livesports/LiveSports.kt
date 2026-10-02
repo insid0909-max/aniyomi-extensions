@@ -90,21 +90,134 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
 
     // 페이지 로드 중 가로챈 값들 (호스트는 수시로 바뀌므로 매번 새로 읽음)
     @Volatile private var capturedJson: String? = null
+
     @Volatile private var capturedM3u8: String? = null
+
     @Volatile private var iframeHost: String? = null
+
     @Volatile private var liveHost: String? = null
+
     @Volatile private var candidateHeads = ""
+
     @Volatile private var firstItemDebug = ""
+
     @Volatile private var lastCaptureTime = 0L
 
     // 마지막으로 정상 가져온 경기 항목 (가져오기에 실패해도 이걸로 목록을 만든다)
     @Volatile private var lastGoodItems: List<ParsedItem> = emptyList()
+
     @Volatile private var lastGoodTime = 0L
 
     // 목록 추출에 필요 없는 리소스 (이미지/폰트)는 차단해서 로딩을 줄임
     private val blockedAssets = Regex(""".*\.(png|jpe?g|gif|webp|svg|ico|woff2?|ttf)$""", RegexOption.IGNORE_CASE)
 
-    override val client: OkHttpClient = network.cloudflareClient
+    // 주소 번호가 바뀌어 접속이 안 되면 njtv-01~60.com 중 열리는 주소를 찾아 자동 연결
+    override val client: OkHttpClient = network.cloudflareClient.newBuilder()
+        .addInterceptor { chain -> domainIntercept(chain) }
+        .build()
+
+    // ================= 0-1. 도메인 자동 찾기 =================
+    private fun saveDomain(url: String) {
+        prefs()?.edit()?.putString(PREF_DOMAIN_KEY, url)?.apply()
+        lastCaptureTime = 0L
+        Log.d(tag, "도메인 자동 변경: $url")
+    }
+
+    // 접속 실패, 차단(451/5xx), 차단 안내 페이지로 넘어간 경우를 막힌 주소로 본다
+    private fun isDead(res: Response, reqHost: String): Boolean {
+        val finalHost = res.request.url.host
+        if (finalHost != reqHost && !HOST_REGEX.matches(finalHost)) return true
+        if (res.code == 451 || res.code >= 500) return true
+        // Cloudflare 확인 화면(403)은 살아 있는 주소
+        return res.code == 403 && !isCloudflare(res)
+    }
+
+    private fun isCloudflare(res: Response): Boolean =
+        res.header("cf-mitigated") != null || res.header("Server")?.contains("cloudflare", true) == true
+
+    private fun domainIntercept(chain: okhttp3.Interceptor.Chain): Response {
+        val req = chain.request()
+        val baseHost = baseUrl.toHttpUrlOrNull()?.host
+        if (baseHost == null || req.url.host != baseHost || !HOST_REGEX.matches(baseHost) ||
+            !pref(PREF_AUTO_DOMAIN, true)
+        ) {
+            return chain.proceed(req)
+        }
+
+        fun retryOn(found: String): Response {
+            saveDomain("https://$found")
+            return chain.proceed(req.newBuilder().url(req.url.newBuilder().host(found).build()).build())
+        }
+
+        val res = try {
+            chain.proceed(req)
+        } catch (e: java.io.IOException) {
+            val found = discoverDomain(baseHost) ?: throw e
+            return retryOn(found)
+        }
+
+        if (req.method == "GET" && isDead(res, baseHost)) {
+            val found = discoverDomain(baseHost) ?: return res
+            res.close()
+            return retryOn(found)
+        }
+
+        // 사이트가 스스로 새 주소로 넘겨 준 경우 그 주소를 저장
+        val finalHost = res.request.url.host
+        if (finalHost != baseHost && HOST_REGEX.matches(finalHost)) saveDomain("https://$finalHost")
+        return res
+    }
+
+    private val discoverLock = Any()
+
+    @Volatile private var lastDiscover = 0L
+
+    private fun hostNumber(host: String): Int =
+        HOST_REGEX.find(host)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+
+    // njtv-01~60.com 을 동시에 열어 보고 실제 사이트인 주소를 고른다
+    // (내용까지 확인된 주소 우선, 없으면 Cloudflare 확인 화면이 뜨는 주소, 같으면 큰 번호 우선)
+    private fun discoverDomain(currentHost: String): String? = synchronized(discoverLock) {
+        val now = System.currentTimeMillis()
+        if (now - lastDiscover < 60_000) return null
+        lastDiscover = now
+
+        val plain = OkHttpClient.Builder()
+            .connectTimeout(4, TimeUnit.SECONDS)
+            .readTimeout(6, TimeUnit.SECONDS)
+            .callTimeout(8, TimeUnit.SECONDS)
+            .build()
+        val ua = headersBuilder().build()["User-Agent"].orEmpty()
+        val pool = Executors.newFixedThreadPool(20)
+        try {
+            val futures = (1..60).map { String.format(Locale.ROOT, "njtv-%02d.com", it) }
+                .map { host ->
+                    pool.submit<Pair<String, Int>?> {
+                        try {
+                            val r = Request.Builder().url("https://$host/").header("User-Agent", ua).build()
+                            plain.newCall(r).execute().use { res ->
+                                val fh = res.request.url.host
+                                if (!HOST_REGEX.matches(fh)) return@use null
+                                val body = res.peekBody(200_000).string()
+                                when {
+                                    res.code == 200 && SITE_MARKER.containsMatchIn(body) -> fh to 2
+                                    res.code == 403 && isCloudflare(res) -> fh to 1
+                                    else -> null
+                                }
+                            }
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                }
+            futures.mapNotNull { it.get() }
+                .maxWithOrNull(compareBy<Pair<String, Int>> { it.second }.thenBy { hostNumber(it.first) })
+                ?.first
+                ?.takeIf { it != currentHost } // 지금 주소가 가장 좋은 주소면 바꾸지 않음
+        } finally {
+            pool.shutdown()
+        }
+    }
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .set("Referer", "$baseUrl/")
@@ -795,6 +908,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
     // 플레이어(mpv)가 직접 요청하면 400을 받으므로, 플레이어는 127.0.0.1로 요청하고
     // 실제 요청은 앱(OkHttp)이 대신 보낸다. 재생목록 안의 주소도 모두 이 프록시로 돌린다.
     @Volatile private var proxyServer: ServerSocket? = null
+
     @Volatile private var proxyHeaders: Headers = Headers.Builder().build()
     private val proxyPool = Executors.newCachedThreadPool()
 
@@ -1113,6 +1227,16 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         }
         screen.addPreference(domainPref)
 
+        screen.addPreference(
+            switchPref(
+                PREF_AUTO_DOMAIN,
+                "[공통] 도메인 자동 찾기",
+                "접속이 안 되거나 막히면 njtv-01~60.com 중 열리는 주소로 자동 변경합니다. " +
+                    "사이트가 새 주소로 넘겨 주면 그 주소도 저장합니다.",
+                true,
+            ),
+        )
+
         val thumbPref = EditTextPreference(ctx).apply {
             key = PREF_THUMB_BASE
             title = "[공통] 표지 이미지 폴더 주소 (선택)"
@@ -1187,6 +1311,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val PREF_EMOJI = "pref_emoji"
         private const val PREF_START_TIME = "pref_start_time"
         private const val PREF_HIDE_TV = "pref_hide_tv"
+        private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
 
         // 인기/최신 탭에 저장하는 규칙
         private const val PREF_POP_CHOICE = "pref_pop_choice"
@@ -1239,6 +1364,10 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         )
 
         private val DOMAIN_REGEX = Regex("""^https://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$""")
+        private val HOST_REGEX = Regex("""^njtv-(\d+)\.com$""")
+
+        // 실제 사이트 확인용 표시 (그누보드 페이지, 라이브 TV 메뉴)
+        private val SITE_MARKER = Regex("""g5_url|gnuboard|livetv""", RegexOption.IGNORE_CASE)
         private val THUMB_BASE_REGEX = Regex("""^https://\S+$""")
         private val CATEGORY_SEPARATOR_REGEX = Regex("""[\s_-]""")
     }
