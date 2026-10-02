@@ -9,7 +9,7 @@
         
         <meta-data
             android:name="tachiyomi.animeextension.class"
-            android:value="eu.kanade.tachiyomi.animeextension.ko.livesports.LiveSports"
+            android:value="eu.kanade.tachiyomi.animeextension.ko.livesports.LiveSportsFactory"
             tools:replace="android:value" />
         <meta-data
             android:name="tachiyomi.animeextension.version"
