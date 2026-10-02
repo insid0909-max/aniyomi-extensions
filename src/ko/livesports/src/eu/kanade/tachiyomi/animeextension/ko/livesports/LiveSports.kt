@@ -54,7 +54,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
 
     override val name = "실시간스포츠"
     override val lang = "ko"
-    override val supportsLatest = false
+    override val supportsLatest = true
 
     private val tag = "LiveSports"
 
@@ -159,22 +159,85 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
             .build()
             .toString()
 
+    // 선택한 종목과 정렬에 해당하는 카드들을 만든다
+    private fun cardsFor(choice: String, sort: String): List<SAnime> = when {
+        choice == CHOICE_EACH ->
+            listOf(makeCard(ALL_CAT, sort)) +
+                CATEGORY_ORDER.map { makeCard(it, sort) } +
+                makeCard(LABEL_TV, sort) +
+                makeCard(CAT_OTHER, sort)
+        isAllCat(choice) -> listOf(makeCard(ALL_CAT, sort))
+        else -> listOf(makeCard(choice, sort))
+    }
+
+    // ---- 인기/최신 탭에 저장된 규칙 ----
+    // 기본값: 인기 = 전체 카드 하나, 최신 = 종목별 카드 모두
+    private fun savedRule(popular: Boolean): Pair<String, String> {
+        val p = prefs()
+        val defChoice = if (popular) CHOICE_ALL else CHOICE_EACH
+        val choice = p?.getString(if (popular) PREF_POP_CHOICE else PREF_LATEST_CHOICE, defChoice)
+            ?.takeIf { it in CATEGORY_CHOICES } ?: defChoice
+        val sort = p?.getString(if (popular) PREF_POP_SORT else PREF_LATEST_SORT, SORT_CATEGORY)
+            ?.takeIf { it == SORT_TIME || it == SORT_CATEGORY } ?: SORT_CATEGORY
+        return choice to sort
+    }
+
+    private fun saveRule(popular: Boolean, choice: String, sort: String) {
+        prefs()?.edit()
+            ?.putString(if (popular) PREF_POP_CHOICE else PREF_LATEST_CHOICE, choice)
+            ?.putString(if (popular) PREF_POP_SORT else PREF_LATEST_SORT, sort)
+            ?.apply()
+    }
+
+    private fun resetRule(popular: Boolean) {
+        prefs()?.edit()
+            ?.remove(if (popular) PREF_POP_CHOICE else PREF_LATEST_CHOICE)
+            ?.remove(if (popular) PREF_POP_SORT else PREF_LATEST_SORT)
+            ?.apply()
+    }
+
+    private fun ruleText(choice: String, sort: String): String {
+        val c = if (choice == CHOICE_ALL) "전체" else choice
+        return "$c · ${if (sort == SORT_TIME) "시간순" else "종목순"}"
+    }
+
+    // 인기 탭: 저장된 규칙(없으면 기본값)으로 카드를 보여준다
     override fun popularAnimeRequest(page: Int): Request = GET(livePageUrl, headers)
 
-    override fun popularAnimeParse(response: Response): AnimesPage =
-        AnimesPage(listOf(makeCard(ALL_CAT, SORT_CATEGORY)), false)
+    override fun popularAnimeParse(response: Response): AnimesPage {
+        val (choice, sort) = savedRule(true)
+        return AnimesPage(cardsFor(choice, sort), false)
+    }
 
-    override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
-    override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
+    // 최신 탭: 저장된 규칙(없으면 기본값)으로 카드를 보여준다
+    override fun latestUpdatesRequest(page: Int): Request = GET(livePageUrl, headers)
 
+    override fun latestUpdatesParse(response: Response): AnimesPage {
+        val (choice, sort) = savedRule(false)
+        return AnimesPage(cardsFor(choice, sort), false)
+    }
+
+    // 필터 적용: 선택한 조건의 카드를 보여주고, "탭 규칙"을 골랐으면 저장/복원도 함께 한다
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         var choice = CHOICE_ALL
         var sort = SORT_CATEGORY
+        var rule = 0
         filters.forEach { filter ->
             when (filter) {
                 is CategoryFilter -> choice = CATEGORY_CHOICES[filter.state]
                 is SortFilter -> sort = if (filter.state == 1) SORT_TIME else SORT_CATEGORY
+                is RuleFilter -> rule = filter.state
                 else -> {}
+            }
+        }
+        when (rule) {
+            1 -> saveRule(true, choice, sort)
+            2 -> saveRule(false, choice, sort)
+            3 -> resetRule(true)
+            4 -> resetRule(false)
+            5 -> {
+                resetRule(true)
+                resetRule(false)
             }
         }
         return GET(pageUrlWith(choice, sort), headers)
@@ -182,16 +245,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
 
     override fun searchAnimeParse(response: Response): AnimesPage {
         val (choice, sort) = paramsOf(response.request.url)
-        val cards = when {
-            choice == CHOICE_EACH ->
-                listOf(makeCard(ALL_CAT, sort)) +
-                    CATEGORY_ORDER.map { makeCard(it, sort) } +
-                    makeCard(LABEL_TV, sort) +
-                    makeCard(CAT_OTHER, sort)
-            isAllCat(choice) -> listOf(makeCard(ALL_CAT, sort))
-            else -> listOf(makeCard(choice, sort))
-        }
-        return AnimesPage(cards, false)
+        return AnimesPage(cardsFor(choice, sort), false)
     }
 
     override fun animeDetailsRequest(anime: SAnime): Request {
@@ -219,15 +273,25 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         return GET("$livePageUrl&stream_data=$data", headers)
     }
 
-    // 필터 화면 (종목 선택, 정렬)
+    // 필터 화면 (종목 선택, 정렬, 인기/최신 탭 규칙)
     class CategoryFilter(choices: Array<String>) : AnimeFilter.Select<String>("종목", choices)
     class SortFilter(choices: Array<String>) : AnimeFilter.Select<String>("정렬", choices)
+    class RuleFilter(choices: Array<String>) : AnimeFilter.Select<String>("인기/최신 탭 규칙", choices)
 
-    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        AnimeFilter.Header("종목을 고르면 해당 종목 카드만 표시됩니다"),
-        CategoryFilter(CATEGORY_CHOICES),
-        SortFilter(SORT_CHOICES),
-    )
+    override fun getFilterList(): AnimeFilterList {
+        val (pc, ps) = savedRule(true)
+        val (lc, ls) = savedRule(false)
+        return AnimeFilterList(
+            AnimeFilter.Header("종목을 고르면 해당 종목 카드만 표시됩니다"),
+            CategoryFilter(CATEGORY_CHOICES),
+            SortFilter(SORT_CHOICES),
+            AnimeFilter.Separator(),
+            AnimeFilter.Header("기본 인기: 전체 경기 · 기본 최신: 종목별 카드 모두"),
+            AnimeFilter.Header("현재 인기: ${ruleText(pc, ps)}"),
+            AnimeFilter.Header("현재 최신: ${ruleText(lc, ls)}"),
+            RuleFilter(RULE_CHOICES),
+        )
+    }
 
     // ================= 2. JSON 해석 =================
     private val nameKeys = listOf("name", "title", "label", "channel", "text", "match", "game")
@@ -1032,6 +1096,12 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val PREF_EMOJI = "pref_emoji"
         private const val PREF_HIDE_TV = "pref_hide_tv"
 
+        // 인기/최신 탭에 저장하는 규칙
+        private const val PREF_POP_CHOICE = "pref_pop_choice"
+        private const val PREF_POP_SORT = "pref_pop_sort"
+        private const val PREF_LATEST_CHOICE = "pref_latest_choice"
+        private const val PREF_LATEST_SORT = "pref_latest_sort"
+
         private const val DEFAULT_BASE_URL = "https://njtv-01.com"
         private const val LABEL_TV = "TV"
 
@@ -1059,6 +1129,16 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
             (listOf(CHOICE_ALL, CHOICE_EACH) + CATEGORY_ORDER + LABEL_TV + CAT_OTHER).toTypedArray()
 
         private val SORT_CHOICES: Array<String> = arrayOf("종목순", "시간순")
+
+        // 인기/최신 탭 규칙 선택지 (번호 순서가 searchAnimeRequest의 처리와 일치해야 함)
+        private val RULE_CHOICES: Array<String> = arrayOf(
+            "저장하지 않음 (필터 결과만 보기)",
+            "현재 조건을 인기 탭에 저장",
+            "현재 조건을 최신 탭에 저장",
+            "인기 탭을 기본값으로 복원",
+            "최신 탭을 기본값으로 복원",
+            "두 탭 모두 기본값으로 복원",
+        )
 
         private val DOMAIN_REGEX = Regex("""^https://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$""")
         private val CATEGORY_SEPARATOR_REGEX = Regex("""[\s_-]""")
