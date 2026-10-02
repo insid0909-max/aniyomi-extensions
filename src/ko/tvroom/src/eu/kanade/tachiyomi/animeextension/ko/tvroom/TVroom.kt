@@ -88,12 +88,14 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         }.getOrNull()
 
         if (!fetched.isNullOrBlank() && DOMAIN_REGEX.matches(fetched)) {
-            cachedDomain = fetched
+            // 신호등이 이미 막힌 주소나, 마지막으로 접속에 성공한 주소보다 낮은 번호(예전 주소)를 알려 주면
+            // 접속에 성공했던 주소를 계속 쓴다
+            val stale = autoDomain(prefs) &&
+                (fetched in DEAD_DOMAINS || domainNumber(fetched) < domainNumber(lastGood))
+            val chosen = if (stale) lastGood else fetched
+            cachedDomain = chosen
             cacheValidUntil = System.currentTimeMillis() + CACHE_TTL_MS
-            if (fetched != lastGood) {
-                prefs?.edit()?.putString(PREF_LAST_GOOD_DOMAIN_KEY, fetched)?.apply()
-            }
-            return fetched
+            return chosen
         }
 
         // 실패: 마지막 정상 주소를 쓰되 1분 뒤 다시 시도
@@ -118,10 +120,123 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             }
 
             // 3~4순위: 신호등 조회, 실패하면 마지막 정상 주소
-            return synchronized(domainLock) { resolveDomain(prefs) }
+            return synchronized(DOMAIN_LOCK) { resolveDomain(prefs) }
         }
 
-    override val client: OkHttpClient = network.client
+    // 접속에 성공한 주소를 기억하고, 막히면 tvwiki 번호 주소를 찾아 자동 연결
+    override val client: OkHttpClient = network.client.newBuilder()
+        .addInterceptor { chain -> domainIntercept(chain) }
+        .build()
+
+    // ================= 도메인 자동 찾기 =================
+    private fun autoDomain(prefs: SharedPreferences?): Boolean =
+        prefs?.getBoolean(PREF_AUTO_DOMAIN, true) ?: true
+
+    private fun domainNumber(url: String): Int =
+        NUMBER_REGEX.find(url)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+
+    // 접속에 성공한 주소를 마지막 정상 주소로 저장
+    private fun markGood(prefs: SharedPreferences?, url: String) {
+        DEAD_DOMAINS.remove(url)
+        if (lastGoodDomain(prefs) != url) {
+            prefs?.edit()?.putString(PREF_LAST_GOOD_DOMAIN_KEY, url)?.apply()
+        }
+    }
+
+    // 찾은 주소로 전환 (직접 지정한 주소가 있으면 그것도 바꾼다)
+    private fun switchTo(prefs: SharedPreferences?, url: String) {
+        markGood(prefs, url)
+        if (customDomain(prefs) != null) prefs?.edit()?.putString(PREF_DOMAIN_KEY, url)?.apply()
+        cachedDomain = url
+        cacheValidUntil = System.currentTimeMillis() + CACHE_TTL_MS
+    }
+
+    // 접속 실패, 차단(403/451/5xx), 차단 안내 페이지로 넘어간 경우를 막힌 주소로 본다
+    // (.php 요청의 403은 사이트가 요청만 거절한 것일 수 있어 제외)
+    private fun isDead(res: Response): Boolean {
+        if (!HOST_REGEX.matches(res.request.url.host)) return true
+        if (res.code == 403) return !res.request.url.encodedPath.endsWith(".php")
+        return res.code == 451 || res.code >= 500
+    }
+
+    private fun domainIntercept(chain: okhttp3.Interceptor.Chain): Response {
+        val req = chain.request()
+        val reqHost = req.url.host
+        val prefs = getAppPreferences()
+        if (!HOST_REGEX.matches(reqHost) || !autoDomain(prefs)) return chain.proceed(req)
+        val reqBase = "https://$reqHost"
+
+        fun retryOn(found: String): Response {
+            switchTo(prefs, found)
+            val host = found.toHttpUrlOrNull()!!.host
+            return chain.proceed(req.newBuilder().url(req.url.newBuilder().host(host).build()).build())
+        }
+
+        val res = try {
+            chain.proceed(req)
+        } catch (e: java.io.IOException) {
+            DEAD_DOMAINS.add(reqBase)
+            val found = discoverDomain(reqBase) ?: throw e
+            return retryOn(found)
+        }
+
+        if (req.method == "GET" && isDead(res)) {
+            DEAD_DOMAINS.add(reqBase)
+            val found = discoverDomain(reqBase) ?: return res
+            res.close()
+            return retryOn(found)
+        }
+
+        val finalHost = res.request.url.host
+        val finalBase = "https://$finalHost"
+        if (finalBase != reqBase && HOST_REGEX.matches(finalHost)) {
+            // 사이트가 스스로 새 주소로 넘겨 준 경우
+            switchTo(prefs, finalBase)
+        } else if (res.isSuccessful) {
+            markGood(prefs, reqBase)
+        }
+        return res
+    }
+
+    @Volatile private var lastDiscover = 0L
+
+    // tvwiki 번호 주소를 현재 번호 -10 ~ +50 범위에서 동시에 열어 보고, 실제 티비위키인 가장 큰 번호를 고른다
+    private fun discoverDomain(current: String): String? = synchronized(DISCOVER_LOCK) {
+        val now = System.currentTimeMillis()
+        if (now - lastDiscover < 60_000) return null
+        lastDiscover = now
+
+        val cur = domainNumber(current).takeIf { it > 0 } ?: domainNumber(DEFAULT_BASE_URL)
+        val plain = OkHttpClient.Builder()
+            .connectTimeout(4, TimeUnit.SECONDS)
+            .readTimeout(6, TimeUnit.SECONDS)
+            .callTimeout(8, TimeUnit.SECONDS)
+            .build()
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(20)
+        try {
+            val futures = ((cur - 10).coerceAtLeast(1)..(cur + 50))
+                .map { "https://tvwiki$it.net" }
+                .map { url ->
+                    pool.submit<String?> {
+                        try {
+                            val r = Request.Builder().url("$url/").header("User-Agent", defaultUserAgent).build()
+                            plain.newCall(r).execute().use { res ->
+                                val fh = res.request.url.host
+                                val ok = HOST_REGEX.matches(fh) && res.code == 200 &&
+                                    res.peekBody(300_000).string().contains(SITE_MARKER)
+                                if (ok) "https://$fh" else null
+                            }
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                }
+            // 지금 주소가 가장 좋은 주소면 바꾸지 않음
+            futures.mapNotNull { it.get() }.maxByOrNull { domainNumber(it) }?.takeIf { it != current }
+        } finally {
+            pool.shutdown()
+        }
+    }
 
     private val bridgeBaseUrl = "https://dc-toki-mangayomi-media.pages.dev"
     private val defaultUserAgent =
@@ -609,6 +724,14 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             }
         }
         screen.addPreference(domainPref)
+
+        androidx.preference.SwitchPreferenceCompat(screen.context).apply {
+            key = PREF_AUTO_DOMAIN
+            title = "도메인 자동 찾기"
+            summary = "중앙신호등 주소로도 접속이 안 되면 tvwiki 번호 주소(현재 번호 -10 ~ +50)를 찾아 자동 변경합니다. " +
+                "신호등이 접속에 성공했던 주소보다 낮은 번호를 알려 주면 성공했던 주소를 계속 씁니다."
+            setDefaultValue(true)
+        }.also(screen::addPreference)
     }
 
     class CategoryFilter(categories: Array<Pair<String, String>>) :
@@ -623,6 +746,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
         private const val PREF_LAST_GOOD_DOMAIN_KEY = "pref_last_good_domain"
+        private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
         private const val DEFAULT_BASE_URL = "https://tvwiki51.net"
 
         private const val SIGNAL_URL = "https://aniyomi-extensions.pages.dev/api/signal"
@@ -631,10 +755,18 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         private const val RETRY_TTL_MS = 60 * 1000L
 
         @Volatile private var cachedDomain: String? = null
+
         @Volatile private var cacheValidUntil: Long = 0L
-        private val domainLock = Any()
+        private val DOMAIN_LOCK = Any()
+        private val DISCOVER_LOCK = Any()
+
+        // 이번 실행 중 접속이 안 된 주소 (신호등이 다시 알려 줘도 쓰지 않음)
+        private val DEAD_DOMAINS: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
         private val DOMAIN_REGEX = Regex("""^https://tvwiki\d+\.net$""")
+        private val HOST_REGEX = Regex("""^tvwiki\d+\.net$""")
+        private val NUMBER_REGEX = Regex("""tvwiki(\d+)\.net""")
+        private const val SITE_MARKER = "티비위키"
 
         private const val TITLE_SELECTOR = "#bo_v_title .bo_v_tit, #bo_v_title h1, h1, .view-title"
 
@@ -679,4 +811,4 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             Pair("인기순", "popular"),
         )
     }
-                                      }
+}
