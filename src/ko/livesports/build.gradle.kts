@@ -8,7 +8,7 @@ val extCode = 8755
 
 ext {
     set("extName", "LiveSports")
-    set("extClass", ".LiveSports")
+    set("extClass", ".LiveSportsFactory")
     set("extVersionCode", extCode)
 }
 
