@@ -82,11 +82,10 @@ jobs:
           echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
           echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
 
-      # build.gradle.kts 파일의 extVersionCode와 extCode를 AUTO_VCODE 숫자로 명확히 치환 (tvroom, livesports, livesports2 모두 적용)
+      # build.gradle.kts 파일의 extVersionCode와 extCode를 AUTO_VCODE 숫자로 명확히 치환 (tvroom, livesports 적용)
       - name: Inject version into build.gradle
         run: |
-          # 수정 1: livesports2 추가
-          TARGET_FILES=("src/ko/tvroom/build.gradle.kts" "src/ko/livesports/build.gradle.kts" "src/ko/livesports2/build.gradle.kts")
+          TARGET_FILES=("src/ko/tvroom/build.gradle.kts" "src/ko/livesports/build.gradle.kts")
           for TARGET_FILE in "${TARGET_FILES[@]}"; do
             if [ -f "$TARGET_FILE" ]; then
               sed -i -E "s/val extCode\s*=\s*[0-9]+/val extCode = $AUTO_VCODE/g" "$TARGET_FILE"
@@ -98,10 +97,8 @@ jobs:
 
       - name: Build extensions
         run: |
-          # 수정 2: livesports2 추가
-          mkdir -p src/ko/livesports/build src/ko/livesports2/build src/ko/tvroom/build
-          # 수정 3: :src:ko:livesports2:assembleRelease 추가
-          ./gradlew :src:ko:tvroom:assembleRelease :src:ko:livesports:assembleRelease :src:ko:livesports2:assembleRelease \
+          mkdir -p src/ko/livesports/build src/ko/tvroom/build
+          ./gradlew :src:ko:tvroom:assembleRelease :src:ko:livesports:assembleRelease \
             -PextVersionCode=${{ env.AUTO_VCODE }} \
             -x lintKotlin -x lint \
             -PsigningStorePassword="aniyomi123" \
