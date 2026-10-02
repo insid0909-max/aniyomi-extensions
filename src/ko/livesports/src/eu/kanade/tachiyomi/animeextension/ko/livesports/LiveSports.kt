@@ -15,7 +15,9 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
+import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
+import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
@@ -24,7 +26,9 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import okhttp3.Headers
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -54,13 +58,16 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
 
     private val tag = "LiveSports"
 
-    // ================= 0. 사이트 주소 (직접 지정 설정) =================
+    // ================= 0. 사이트 주소와 설정값 =================
     private fun prefs(): SharedPreferences? = runCatching {
         val app = Class.forName("android.app.ActivityThread")
             .getMethod("currentApplication")
             .invoke(null) as? Application
         app?.getSharedPreferences("source_$id", 0)
     }.getOrNull()
+
+    private fun pref(key: String, default: Boolean): Boolean =
+        prefs()?.getBoolean(key, default) ?: default
 
     // 설정에 올바른 주소가 있으면 그것을, 아니면 기본 주소를 사용
     override val baseUrl: String
@@ -90,8 +97,8 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
     @Volatile private var firstItemDebug = ""
     @Volatile private var lastCaptureTime = 0L
 
-    // 마지막으로 정상 가져온 목록 (가져오기에 실패해도 이걸 보여줌)
-    @Volatile private var lastGoodEpisodes: List<SEpisode> = emptyList()
+    // 마지막으로 정상 가져온 경기 항목 (가져오기에 실패해도 이걸로 목록을 만든다)
+    @Volatile private var lastGoodItems: List<ParsedItem> = emptyList()
     @Volatile private var lastGoodTime = 0L
 
     // 목록 추출에 필요 없는 리소스 (이미지/폰트)는 차단해서 로딩을 줄임
@@ -107,36 +114,120 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
             "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
         )
 
-    // ================= 1. 카드 (하나만 표시) =================
+    // ================= 1. 카드와 필터 =================
+    private fun isAllCat(cat: String) = cat == ALL_CAT || cat == CHOICE_ALL
+
+    private fun cardTitle(cat: String): String = when {
+        isAllCat(cat) -> "실시간 스포츠 중계"
+        cat == CAT_OTHER -> "🏅 기타 종목 중계"
+        cat == LABEL_TV -> "📺 TV 채널 중계"
+        else -> "${categoryEmoji(cat)} $cat 중계"
+    }
+
+    // 카드 주소에 종목과 정렬을 담는다. 전체 카드는 기존 주소와 같아서 저장된 항목과 이어진다
+    private fun cardUrl(cat: String, sort: String): String {
+        val base = "/live2?cat=" + URLEncoder.encode(cat, "UTF-8")
+        return if (sort == SORT_TIME) "$base&sort=time" else base
+    }
+
+    private fun makeCard(cat: String, sort: String): SAnime = SAnime.create().apply {
+        title = cardTitle(cat)
+        setUrlWithoutDomain(cardUrl(cat, sort))
+    }
+
+    // 카드 주소에서 (종목, 정렬)을 읽는다
+    private fun cardParams(animeUrl: String): Pair<String, String> {
+        val u = "https://local.invalid$animeUrl".toHttpUrlOrNull()
+        val cat = u?.queryParameter("cat") ?: ALL_CAT
+        val sort = if (u?.queryParameter("sort") == "time") SORT_TIME else SORT_CATEGORY
+        return cat to sort
+    }
+
+    // 요청 주소에 붙여 둔 (종목, 정렬)을 읽는다
+    private fun paramsOf(url: HttpUrl): Pair<String, String> {
+        val cat = url.queryParameter("ls_cat") ?: ALL_CAT
+        val sort = if (url.queryParameter("ls_sort") == SORT_TIME) SORT_TIME else SORT_CATEGORY
+        return cat to sort
+    }
+
+    // 사이트로 보내는 요청에 종목/정렬 값을 실어, 응답을 해석할 때 꺼내 쓴다
+    // (목록을 가져오는 숨은 화면은 이 값 없이 원래 주소를 연다)
+    private fun pageUrlWith(cat: String, sort: String): String =
+        livePageUrl.toHttpUrl().newBuilder()
+            .addQueryParameter("ls_cat", cat)
+            .addQueryParameter("ls_sort", sort)
+            .build()
+            .toString()
+
     override fun popularAnimeRequest(page: Int): Request = GET(livePageUrl, headers)
 
-    override fun popularAnimeParse(response: Response): AnimesPage {
-        val anime = SAnime.create().apply {
-            title = "실시간 스포츠 중계"
-            // 기존 "전체 경기" 카드와 같은 주소를 써서 앱에 저장된 항목과 이어지게 함
-            setUrlWithoutDomain("/live2?cat=" + URLEncoder.encode("전체 경기", "UTF-8"))
-        }
-        return AnimesPage(listOf(anime), false)
-    }
+    override fun popularAnimeParse(response: Response): AnimesPage =
+        AnimesPage(listOf(makeCard(ALL_CAT, SORT_CATEGORY)), false)
 
     override fun latestUpdatesRequest(page: Int): Request = popularAnimeRequest(page)
     override fun latestUpdatesParse(response: Response): AnimesPage = popularAnimeParse(response)
-    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request = popularAnimeRequest(1)
-    override fun searchAnimeParse(response: Response): AnimesPage = popularAnimeParse(response)
 
-    override fun animeDetailsRequest(anime: SAnime): Request = GET(livePageUrl, headers)
-
-    override fun animeDetailsParse(response: Response): SAnime = SAnime.create().apply {
-        title = "실시간 스포츠 중계"
-        status = SAnime.ONGOING
+    override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        var choice = CHOICE_ALL
+        var sort = SORT_CATEGORY
+        filters.forEach { filter ->
+            when (filter) {
+                is CategoryFilter -> choice = CATEGORY_CHOICES[filter.state]
+                is SortFilter -> sort = if (filter.state == 1) SORT_TIME else SORT_CATEGORY
+                else -> {}
+            }
+        }
+        return GET(pageUrlWith(choice, sort), headers)
     }
 
-    override fun episodeListRequest(anime: SAnime): Request = GET(livePageUrl, headers)
+    override fun searchAnimeParse(response: Response): AnimesPage {
+        val (choice, sort) = paramsOf(response.request.url)
+        val cards = when {
+            choice == CHOICE_EACH ->
+                listOf(makeCard(ALL_CAT, sort)) +
+                    CATEGORY_ORDER.map { makeCard(it, sort) } +
+                    makeCard(LABEL_TV, sort) +
+                    makeCard(CAT_OTHER, sort)
+            isAllCat(choice) -> listOf(makeCard(ALL_CAT, sort))
+            else -> listOf(makeCard(choice, sort))
+        }
+        return AnimesPage(cards, false)
+    }
+
+    override fun animeDetailsRequest(anime: SAnime): Request {
+        val (cat, sort) = cardParams(anime.url)
+        return GET(pageUrlWith(cat, sort), headers)
+    }
+
+    override fun animeDetailsParse(response: Response): SAnime {
+        val (cat, sort) = paramsOf(response.request.url)
+        return SAnime.create().apply {
+            title = cardTitle(cat)
+            status = SAnime.ONGOING
+            val catText = if (isAllCat(cat)) "전체" else cat
+            description = "종목: $catText · 정렬: ${if (sort == SORT_TIME) "시간순" else "종목순"}"
+        }
+    }
+
+    override fun episodeListRequest(anime: SAnime): Request {
+        val (cat, sort) = cardParams(anime.url)
+        return GET(pageUrlWith(cat, sort), headers)
+    }
 
     override fun videoListRequest(episode: SEpisode): Request {
         val data = episode.url.substringAfter("stream_data=", "").substringBefore("&n=")
         return GET("$livePageUrl&stream_data=$data", headers)
     }
+
+    // 필터 화면 (종목 선택, 정렬)
+    class CategoryFilter(choices: Array<String>) : AnimeFilter.Select<String>("종목", choices)
+    class SortFilter(choices: Array<String>) : AnimeFilter.Select<String>("정렬", choices)
+
+    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
+        AnimeFilter.Header("종목을 고르면 해당 종목 카드만 표시됩니다"),
+        CategoryFilter(CATEGORY_CHOICES),
+        SortFilter(SORT_CHOICES),
+    )
 
     // ================= 2. JSON 해석 =================
     private val nameKeys = listOf("name", "title", "label", "channel", "text", "match", "game")
@@ -250,6 +341,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         val streamData: String,
         val league: String,
         val label: String,
+        val startKey: String,
     )
 
     // 목록에 실제로 표시되는 한 줄 (경기 또는 구분 줄)
@@ -266,7 +358,8 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         else -> CATEGORY_ORDER.indexOf(label).let { if (it >= 0) it else CATEGORY_ORDER.size }
     }
 
-    private fun parseEpisodes(jsonText: String): List<SEpisode> {
+    // 가로챈 JSON에서 경기 항목을 읽는다 (원래 순서 그대로, 종목/정렬은 나중에 적용)
+    private fun parseItems(jsonText: String): List<ParsedItem> {
         val array = findArray(jsonText) ?: return emptyList()
         firstItemDebug = array.opt(0).toString().take(400)
 
@@ -278,6 +371,8 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
 
             val baseTitle = firstString(item, nameKeys).ifEmpty { "실시간 경기 ${items.size + 1}" }
             val league = item.optString("league").trim().takeIf { it != "null" }.orEmpty()
+            val date = item.optString("schedule_date").trim().takeIf { it != "null" }.orEmpty()
+            val time = item.optString("schedule_time").trim().takeIf { it != "null" }.orEmpty()
 
             items.add(
                 ParsedItem(
@@ -285,29 +380,66 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
                     streamData = streamData,
                     league = league,
                     label = categoryLabel(item),
+                    startKey = "$date $time".trim(),
+                ),
+            )
+        }
+        return items
+    }
+
+    private fun infoEpisode(msg: String) = SEpisode.create().apply {
+        name = "ℹ️ $msg"
+        episode_number = 1f
+        url = "/play?stream_data=none"
+    }
+
+    // 선택한 종목/정렬/설정에 맞춰 화면에 보일 에피소드 목록을 만든다
+    private fun buildEpisodes(
+        items: List<ParsedItem>,
+        cat: String,
+        sort: String,
+        staleTime: String?,
+    ): List<SEpisode> {
+        val hideTv = pref(PREF_HIDE_TV, false)
+        val useEmoji = pref(PREF_EMOJI, true)
+        val headerSetting = pref(PREF_HEADERS, true)
+
+        // 1) 종목으로 거르기 (TV는 전체 보기에서만 숨길 수 있고, 직접 고르면 보인다)
+        val filtered = items.filter { p ->
+            when {
+                isAllCat(cat) -> !(hideTv && p.label == LABEL_TV)
+                cat == CAT_OTHER -> p.label != LABEL_TV && p.label !in CATEGORY_ORDER
+                else -> p.label == cat
+            }
+        }
+        if (filtered.isEmpty()) {
+            return listOf(infoEpisode("현재 방송 중인 경기가 없습니다"))
+        }
+
+        // 2) 정렬. 같은 값끼리는 기존처럼 목록 순서를 뒤집어 표시 (sortedWith는 순서를 유지하는 안정 정렬)
+        val ordered = if (sort == SORT_TIME) {
+            filtered.reversed().sortedBy { it.startKey.ifEmpty { "9999-99-99 99:99" } }
+        } else {
+            filtered.reversed().sortedWith(
+                compareBy<ParsedItem>(
+                    { categoryRank(it.label) },
+                    { if (categoryRank(it.label) == CATEGORY_ORDER.size) it.label else "" },
                 ),
             )
         }
 
-        // 같은 종목끼리 모아서 정렬. 같은 종목 안에서는 기존처럼 목록 순서를 뒤집어 표시
-        // (sortedWith는 순서를 유지하는 안정 정렬이라 같은 값끼리는 위 순서가 그대로 남음)
-        val ordered = items.reversed().sortedWith(
-            compareBy<ParsedItem>(
-                { categoryRank(it.label) },
-                { if (categoryRank(it.label) == CATEGORY_ORDER.size) it.label else "" },
-            ),
-        )
-
-        // 종목별 개수 (구분 줄에 표시)
         val counts = ordered.groupingBy { it.label }.eachCount()
+        val showHeaders = headerSetting && sort == SORT_CATEGORY && (isAllCat(cat) || cat == CAT_OTHER)
+        val staleTag = staleTime?.let { "이전 목록 ($it)" }
 
+        // 3) 구분 줄과 경기 줄 만들기
         val rows = mutableListOf<Row>()
         var lastLabel: String? = null
         for (p in ordered) {
-            val emoji = categoryEmoji(p.label)
+            val emoji = if (useEmoji) categoryEmoji(p.label) else ""
 
             // 종목이 바뀔 때 구분 줄을 넣음 (같은 주소로 합쳐지지 않도록 줄 번호를 붙임)
-            if (SHOW_SECTION_HEADERS && p.label != lastLabel) {
+            if (showHeaders && p.label != lastLabel) {
                 val head = listOf(emoji, p.label.ifEmpty { "기타" }, "(${counts[p.label]})")
                     .filter { it.isNotEmpty() }
                     .joinToString(" ")
@@ -317,11 +449,17 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
 
             rows.add(
                 Row(
-                    name = if (emoji.isNotEmpty()) "$emoji ${p.title}" else p.title,
+                    name = when {
+                        p.label.isEmpty() -> p.title
+                        useEmoji -> "$emoji ${p.title}"
+                        else -> "[${p.label}] ${p.title}"
+                    },
                     url = "/play?stream_data=" + URLEncoder.encode(p.streamData, "UTF-8"),
                     // 종목명과 대회명은 날짜 옆 줄에 표시 (제목이 길어도 잘리지 않음)
-                    scanlator = listOf(p.label, p.league).filter { it.isNotEmpty() }
-                        .joinToString(" · ").ifEmpty { null },
+                    scanlator = listOf(staleTag.orEmpty(), p.label, p.league)
+                        .filter { it.isNotEmpty() }
+                        .joinToString(" · ")
+                        .ifEmpty { null },
                 ),
             )
         }
@@ -509,41 +647,31 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         this.url = "/play?stream_data=debug"
     }
 
-    // 직전 정상 목록을 "이전 목록 (HH:mm)" 표시를 붙여 복사
-    private fun staleCopy(list: List<SEpisode>, savedAt: Long): List<SEpisode> {
-        val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(savedAt))
-        return list.map { e ->
-            SEpisode.create().apply {
-                name = e.name
-                url = e.url
-                episode_number = e.episode_number
-                scanlator = listOfNotNull("이전 목록 ($time)", e.scanlator).joinToString(" · ")
-            }
-        }
-    }
-
     override fun episodeListParse(response: Response): List<SEpisode> {
+        val (cat, sort) = paramsOf(response.request.url)
+
         ensureCaptured()
 
         val json = capturedJson
-        val episodes = if (json != null) {
-            try { parseEpisodes(json) } catch (e: Exception) { emptyList() }
+        val items = if (json != null) {
+            try { parseItems(json) } catch (e: Exception) { emptyList() }
         } else {
             emptyList()
         }
 
-        // 성공: 정상 목록을 기억해 두고 반환 (parseEpisodes가 이미 종목별로 정렬)
-        if (episodes.isNotEmpty()) {
-            lastGoodEpisodes = episodes
+        // 성공: 정상 항목을 기억해 두고, 선택한 종목/정렬로 목록을 만든다
+        if (items.isNotEmpty()) {
+            lastGoodItems = items
             lastGoodTime = System.currentTimeMillis()
-            return episodes
+            return buildEpisodes(items, cat, sort, null)
         }
 
-        // 실패: 직전 정상 목록이 최근(30분 이내)이면 그것을 표시
-        val saved = lastGoodEpisodes
+        // 실패: 직전 정상 항목이 최근(30분 이내)이면 그것으로 목록을 만든다
+        val saved = lastGoodItems
         if (saved.isNotEmpty() && System.currentTimeMillis() - lastGoodTime < LAST_GOOD_MAX_AGE_MS) {
             Log.d(tag, "목록 가져오기 실패, 이전 목록 사용 json=${json?.take(60)} iframe=$iframeHost")
-            return staleCopy(saved, lastGoodTime)
+            val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(lastGoodTime))
+            return buildEpisodes(saved, cat, sort, time)
         }
 
         // 이전 목록도 없으면: 자동감지 채널 + 원인 확인용 DEBUG 줄
@@ -746,6 +874,9 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         if (data == "header") {
             throw Exception("구분 줄입니다. 아래의 경기를 선택하세요")
         }
+        if (data == "none") {
+            throw Exception("현재 방송 중인 경기가 없습니다")
+        }
         if (data == "debug") {
             throw Exception("원인 확인용 줄입니다. item=$firstItemDebug")
         }
@@ -818,7 +949,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
 
     override fun videoUrlParse(response: Response): String = ""
 
-    // ================= 7. 설정 화면 (주소 직접 지정) =================
+    // ================= 7. 설정 화면 =================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         fun summaryOf(current: String) =
             "빈 값이면 기본 주소($DEFAULT_BASE_URL)를 사용합니다.\n현재 주소: $current"
@@ -837,14 +968,14 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
                     input.isEmpty() -> {
                         summary = summaryOf(DEFAULT_BASE_URL)
                         lastCaptureTime = 0L
-                        lastGoodEpisodes = emptyList()
+                        lastGoodItems = emptyList()
                         Toast.makeText(screen.context, "기본 주소로 되돌렸습니다.", Toast.LENGTH_SHORT).show()
                         true
                     }
                     DOMAIN_REGEX.matches(input) -> {
                         summary = summaryOf(input)
                         lastCaptureTime = 0L
-                        lastGoodEpisodes = emptyList()
+                        lastGoodItems = emptyList()
                         Toast.makeText(screen.context, "주소가 변경되었습니다: $input", Toast.LENGTH_SHORT).show()
                         true
                     }
@@ -860,15 +991,57 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
             }
         }
         screen.addPreference(domainPref)
+
+        fun switchPref(prefKey: String, prefTitle: String, prefSummary: String, default: Boolean) =
+            SwitchPreferenceCompat(screen.context).apply {
+                key = prefKey
+                title = prefTitle
+                summary = prefSummary
+                setDefaultValue(default)
+            }
+
+        screen.addPreference(
+            switchPref(
+                PREF_HEADERS,
+                "종목 구분 줄 표시",
+                "종목순 정렬에서 종목이 바뀔 때 ━━ ⚽ 축구 (5) ━━ 줄을 넣습니다. 바꾼 뒤 목록을 새로고침하세요.",
+                true,
+            ),
+        )
+        screen.addPreference(
+            switchPref(
+                PREF_EMOJI,
+                "종목 이모지 표시",
+                "경기 제목 앞에 종목 이모지를 붙입니다. 끄면 [축구] 형태로 표시합니다.",
+                true,
+            ),
+        )
+        screen.addPreference(
+            switchPref(
+                PREF_HIDE_TV,
+                "TV 채널 숨기기",
+                "전체 보기에서 TV 채널 항목을 숨깁니다. 필터에서 TV를 직접 고르면 보입니다.",
+                false,
+            ),
+        )
     }
 
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
+        private const val PREF_HEADERS = "pref_section_headers"
+        private const val PREF_EMOJI = "pref_emoji"
+        private const val PREF_HIDE_TV = "pref_hide_tv"
+
         private const val DEFAULT_BASE_URL = "https://njtv-01.com"
         private const val LABEL_TV = "TV"
 
-        // 종목이 바뀔 때 "━━ ⚽ 축구 (5) ━━" 구분 줄을 넣을지 (끄려면 false)
-        private const val SHOW_SECTION_HEADERS = true
+        // 카드 주소와 필터에서 쓰는 값
+        private const val ALL_CAT = "전체 경기"
+        private const val CAT_OTHER = "기타"
+        private const val CHOICE_ALL = "전체"
+        private const val CHOICE_EACH = "종목별 카드 모두"
+        private const val SORT_CATEGORY = "category"
+        private const val SORT_TIME = "time"
 
         // 목록 캐시 시간 (이 시간 안에 다시 열면 숨은 화면을 다시 열지 않음)
         private const val CACHE_MS = 20_000L
@@ -880,6 +1053,12 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         private val CATEGORY_ORDER = listOf(
             "축구", "야구", "농구", "배구", "하키", "테니스", "미식축구", "롤", "복싱",
         )
+
+        // 필터의 종목 선택지
+        private val CATEGORY_CHOICES: Array<String> =
+            (listOf(CHOICE_ALL, CHOICE_EACH) + CATEGORY_ORDER + LABEL_TV + CAT_OTHER).toTypedArray()
+
+        private val SORT_CHOICES: Array<String> = arrayOf("종목순", "시간순")
 
         private val DOMAIN_REGEX = Regex("""^https://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$""")
         private val CATEGORY_SEPARATOR_REGEX = Regex("""[\s_-]""")
