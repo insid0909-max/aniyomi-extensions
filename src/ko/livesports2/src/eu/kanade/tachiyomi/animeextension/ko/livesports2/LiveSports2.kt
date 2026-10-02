@@ -12,6 +12,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.preference.EditTextPreference
+import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -313,15 +314,20 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
             null
         } ?: return emptyList()
 
+        val stripN = pref(PREF_STRIP_N, true)
+        val merge = pref(PREF_MERGE, true)
+
         val out = ArrayList<Game>(items.length())
         for (i in 0 until items.length()) {
             val o = items.optJSONObject(i) ?: continue
             val id = str(o, "id")
             if (id.isEmpty()) continue
 
-            // 팀 이름 끝의 "(N)" 표기는 지운다
-            val home = str(o, "team_name_home").replace(N_MARK_REGEX, "").trim()
-            val away = str(o, "team_name_away").replace(N_MARK_REGEX, "").trim()
+            // 설정에 따라 팀 이름 끝의 "(N)" 표기를 지운다
+            val homeRaw = str(o, "team_name_home")
+            val awayRaw = str(o, "team_name_away")
+            val home = if (stripN) homeRaw.replace(N_MARK_REGEX, "").trim() else homeRaw
+            val away = if (stripN) awayRaw.replace(N_MARK_REGEX, "").trim() else awayRaw
             val title = when {
                 home.isNotEmpty() && away.isNotEmpty() -> "$home vs $away"
                 else -> listOf(home, away).filter { it.isNotEmpty() }.joinToString(" ")
@@ -343,6 +349,8 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
                 ),
             )
         }
+
+        if (!merge) return out
 
         // 같은 경기(종목·팀·시작 시각이 같음)가 여러 줄로 올라온 경우 한 줄로 합친다
         val merged = LinkedHashMap<String, Game>()
@@ -389,6 +397,8 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         val useEmoji = pref(PREF_EMOJI, true)
         val showScore = pref(PREF_SCORE, true)
         val headerSetting = pref(PREF_HEADERS, true)
+        // 방송 중 목록의 시작 시각 표시 (예정 경기는 설정과 관계없이 항상 표시)
+        val showStartLive = pref(PREF_START_TIME, false)
 
         val filtered = games.filter { matches(it, p) }
         if (filtered.isEmpty()) {
@@ -434,7 +444,8 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
                 } else {
                     ""
                 }
-                listOf(g.qTime, score).filter { it.isNotEmpty() }.joinToString(" · ")
+                val start = if (showStartLive && g.startKey.isNotEmpty()) "시작 ${startShort(g.startKey)}" else ""
+                listOf(g.qTime, score, start).filter { it.isNotEmpty() }.joinToString(" · ")
             }
 
             rows.add(
@@ -825,11 +836,26 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     // ================= 6. 설정 화면 =================
+    // 공통 구역(두 확장 동일)과 이 확장 전용 구역으로 나눈다
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        val ctx = screen.context
+
         fun summaryOf(current: String) =
             "빈 값이면 기본 주소($DEFAULT_BASE_URL)를 사용합니다.\n현재 주소: $current"
 
-        val domainPref = EditTextPreference(screen.context).apply {
+        fun switchPref(prefKey: String, prefTitle: String, prefSummary: String, default: Boolean) =
+            SwitchPreferenceCompat(ctx).apply {
+                key = prefKey
+                title = prefTitle
+                summary = prefSummary
+                setDefaultValue(default)
+            }
+
+        // ---- 공통 ----
+        val common = PreferenceCategory(ctx).apply { title = "공통" }
+        screen.addPreference(common)
+
+        val domainPref = EditTextPreference(ctx).apply {
             key = PREF_DOMAIN_KEY
             title = "사이트 주소 직접 지정 (선택)"
             summary = summaryOf(baseUrl)
@@ -842,17 +868,17 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
                 when {
                     input.isEmpty() -> {
                         summary = summaryOf(DEFAULT_BASE_URL)
-                        Toast.makeText(screen.context, "기본 주소로 되돌렸습니다.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(ctx, "기본 주소로 되돌렸습니다.", Toast.LENGTH_SHORT).show()
                         true
                     }
                     DOMAIN_REGEX.matches(input) -> {
                         summary = summaryOf(input)
-                        Toast.makeText(screen.context, "주소가 변경되었습니다: $input", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(ctx, "주소가 변경되었습니다: $input", Toast.LENGTH_SHORT).show()
                         true
                     }
                     else -> {
                         Toast.makeText(
-                            screen.context,
+                            ctx,
                             "올바른 주소 형식이 아닙니다 (예: https://www.tongtv.net)",
                             Toast.LENGTH_LONG,
                         ).show()
@@ -861,17 +887,9 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
                 }
             }
         }
-        screen.addPreference(domainPref)
+        common.addPreference(domainPref)
 
-        fun switchPref(prefKey: String, prefTitle: String, prefSummary: String, default: Boolean) =
-            SwitchPreferenceCompat(screen.context).apply {
-                key = prefKey
-                title = prefTitle
-                summary = prefSummary
-                setDefaultValue(default)
-            }
-
-        screen.addPreference(
+        common.addPreference(
             switchPref(
                 PREF_HEADERS,
                 "종목 구분 줄 표시",
@@ -879,7 +897,7 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
                 true,
             ),
         )
-        screen.addPreference(
+        common.addPreference(
             switchPref(
                 PREF_EMOJI,
                 "종목 이모지 표시",
@@ -887,11 +905,40 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
                 true,
             ),
         )
-        screen.addPreference(
+        common.addPreference(
+            switchPref(
+                PREF_START_TIME,
+                "시작 시각 표시",
+                "방송 중인 경기의 날짜 옆 줄에도 시작 시각을 표시합니다. 예정 경기에는 항상 표시됩니다. 바꾼 뒤 목록을 새로고침하세요.",
+                false,
+            ),
+        )
+
+        // ---- 이 확장 전용 ----
+        val special = PreferenceCategory(ctx).apply { title = "실시간스포츠2 전용" }
+        screen.addPreference(special)
+
+        special.addPreference(
             switchPref(
                 PREF_SCORE,
-                "점수 표시",
+                "점수·진행 상황 표시",
                 "방송 중인 경기의 날짜 옆 줄에 진행 상황과 점수를 표시합니다.",
+                true,
+            ),
+        )
+        special.addPreference(
+            switchPref(
+                PREF_MERGE,
+                "같은 경기 합치기",
+                "종목·팀·시작 시각이 같은 항목이 여러 줄로 올라오면 한 줄로 합칩니다. 재생할 때 되는 중계를 자동으로 고릅니다. 바꾼 뒤 목록을 새로고침하세요.",
+                true,
+            ),
+        )
+        special.addPreference(
+            switchPref(
+                PREF_STRIP_N,
+                "팀 이름의 (N) 지우기",
+                "팀 이름 끝에 붙은 (N) 표기를 지웁니다. 바꾼 뒤 목록을 새로고침하세요.",
                 true,
             ),
         )
@@ -901,7 +948,10 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
         private const val PREF_HEADERS = "pref_section_headers"
         private const val PREF_EMOJI = "pref_emoji"
+        private const val PREF_START_TIME = "pref_start_time"
         private const val PREF_SCORE = "pref_score"
+        private const val PREF_MERGE = "pref_merge_dup"
+        private const val PREF_STRIP_N = "pref_strip_n"
 
         private const val DEFAULT_BASE_URL = "https://www.tongtv.net"
 
