@@ -12,7 +12,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.preference.EditTextPreference
-import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -836,7 +835,7 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     // ================= 6. 설정 화면 =================
-    // 공통 구역(두 확장 동일)과 이 확장 전용 구역으로 나눈다
+    // 이 빌드 환경에는 PreferenceCategory가 없어서, 항목 이름 앞의 [공통] / [전용] 표시로 구분한다
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val ctx = screen.context
 
@@ -851,13 +850,10 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
                 setDefaultValue(default)
             }
 
-        // ---- 공통 ----
-        val common = PreferenceCategory(ctx).apply { title = "공통" }
-        screen.addPreference(common)
-
+        // ---- [공통] 두 확장 동일 ----
         val domainPref = EditTextPreference(ctx).apply {
             key = PREF_DOMAIN_KEY
-            title = "사이트 주소 직접 지정 (선택)"
+            title = "[공통] 사이트 주소 직접 지정 (선택)"
             summary = summaryOf(baseUrl)
             dialogTitle = "기본값: $DEFAULT_BASE_URL"
             dialogMessage = "https:// 로 시작하는 주소를 입력하세요. 목록 API는 live.<도메인>으로 자동 계산됩니다."
@@ -887,57 +883,54 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
                 }
             }
         }
-        common.addPreference(domainPref)
+        screen.addPreference(domainPref)
 
-        common.addPreference(
+        screen.addPreference(
             switchPref(
                 PREF_HEADERS,
-                "종목 구분 줄 표시",
+                "[공통] 종목 구분 줄 표시",
                 "종목순 정렬에서 종목이 바뀔 때 ━━ ⚽ 축구 (5) ━━ 줄을 넣습니다. 바꾼 뒤 목록을 새로고침하세요.",
                 true,
             ),
         )
-        common.addPreference(
+        screen.addPreference(
             switchPref(
                 PREF_EMOJI,
-                "종목 이모지 표시",
+                "[공통] 종목 이모지 표시",
                 "경기 제목 앞에 종목 이모지를 붙입니다. 끄면 [축구] 형태로 표시합니다.",
                 true,
             ),
         )
-        common.addPreference(
+        screen.addPreference(
             switchPref(
                 PREF_START_TIME,
-                "시작 시각 표시",
+                "[공통] 시작 시각 표시",
                 "방송 중인 경기의 날짜 옆 줄에도 시작 시각을 표시합니다. 예정 경기에는 항상 표시됩니다. 바꾼 뒤 목록을 새로고침하세요.",
                 false,
             ),
         )
 
-        // ---- 이 확장 전용 ----
-        val special = PreferenceCategory(ctx).apply { title = "실시간스포츠2 전용" }
-        screen.addPreference(special)
-
-        special.addPreference(
+        // ---- [전용] 이 확장만 ----
+        screen.addPreference(
             switchPref(
                 PREF_SCORE,
-                "점수·진행 상황 표시",
+                "[전용] 점수·진행 상황 표시",
                 "방송 중인 경기의 날짜 옆 줄에 진행 상황과 점수를 표시합니다.",
                 true,
             ),
         )
-        special.addPreference(
+        screen.addPreference(
             switchPref(
                 PREF_MERGE,
-                "같은 경기 합치기",
+                "[전용] 같은 경기 합치기",
                 "종목·팀·시작 시각이 같은 항목이 여러 줄로 올라오면 한 줄로 합칩니다. 재생할 때 되는 중계를 자동으로 고릅니다. 바꾼 뒤 목록을 새로고침하세요.",
                 true,
             ),
         )
-        special.addPreference(
+        screen.addPreference(
             switchPref(
                 PREF_STRIP_N,
-                "팀 이름의 (N) 지우기",
+                "[전용] 팀 이름의 (N) 지우기",
                 "팀 이름 끝에 붙은 (N) 표기를 지웁니다. 바꾼 뒤 목록을 새로고침하세요.",
                 true,
             ),
