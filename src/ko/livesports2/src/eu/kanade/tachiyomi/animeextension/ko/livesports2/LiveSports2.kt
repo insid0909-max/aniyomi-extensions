@@ -151,8 +151,44 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         return prefix + core
     }
 
+    // ---- 카드 표지 이미지 ----
+    // 설정에 올바른 폴더 주소가 있으면 그것을, 아니면 기본 폴더를 사용
+    private val thumbBase: String
+        get() {
+            val custom = prefs()?.getString(PREF_THUMB_BASE, "")
+                ?.trim()?.trimEnd('/').orEmpty()
+            return if (custom.isNotEmpty() && THUMB_BASE_REGEX.matches(custom)) custom else DEFAULT_THUMB_BASE
+        }
+
+    // 종목 이름 -> 이미지 파일 이름 (확장자 제외, 소문자 영어)
+    private fun thumbName(cat: String): String = when {
+        isAllCat(cat) -> "all"
+        cat == CAT_OTHER -> "other"
+        else -> when (cat) {
+            "축구" -> "soccer"
+            "야구" -> "baseball"
+            "농구" -> "basketball"
+            "배구" -> "volleyball"
+            "하키" -> "hockey"
+            "테니스" -> "tennis"
+            "미식축구" -> "americanfootball"
+            "e스포츠" -> "esports"
+            "격투기" -> "fight"
+            "골프" -> "golf"
+            "배드민턴" -> "badminton"
+            "탁구" -> "tabletennis"
+            "핸드볼" -> "handball"
+            "럭비" -> "rugby"
+            "크리켓" -> "cricket"
+            else -> "other"
+        }
+    }
+
+    private fun thumbUrl(cat: String): String = "$thumbBase/${thumbName(cat)}.$THUMB_EXT"
+
     private fun makeCard(p: Params): SAnime = SAnime.create().apply {
         title = cardTitle(p)
+        thumbnail_url = thumbUrl(p.cat)
         setUrlWithoutDomain(cardUrl(p))
     }
 
@@ -233,6 +269,7 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         val n = games.count { matches(it, p) }
         return SAnime.create().apply {
             title = cardTitle(p)
+            thumbnail_url = thumbUrl(p.cat)
             status = SAnime.ONGOING
             description = "${if (p.src == SRC_SOON) "예정" else "방송 중"} ${n}경기 · 정렬: " +
                 if (p.sort == SORT_TIME) "시간순" else "종목순"
@@ -842,6 +879,9 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         fun summaryOf(current: String) =
             "빈 값이면 기본 주소($DEFAULT_BASE_URL)를 사용합니다.\n현재 주소: $current"
 
+        fun thumbSummary(current: String) =
+            "빈 값이면 기본 폴더를 사용합니다.\n현재 폴더: $current"
+
         fun switchPref(prefKey: String, prefTitle: String, prefSummary: String, default: Boolean) =
             SwitchPreferenceCompat(ctx).apply {
                 key = prefKey
@@ -884,6 +924,37 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
             }
         }
         screen.addPreference(domainPref)
+
+        val thumbPref = EditTextPreference(ctx).apply {
+            key = PREF_THUMB_BASE
+            title = "[공통] 표지 이미지 폴더 주소 (선택)"
+            summary = thumbSummary(thumbBase)
+            dialogTitle = "기본 폴더"
+            dialogMessage = "종목별 이미지(soccer.png 등)가 들어 있는 폴더 주소입니다. " +
+                "https:// 로 시작하고 끝에 / 를 붙이지 않습니다.\n기본값: $DEFAULT_THUMB_BASE"
+            setDefaultValue("")
+
+            setOnPreferenceChangeListener { _, newValue ->
+                val input = (newValue as String).trim().trimEnd('/')
+                when {
+                    input.isEmpty() -> {
+                        summary = thumbSummary(DEFAULT_THUMB_BASE)
+                        Toast.makeText(ctx, "기본 폴더로 되돌렸습니다.", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    THUMB_BASE_REGEX.matches(input) -> {
+                        summary = thumbSummary(input)
+                        Toast.makeText(ctx, "폴더 주소가 변경되었습니다.", Toast.LENGTH_SHORT).show()
+                        true
+                    }
+                    else -> {
+                        Toast.makeText(ctx, "https:// 로 시작하는 주소를 입력하세요.", Toast.LENGTH_LONG).show()
+                        false
+                    }
+                }
+            }
+        }
+        screen.addPreference(thumbPref)
 
         screen.addPreference(
             switchPref(
@@ -939,6 +1010,7 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
 
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
+        private const val PREF_THUMB_BASE = "pref_thumb_base"
         private const val PREF_HEADERS = "pref_section_headers"
         private const val PREF_EMOJI = "pref_emoji"
         private const val PREF_START_TIME = "pref_start_time"
@@ -947,6 +1019,11 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val PREF_STRIP_N = "pref_strip_n"
 
         private const val DEFAULT_BASE_URL = "https://www.tongtv.net"
+
+        // 카드 표지 이미지: <폴더>/<이름>.<확장자> (확장자를 바꾸려면 THUMB_EXT만 고치면 됨)
+        private const val DEFAULT_THUMB_BASE =
+            "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/thumbs"
+        private const val THUMB_EXT = "png"
 
         private const val SRC_LIVE = "live"
         private const val SRC_SOON = "soon"
@@ -969,6 +1046,7 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
             (listOf(CHOICE_ALL, CHOICE_EACH) + CATEGORY_ORDER + CAT_OTHER).toTypedArray()
 
         private val DOMAIN_REGEX = Regex("""^https://[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$""")
+        private val THUMB_BASE_REGEX = Regex("""^https://\S+$""")
         private val ID_REGEX = Regex("""^[A-Za-z0-9]{6,40}$""")
         private val NON_ALNUM_REGEX = Regex("""[^A-Za-z0-9]""")
         private val SPACES_REGEX = Regex("""\s+""")
