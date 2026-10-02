@@ -451,6 +451,10 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         return items
     }
 
+    // "2026-10-02 00:00" -> "시작 10-02 00:00" (날짜나 시각이 없으면 표시 안 함)
+    private fun startLabel(key: String): String =
+        if (key.length >= 16) "시작 ${key.substring(5, 16)}" else ""
+
     private fun infoEpisode(msg: String) = SEpisode.create().apply {
         name = "ℹ️ $msg"
         episode_number = 1f
@@ -519,8 +523,8 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
                         else -> "[${p.label}] ${p.title}"
                     },
                     url = "/play?stream_data=" + URLEncoder.encode(p.streamData, "UTF-8"),
-                    // 종목명과 대회명은 날짜 옆 줄에 표시 (제목이 길어도 잘리지 않음)
-                    scanlator = listOf(staleTag.orEmpty(), p.label, p.league)
+                    // 시작 시각, 종목명, 대회명은 날짜 옆 줄에 표시 (제목이 길어도 잘리지 않음)
+                    scanlator = listOf(staleTag.orEmpty(), startLabel(p.startKey), p.label, p.league)
                         .filter { it.isNotEmpty() }
                         .joinToString(" · ")
                         .ifEmpty { null },
