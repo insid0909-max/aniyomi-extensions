@@ -82,10 +82,11 @@ jobs:
           echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
           echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
 
-      # build.gradle.kts 파일의 extVersionCode와 extCode를 AUTO_VCODE 숫자로 명확히 치환 (tvroom 및 livesports 모두 적용)
+      # build.gradle.kts 파일의 extVersionCode와 extCode를 AUTO_VCODE 숫자로 명확히 치환 (tvroom, livesports, livesports2 모두 적용)
       - name: Inject version into build.gradle
         run: |
-          TARGET_FILES=("src/ko/tvroom/build.gradle.kts" "src/ko/livesports/build.gradle.kts")
+          # 수정 1: livesports2 추가
+          TARGET_FILES=("src/ko/tvroom/build.gradle.kts" "src/ko/livesports/build.gradle.kts" "src/ko/livesports2/build.gradle.kts")
           for TARGET_FILE in "${TARGET_FILES[@]}"; do
             if [ -f "$TARGET_FILE" ]; then
               sed -i -E "s/val extCode\s*=\s*[0-9]+/val extCode = $AUTO_VCODE/g" "$TARGET_FILE"
@@ -97,8 +98,10 @@ jobs:
 
       - name: Build extensions
         run: |
-          mkdir -p src/ko/livesports/build src/ko/tvroom/build
-          ./gradlew :src:ko:tvroom:assembleRelease :src:ko:livesports:assembleRelease \
+          # 수정 2: livesports2 추가
+          mkdir -p src/ko/livesports/build src/ko/livesports2/build src/ko/tvroom/build
+          # 수정 3: :src:ko:livesports2:assembleRelease 추가
+          ./gradlew :src:ko:tvroom:assembleRelease :src:ko:livesports:assembleRelease :src:ko:livesports2:assembleRelease \
             -PextVersionCode=${{ env.AUTO_VCODE }} \
             -x lintKotlin -x lint \
             -PsigningStorePassword="aniyomi123" \
@@ -129,109 +132,3 @@ jobs:
               "meta": {
                   "name": "TVroom Repository",
                   "shortName": "TVroom",
-                  "website": "https://aniyomi-extensions.pages.dev",
-                  "signingKeyFingerprint": signing_key
-              }
-          }
-          for sub in ["", "anime"]:
-              p = os.path.join(repo_dir, sub, "repo.json") if sub else os.path.join(repo_dir, "repo.json")
-              with open(p, "w", encoding="utf-8") as f:
-                  json.dump(repo_data, f, ensure_ascii=False, indent=2)
-
-          apk_files = glob.glob("src/**/build/outputs/apk/release/*.apk", recursive=True)
-          extensions = []
-
-          for apk in apk_files:
-              badging = subprocess.check_output(["aapt", "dump", "badging", apk]).decode("utf-8", errors="ignore")
-              pkg = None
-              vcode = None
-              vname = None
-              label = None
-
-              for line in badging.splitlines():
-                  if line.startswith("package:"):
-                      for part in line.split():
-                          if part.startswith("name='"):
-                              pkg = part.split("'")[1]
-                          elif part.startswith("versionCode='"):
-                              vcode = int(part.split("'")[1])
-                          elif part.startswith("versionName='"):
-                              vname = part.split("'")[1]
-                  elif line.startswith("application-label:"):
-                      label = line.split("'")[1]
-
-              if not pkg or not vcode or not vname:
-                  continue
-
-              display_name = label if label else "Extension"
-              source_name = label if label else "Extension"
-              target_name = f"aniyomi-{pkg}-v{vname}-release.apk"
-
-              for dest in [repo_dir, os.path.join(repo_dir, "anime"), os.path.join(repo_dir, "apk")]:
-                  subprocess.run(["cp", "-v", apk, os.path.join(dest, target_name)])
-
-              icon_file = f"{pkg}.png"
-              icon_path_in_apk = None
-              for line in badging.splitlines():
-                  if "application-icon-" in line or "icon='" in line:
-                      icon_path_in_apk = line.split("'")[-2]
-              
-              if icon_path_in_apk:
-                  unzip_cmd = f"unzip -p '{apk}' '{icon_path_in_apk}' > '{os.path.join(repo_dir, 'icon', icon_file)}'"
-                  subprocess.run(unzip_cmd, shell=True)
-                  for dest in [repo_dir, os.path.join(repo_dir, "anime")]:
-                      subprocess.run(["cp", "-v", os.path.join(repo_dir, 'icon', icon_file), os.path.join(dest, icon_file)])
-
-              apk_size = os.path.getsize(os.path.join(repo_dir, target_name))
-
-              extensions.append({
-                  "name": display_name,
-                  "pkg": pkg,
-                  "apk": target_name,
-                  "lang": "ko",
-                  "code": vcode,
-                  "version": vname,
-                  "nsfw": 1,
-                  "hasReadme": 0,
-                  "hasChangelog": 0,
-                  "size": apk_size,
-                  "icon": icon_file,
-                  "sources": [
-                      {
-                          "name": source_name,
-                          "lang": "ko",
-                          "id": str(abs(hash(pkg))),
-                          "baseUrl": "",
-                          "versionId": 1
-                      }
-                  ]
-              })
-
-          for p in [os.path.join(repo_dir, "index.min.json"), os.path.join(repo_dir, "anime", "index.min.json")]:
-              with open(p, "w", encoding="utf-8") as f:
-                  json.dump(extensions, f, ensure_ascii=False, separators=(',', ':'))
-
-          print(f"총 {len(extensions)}개 확장 인덱싱 완료")
-          EOF
-
-          cat << 'HEADER_EOF' > repo/_headers
-          /*
-            Access-Control-Allow-Origin: *
-
-          /*.json
-            Cache-Control: no-cache, no-store, must-revalidate, max-age=0, s-maxage=0
-            CDN-Cache-Control: no-store
-            Cloudflare-CDN-Cache-Control: no-store
-
-          /anime/*.json
-            Cache-Control: no-cache, no-store, must-revalidate, max-age=0, s-maxage=0
-            CDN-Cache-Control: no-store
-            Cloudflare-CDN-Cache-Control: no-store
-          HEADER_EOF
-
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./repo
-          publish_branch: gh-pages
