@@ -90,15 +90,22 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
 
     // 페이지 로드 중 가로챈 값들 (호스트는 수시로 바뀌므로 매번 새로 읽음)
     @Volatile private var capturedJson: String? = null
+
     @Volatile private var capturedM3u8: String? = null
+
     @Volatile private var iframeHost: String? = null
+
     @Volatile private var liveHost: String? = null
+
     @Volatile private var candidateHeads = ""
+
     @Volatile private var firstItemDebug = ""
+
     @Volatile private var lastCaptureTime = 0L
 
     // 마지막으로 정상 가져온 경기 항목 (가져오기에 실패해도 이걸로 목록을 만든다)
     @Volatile private var lastGoodItems: List<ParsedItem> = emptyList()
+
     @Volatile private var lastGoodTime = 0L
 
     // 목록 추출에 필요 없는 리소스 (이미지/폰트)는 차단해서 로딩을 줄임
@@ -901,6 +908,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
     // 플레이어(mpv)가 직접 요청하면 400을 받으므로, 플레이어는 127.0.0.1로 요청하고
     // 실제 요청은 앱(OkHttp)이 대신 보낸다. 재생목록 안의 주소도 모두 이 프록시로 돌린다.
     @Volatile private var proxyServer: ServerSocket? = null
+
     @Volatile private var proxyHeaders: Headers = Headers.Builder().build()
     private val proxyPool = Executors.newCachedThreadPool()
 

@@ -91,7 +91,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             // 신호등이 이미 막힌 주소나, 마지막으로 접속에 성공한 주소보다 낮은 번호(예전 주소)를 알려 주면
             // 접속에 성공했던 주소를 계속 쓴다
             val stale = autoDomain(prefs) &&
-                (fetched in deadDomains || domainNumber(fetched) < domainNumber(lastGood))
+                (fetched in DEAD_DOMAINS || domainNumber(fetched) < domainNumber(lastGood))
             val chosen = if (stale) lastGood else fetched
             cachedDomain = chosen
             cacheValidUntil = System.currentTimeMillis() + CACHE_TTL_MS
@@ -120,7 +120,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             }
 
             // 3~4순위: 신호등 조회, 실패하면 마지막 정상 주소
-            return synchronized(domainLock) { resolveDomain(prefs) }
+            return synchronized(DOMAIN_LOCK) { resolveDomain(prefs) }
         }
 
     // 접속에 성공한 주소를 기억하고, 막히면 tvwiki 번호 주소를 찾아 자동 연결
@@ -137,7 +137,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     // 접속에 성공한 주소를 마지막 정상 주소로 저장
     private fun markGood(prefs: SharedPreferences?, url: String) {
-        deadDomains.remove(url)
+        DEAD_DOMAINS.remove(url)
         if (lastGoodDomain(prefs) != url) {
             prefs?.edit()?.putString(PREF_LAST_GOOD_DOMAIN_KEY, url)?.apply()
         }
@@ -175,13 +175,13 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         val res = try {
             chain.proceed(req)
         } catch (e: java.io.IOException) {
-            deadDomains.add(reqBase)
+            DEAD_DOMAINS.add(reqBase)
             val found = discoverDomain(reqBase) ?: throw e
             return retryOn(found)
         }
 
         if (req.method == "GET" && isDead(res)) {
-            deadDomains.add(reqBase)
+            DEAD_DOMAINS.add(reqBase)
             val found = discoverDomain(reqBase) ?: return res
             res.close()
             return retryOn(found)
@@ -201,7 +201,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     @Volatile private var lastDiscover = 0L
 
     // tvwiki 번호 주소를 현재 번호 -10 ~ +50 범위에서 동시에 열어 보고, 실제 티비위키인 가장 큰 번호를 고른다
-    private fun discoverDomain(current: String): String? = synchronized(discoverLock) {
+    private fun discoverDomain(current: String): String? = synchronized(DISCOVER_LOCK) {
         val now = System.currentTimeMillis()
         if (now - lastDiscover < 60_000) return null
         lastDiscover = now
@@ -755,12 +755,13 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         private const val RETRY_TTL_MS = 60 * 1000L
 
         @Volatile private var cachedDomain: String? = null
+
         @Volatile private var cacheValidUntil: Long = 0L
-        private val domainLock = Any()
-        private val discoverLock = Any()
+        private val DOMAIN_LOCK = Any()
+        private val DISCOVER_LOCK = Any()
 
         // 이번 실행 중 접속이 안 된 주소 (신호등이 다시 알려 줘도 쓰지 않음)
-        private val deadDomains: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+        private val DEAD_DOMAINS: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
         private val DOMAIN_REGEX = Regex("""^https://tvwiki\d+\.net$""")
         private val HOST_REGEX = Regex("""^tvwiki\d+\.net$""")
@@ -810,4 +811,4 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             Pair("인기순", "popular"),
         )
     }
-                                      }
+}

@@ -859,6 +859,7 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
 
     // ================= 5. 로컬 프록시 =================
     @Volatile private var proxyServer: ServerSocket? = null
+
     @Volatile private var proxyHeaders: Headers = Headers.Builder().build()
     private val proxyPool = Executors.newCachedThreadPool()
 
