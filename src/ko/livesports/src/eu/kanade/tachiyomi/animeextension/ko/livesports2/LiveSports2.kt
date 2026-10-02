@@ -84,7 +84,113 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
     private val apiBase: String
         get() = "https://live.$siteHost"
 
-    override val client: OkHttpClient = network.cloudflareClient
+    // 사이트가 새 주소로 넘겨 주면 그 주소를 따라가 저장 (통티비 주소에는 번호가 없어 번호 찾기는 쓰지 않음)
+    override val client: OkHttpClient = network.cloudflareClient.newBuilder()
+        .addInterceptor { chain -> domainIntercept(chain) }
+        .build()
+
+    // ================= 0-1. 도메인 자동 찾기 =================
+    private fun saveDomain(url: String) {
+        prefs()?.edit()?.putString(PREF_DOMAIN_KEY, url)?.apply()
+        Log.d(tag, "도메인 자동 변경: $url")
+    }
+
+    private fun isCloudflare(res: Response): Boolean =
+        res.header("cf-mitigated") != null || res.header("Server")?.contains("cloudflare", true) == true
+
+    private fun isDead(res: Response, reqHost: String): Boolean {
+        val finalHost = res.request.url.host
+        if (finalHost != reqHost && !finalHost.endsWith(siteHost)) return true
+        if (res.code == 451 || res.code >= 500) return true
+        return res.code == 403 && !isCloudflare(res)
+    }
+
+    // 새 사이트 주소 기준으로 요청 호스트를 바꾼다 (live.<사이트> / www.<사이트> / <사이트>)
+    private fun moveHost(oldHost: String, oldSite: String, newSiteHost: String): String {
+        val newSite = newSiteHost.removePrefix("www.")
+        return when {
+            oldHost == "live.$oldSite" -> "live.$newSite"
+            oldHost == oldSite -> newSite
+            else -> newSiteHost
+        }
+    }
+
+    private fun domainIntercept(chain: okhttp3.Interceptor.Chain): Response {
+        val req = chain.request()
+        val site = siteHost
+        val reqHost = req.url.host
+        val ours = pref(PREF_AUTO_DOMAIN, true) &&
+            (reqHost == site || reqHost == "www.$site" || reqHost == "live.$site")
+        if (!ours) return chain.proceed(req)
+
+        fun retryOn(found: String): Response {
+            saveDomain("https://$found")
+            val host = moveHost(reqHost, site, found)
+            return chain.proceed(req.newBuilder().url(req.url.newBuilder().host(host).build()).build())
+        }
+
+        val res = try {
+            chain.proceed(req)
+        } catch (e: java.io.IOException) {
+            val found = followRedirect(site) ?: throw e
+            return retryOn(found)
+        }
+
+        if (req.method == "GET" && isDead(res, reqHost)) {
+            val found = followRedirect(site) ?: return res
+            res.close()
+            return retryOn(found)
+        }
+
+        // 사이트 페이지가 다른 주소로 넘어갔으면 그 주소를 저장
+        val finalHost = res.request.url.host
+        if (!reqHost.startsWith("live.") && finalHost != reqHost &&
+            finalHost.removePrefix("www.") != site && apiAlive(finalHost)
+        ) {
+            saveDomain("https://$finalHost")
+        }
+        return res
+    }
+
+    private val discoverLock = Any()
+
+    @Volatile private var lastDiscover = 0L
+
+    private val plainClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .callTimeout(12, TimeUnit.SECONDS)
+            .build()
+    }
+
+    // 새 주소의 경기 API(live.<사이트>/api/health)가 응답하면 실제 통티비로 본다
+    private fun apiAlive(siteHostWithWww: String): Boolean = try {
+        val r = Request.Builder()
+            .url("https://live.${siteHostWithWww.removePrefix("www.")}/api/health")
+            .header("User-Agent", ua)
+            .build()
+        plainClient.newCall(r).execute().use { it.isSuccessful }
+    } catch (e: Exception) {
+        false
+    }
+
+    // 사이트 첫 화면을 열어 다른 주소로 넘어가는지 확인
+    private fun followRedirect(site: String): String? = synchronized(discoverLock) {
+        val now = System.currentTimeMillis()
+        if (now - lastDiscover < 60_000) return null
+        lastDiscover = now
+
+        listOf("www.$site", site).firstNotNullOfOrNull { host ->
+            try {
+                val r = Request.Builder().url("https://$host/").header("User-Agent", ua).build()
+                val fh = plainClient.newCall(r).execute().use { it.request.url.host }
+                fh.takeIf { it.removePrefix("www.") != site && apiAlive(it) }
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .set("Referer", "$baseUrl/")
@@ -925,6 +1031,16 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         }
         screen.addPreference(domainPref)
 
+        screen.addPreference(
+            switchPref(
+                PREF_AUTO_DOMAIN,
+                "[공통] 도메인 자동 찾기",
+                "접속이 안 되거나 막히면 사이트가 넘겨 주는 새 주소로 자동 변경합니다. " +
+                    "(통티비 주소에는 번호가 없어 번호를 바꿔 찾지는 않습니다)",
+                true,
+            ),
+        )
+
         val thumbPref = EditTextPreference(ctx).apply {
             key = PREF_THUMB_BASE
             title = "[공통] 표지 이미지 폴더 주소 (선택)"
@@ -1017,6 +1133,7 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val PREF_SCORE = "pref_score"
         private const val PREF_MERGE = "pref_merge_dup"
         private const val PREF_STRIP_N = "pref_strip_n"
+        private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
 
         private const val DEFAULT_BASE_URL = "https://www.tongtv.net"
 
