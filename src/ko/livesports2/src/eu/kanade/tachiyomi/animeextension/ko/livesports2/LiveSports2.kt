@@ -242,7 +242,7 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
     override fun episodeListRequest(anime: SAnime): Request = listRequest(paramsFromCard(anime.url))
 
     // ================= 2. 경기 데이터 해석 =================
-    private class Game(
+    private data class Game(
         val id: String,
         val src: String,
         val title: String,
@@ -254,6 +254,8 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         val scoreHome: String,
         val scoreAway: String,
         val startKey: String,
+        // 같은 경기가 여러 줄로 올라온 경우, 합쳐진 나머지 항목의 id
+        val altIds: List<String> = emptyList(),
     )
 
     private fun str(o: JSONObject, key: String): String {
@@ -272,7 +274,7 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
             "HOCKEY", "ICEHOCKEY" -> "하키"
             "TENNIS" -> "테니스"
             "FOOTBALL", "AMERICANFOOTBALL", "NFL" -> "미식축구"
-            "LOL", "ESPORTS" -> "롤"
+            "EGAME", "LOL", "ESPORTS" -> "e스포츠"
             "BOXING", "MMA", "UFC" -> "격투기"
             "GOLF" -> "골프"
             "BADMINTON" -> "배드민턴"
@@ -293,7 +295,7 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         "하키" -> "🏒"
         "테니스" -> "🎾"
         "미식축구" -> "🏈"
-        "롤" -> "🎮"
+        "e스포츠" -> "🎮"
         "격투기" -> "🥊"
         "골프" -> "⛳"
         "배드민턴" -> "🏸"
@@ -317,8 +319,9 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
             val id = str(o, "id")
             if (id.isEmpty()) continue
 
-            val home = str(o, "team_name_home")
-            val away = str(o, "team_name_away")
+            // 팀 이름 끝의 "(N)" 표기는 지운다
+            val home = str(o, "team_name_home").replace(N_MARK_REGEX, "").trim()
+            val away = str(o, "team_name_away").replace(N_MARK_REGEX, "").trim()
             val title = when {
                 home.isNotEmpty() && away.isNotEmpty() -> "$home vs $away"
                 else -> listOf(home, away).filter { it.isNotEmpty() }.joinToString(" ")
@@ -340,7 +343,19 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
                 ),
             )
         }
-        return out
+
+        // 같은 경기(종목·팀·시작 시각이 같음)가 여러 줄로 올라온 경우 한 줄로 합친다
+        val merged = LinkedHashMap<String, Game>()
+        for (g in out) {
+            val key = if (g.home.isEmpty() && g.away.isEmpty()) {
+                "id:${g.id}"
+            } else {
+                "${g.label}|${g.home}|${g.away}|${g.startKey}"
+            }
+            val prev = merged[key]
+            merged[key] = if (prev == null) g else prev.copy(altIds = prev.altIds + g.id)
+        }
+        return merged.values.toList()
     }
 
     private fun categoryRank(label: String): Int = when {
@@ -429,7 +444,7 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
                         useEmoji -> "$emoji ${g.title}"
                         else -> "[${g.label}] ${g.title}"
                     },
-                    url = "/play?id=${g.id}&src=${g.src}",
+                    url = "/play?id=${(listOf(g.id) + g.altIds).joinToString(",")}&src=${g.src}",
                     scanlator = listOf(info, g.label, g.league)
                         .filter { it.isNotEmpty() }
                         .joinToString(" · ")
@@ -456,24 +471,35 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     // ================= 3. 영상 요청 =================
-    // 재생할 때 그 경기 한 건만 다시 조회해서 최신 플레이어 주소(web)를 받는다
+    // 재생할 때 그 경기의 항목을 다시 조회해서 최신 플레이어 주소(web)를 받는다
     override fun videoListRequest(episode: SEpisode): Request {
         val u = "https://local.invalid${episode.url}".toHttpUrlOrNull()
-        val id = u?.queryParameter("id").orEmpty()
         val src = if (u?.queryParameter("src") == SRC_SOON) SRC_SOON else SRC_LIVE
         val kind = u?.queryParameter("kind").orEmpty()
-        val safeId = if (ID_REGEX.matches(id)) id else ""
+
+        // 같은 경기가 여러 줄로 올라온 경우 id가 쉼표로 이어져 있다 (최대 4개)
+        val ids = u?.queryParameter("id").orEmpty()
+            .split(",")
+            .map { it.trim() }
+            .filter { ID_REGEX.matches(it) }
+            .distinct()
+            .take(4)
 
         val ls = when {
             kind == "header" -> "header"
-            safeId.isEmpty() -> "none"
+            ids.isEmpty() -> "none"
             else -> "play"
+        }
+        val filter = if (ids.isEmpty()) {
+            "id = \"\""
+        } else {
+            ids.joinToString(" || ") { "id = \"$it\"" }
         }
         val url = "$apiBase/api/collections/${collectionOf(src)}/records".toHttpUrl().newBuilder()
             .addQueryParameter("page", "1")
-            .addQueryParameter("perPage", "1")
+            .addQueryParameter("perPage", "4")
             .addQueryParameter("skipTotal", "true")
-            .addQueryParameter("filter", "id = \"$safeId\"")
+            .addQueryParameter("filter", filter)
             .addQueryParameter("ls_kind", ls)
             .build()
         return GET(url.toString(), headers)
@@ -574,16 +600,36 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
             "none" -> throw Exception("선택할 수 있는 경기가 없습니다")
         }
 
-        val rec: JSONObject? = try {
-            JSONObject(response.body?.string().orEmpty()).optJSONArray("items")?.optJSONObject(0)
+        val arr = try {
+            JSONObject(response.body?.string().orEmpty()).optJSONArray("items")
         } catch (e: Exception) {
             null
         }
-        if (rec == null) throw Exception("경기 정보를 찾지 못했습니다. 방송이 끝났을 수 있으니 목록을 새로고침하세요")
+        if (arr == null || arr.length() == 0) {
+            throw Exception("경기 정보를 찾지 못했습니다. 방송이 끝났을 수 있으니 목록을 새로고침하세요")
+        }
 
-        val web = str(rec, "web")
-        if (web.isEmpty()) throw Exception("이 경기는 아직 영상이 준비되지 않았습니다")
+        // 같은 경기의 중계가 여럿이면 앞에서부터 시도해서 되는 것을 사용한다
+        val errors = mutableListOf<String>()
+        for (i in 0 until arr.length()) {
+            val rec = arr.optJSONObject(i) ?: continue
+            val web = str(rec, "web")
+            if (web.isEmpty()) {
+                errors.add("#${i + 1} 영상 없음")
+                continue
+            }
+            try {
+                return resolveVideos(web, if (i == 0) "" else " (대체 ${i + 1})")
+            } catch (e: Exception) {
+                errors.add("#${i + 1} ${e.message}")
+            }
+        }
+        throw Exception(
+            if (errors.isEmpty()) "이 경기는 아직 영상이 준비되지 않았습니다" else errors.joinToString(" || "),
+        )
+    }
 
+    private fun resolveVideos(web: String, suffix: String): List<Video> {
         val m3u8 = captureM3u8(web)
 
         // 앱(OkHttp)으로 접근 가능한 헤더 조합을 찾는다
@@ -611,8 +657,8 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         val proxied = proxyUrl(port, m3u8)
 
         return listOf(
-            Video(proxied, "프록시 [${chosen.label}]", proxied, Headers.Builder().build()),
-            Video(m3u8, "직접 [${chosen.label} ${chosen.result}]", m3u8, chosen.headers),
+            Video(proxied, "프록시 [${chosen.label}]$suffix", proxied, Headers.Builder().build()),
+            Video(m3u8, "직접 [${chosen.label} ${chosen.result}]$suffix", m3u8, chosen.headers),
         )
     }
 
@@ -870,7 +916,7 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
 
         // 목록에 보이는 종목 순서 (바꾸고 싶으면 이 목록의 순서를 고치세요)
         private val CATEGORY_ORDER = listOf(
-            "축구", "야구", "농구", "배구", "하키", "테니스", "미식축구", "롤",
+            "축구", "야구", "농구", "배구", "하키", "테니스", "미식축구", "e스포츠",
             "격투기", "골프", "배드민턴", "탁구", "핸드볼", "럭비", "크리켓",
         )
 
@@ -883,5 +929,6 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         private val ID_REGEX = Regex("""^[A-Za-z0-9]{6,40}$""")
         private val NON_ALNUM_REGEX = Regex("""[^A-Za-z0-9]""")
         private val SPACES_REGEX = Regex("""\s+""")
+        private val N_MARK_REGEX = Regex("""\s*\(N\)""")
     }
 }
