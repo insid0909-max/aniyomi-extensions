@@ -15,7 +15,7 @@ ext {
 apply(from = "$rootDir/common.gradle")
 
 android {
-    namespace = "eu.kanade.tachiyomi.animeextension.ko.livesports"
+    namespace = "eu.kanade.tachiyomi.animeextension.ko.livesports2"
 
     sourceSets {
         getByName("main") {
