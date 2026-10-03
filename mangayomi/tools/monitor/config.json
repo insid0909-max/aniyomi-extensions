@@ -1,0 +1,85 @@
+{
+ "label": "애니",
+ "ntfy": "insid-ext-naqwwbg1dibo",
+ "sites": [
+  {
+   "name": "티비위키",
+   "currentFrom": {
+    "file": "src/ko/tvroom/src/eu/kanade/tachiyomi/animeextension/ko/tvroom/TVroom.kt",
+    "regex": "DEFAULT_BASE_URL = \"(https://tvwiki\\d+\\.net)\""
+   },
+   "pattern": "^https://tvwiki(\\d+)\\.net$",
+   "format": "https://tvwiki{n}.net",
+   "probe": "/",
+   "marker": "티비위키",
+   "range": [
+    -3,
+    40
+   ]
+  },
+  {
+   "name": "고고티비",
+   "currentFrom": {
+    "file": "src/ko/tvroom/src/eu/kanade/tachiyomi/animeextension/ko/tvroom/GogoTV.kt",
+    "regex": "DEFAULT_BASE_URL = \"(https://gogotv\\d+\\.xyz)\""
+   },
+   "pattern": "^https://gogotv(\\d+)\\.xyz$",
+   "format": "https://gogotv{n}.xyz",
+   "probe": "/",
+   "marker": "gogoTV",
+   "range": [
+    -2,
+    30
+   ]
+  },
+  {
+   "name": "실시간스포츠",
+   "currentFrom": {
+    "file": "src/ko/livesports/src/eu/kanade/tachiyomi/animeextension/ko/livesports/LiveSports.kt",
+    "regex": "DEFAULT_BASE_URL = \"(https://njtv-\\d+\\.com)\""
+   },
+   "pattern": "^https://njtv-(\\d+)\\.com$",
+   "format": "https://njtv-{n}.com",
+   "pad": 2,
+   "probe": "/",
+   "marker": "gnuboard|g5_url|livetv",
+   "range": [
+    -2,
+    60
+   ]
+  }
+ ],
+ "replaceIn": [
+  "src/ko/tvroom/src/eu/kanade/tachiyomi/animeextension/ko/tvroom/TVroom.kt",
+  "src/ko/tvroom/src/eu/kanade/tachiyomi/animeextension/ko/tvroom/GogoTV.kt",
+  "src/ko/livesports/src/eu/kanade/tachiyomi/animeextension/ko/livesports/LiveSports.kt",
+  "mangayomi/javascript/anime/src/ko/tvwiki.js",
+  "mangayomi/javascript/anime/src/ko/gogotv.js",
+  "mangayomi/anime_index.json"
+ ],
+ "indexFiles": [
+  "mangayomi/anime_index.json"
+ ],
+ "health": [
+  {
+   "name": "티비위키 (망가요미)",
+   "file": "mangayomi/javascript/anime/src/ko/tvwiki.js",
+   "depth": "video"
+  },
+  {
+   "name": "고고티비 (망가요미)",
+   "file": "mangayomi/javascript/anime/src/ko/gogotv.js",
+   "depth": "detail"
+  },
+  {
+   "name": "실시간스포츠2 (망가요미)",
+   "file": "mangayomi/javascript/anime/src/ko/livesports2.js",
+   "depth": "list",
+   "allowEmpty": true
+  }
+ ],
+ "watchSources": {
+  "tvwiki": "mangayomi/javascript/anime/src/ko/tvwiki.js",
+  "gogotv": "mangayomi/javascript/anime/src/ko/gogotv.js"
+ }
+}
