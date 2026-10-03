@@ -259,7 +259,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
     override fun popularAnimeFromElement(element: Element): SAnime = SAnime.create().apply {
         val link = element.selectFirst("a.title2, a.title, a.img, a[href]")!!
-        setUrlWithoutDomain(link.attr("href"))
+        setUrlWithoutDomain(link.absUrl("href").ifEmpty { link.attr("href") })
 
         val titleNode = element.selectFirst("a.title2, a.title, .subject, .title")
         val imgNode = element.selectFirst("img")
@@ -272,7 +272,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         // 목록 카드 제목은 연도 억지 주입 없이 순수 작품명으로 지정
         title = cleanSeriesTitle(rawTitle)
 
-        thumbnail_url = imgNode?.let { img -> fixUrl(imageSrc(img)) }
+        thumbnail_url = imgNode?.let { img -> imageSrc(img) }?.ifEmpty { null }
     }
 
     override fun popularAnimeNextPageSelector(): String? =
@@ -356,15 +356,18 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         return cleanSeriesTitle(og ?: node ?: "").ifEmpty { fallback }
     }
 
+    // 지연 로딩 속성까지 확인하고, 페이지 주소 기준 절대 주소로 돌려준다
     private fun imageSrc(img: Element): String =
-        img.attr("data-original").ifEmpty { img.attr("data-src").ifEmpty { img.attr("src") } }
+        listOf("data-original", "data-src", "src").firstNotNullOfOrNull { attr ->
+            img.absUrl(attr).ifEmpty { null }
+        }.orEmpty()
 
     override fun animeDetailsParse(document: Document): SAnime = SAnime.create().apply {
         // 목록과 일치하는 순수 작품명 유지
         title = pageTitleOf(document, "티비위키")
 
         thumbnail_url = document.selectFirst(".poster img, .thumb img, img.cover, #bo_v_img img")
-            ?.let { img -> fixUrl(imageSrc(img)) }
+            ?.let { img -> imageSrc(img) }?.ifEmpty { null }
 
         val rawDesc = document.selectFirst(".thumb-desc, .desc, .summary, .content, #bo_v_con, p")?.text()?.trim()
         val releaseYear = YEAR_REGEX.find(document.text())?.groupValues?.get(1)
@@ -388,7 +391,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         }
 
         name = formatEpisodeName(rawText)
-        episode_number = EP_REGEX.find(rawText)?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
+        episode_number = episodeNumber(rawText).takeIf { it > 0f } ?: 1f
     }
 
     override fun episodeListParse(response: Response): List<SEpisode> {
@@ -410,7 +413,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                         SEpisode.create().apply {
                             setUrlWithoutDomain(href)
                             name = formatEpisodeName(fullItemText, pageTitle)
-                            episode_number = EP_REGEX.find(fullItemText)?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
+                            episode_number = episodeNumber(fullItemText)
                         },
                     )
                 }
@@ -430,7 +433,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                         SEpisode.create().apply {
                             setUrlWithoutDomain(href)
                             name = formatEpisodeName(text, pageTitle)
-                            episode_number = EP_REGEX.find(text)?.groupValues?.get(1)?.toFloatOrNull() ?: 1f
+                            episode_number = episodeNumber(text)
                         },
                     )
                 }
@@ -438,6 +441,10 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         }
 
         val uniqueList = episodes.distinctBy { it.url }
+        // 회차 번호가 없는 항목은 목록 순서(위가 최신)로 번호를 매겨 모두 1화가 되지 않게 한다
+        uniqueList.forEachIndexed { i, ep ->
+            if (ep.episode_number <= 0f) ep.episode_number = (uniqueList.size - i).toFloat()
+        }
 
         // 에피소드가 1개인 경우(단편 영화 등) 줄거리 오류 텍스트를 작품 제목으로 치환
         if (uniqueList.size == 1) {
@@ -480,9 +487,10 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             .add("X-Requested-With", "XMLHttpRequest")
             .build()
 
-        val metaResponse = client.newCall(GET(metaUrl, metaHeaders)).execute()
-        val metaJson = JSONObject(metaResponse.body.string())
-        if (!metaJson.optBoolean("success", false)) {
+        val metaJson = runCatching {
+            client.newCall(GET(metaUrl, metaHeaders)).execute().use { JSONObject(it.body.string()) }
+        }.getOrNull()
+        if (metaJson == null || !metaJson.optBoolean("success", false)) {
             return fallbackVideoParse(response)
         }
 
@@ -503,8 +511,8 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                     .add("Content-Type", "application/json; charset=utf-8")
                     .build()
                 val reqBody = payloadStr.toRequestBody("application/json; charset=utf-8".toMediaType())
-                val directRes = client.newCall(POST("$currentBaseUrl/api/create_session.php", directHeaders, reqBody)).execute()
-                val resJson = JSONObject(directRes.body.string())
+                val resJson = client.newCall(POST("$currentBaseUrl/api/create_session.php", directHeaders, reqBody))
+                    .execute().use { JSONObject(it.body.string()) }
                 if (resJson.optBoolean("success", false) && resJson.has("player_url")) {
                     acquiredSession = resJson
                 }
@@ -524,8 +532,8 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
                     .add("Content-Type", "application/json; charset=utf-8")
                     .build()
                 val reqBody = bridgeReqObj.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
-                val bridgeRes = client.newCall(POST("$bridgeBaseUrl/api/tvwiki-session", bridgeHeaders, reqBody)).execute()
-                val resJson = JSONObject(bridgeRes.body.string())
+                val resJson = client.newCall(POST("$bridgeBaseUrl/api/tvwiki-session", bridgeHeaders, reqBody))
+                    .execute().use { JSONObject(it.body.string()) }
                 if (resJson.optBoolean("success", false) && resJson.has("player_url")) {
                     acquiredSession = resJson
                 }
@@ -554,16 +562,18 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
             .add("Origin", playerOrigin)
             .build()
 
-        val playlistRes = client.newCall(GET(playlistUrl, streamHeaders)).execute()
-        val playlistContent = playlistRes.body.string()
+        val playlistContent = runCatching {
+            client.newCall(GET(playlistUrl, streamHeaders)).execute().use { it.body.string() }
+        }.getOrElse { return fallbackVideoParse(response) }
 
         val keyMatch = KEY_REGEX.find(playlistContent)
         val videoList = ArrayList<Video>()
 
         if (keyMatch != null) {
             val keyUrl = resolveAbsolute(playlistUrl, keyMatch.groupValues[1])
-            val envelopeRes = client.newCall(GET(keyUrl, streamHeaders)).execute()
-            val envelope = envelopeRes.body.string()
+            val envelope = runCatching {
+                client.newCall(GET(keyUrl, streamHeaders)).execute().use { it.body.string() }
+            }.getOrElse { return fallbackVideoParse(response) }
 
             val uParam = URLEncoder.encode(toBase64Url(playlistUrl), "UTF-8")
             val rParam = URLEncoder.encode(toBase64Url(playerUrl), "UTF-8")
@@ -599,8 +609,8 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         val document = response.asJsoup()
         val list = ArrayList<Video>()
         document.select("video source, video").forEach { v ->
-            val src = v.attr("src")
-            if (src.isNotBlank()) list.add(Video(fixUrl(src), "직접 재생", fixUrl(src)))
+            val src = v.absUrl("src")
+            if (src.isNotBlank()) list.add(Video(src, "직접 재생", src))
         }
         return list
     }
@@ -613,24 +623,17 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
         ).trim()
     }
 
+    // 상대 주소를 기준 주소에 맞춰 절대 주소로 (쿼리 안의 / 때문에 경로가 잘리지 않도록 표준 해석 사용)
     private fun resolveAbsolute(base: String, target: String): String {
         val t = target.trim()
-        if (t.startsWith("http://") || t.startsWith("https://")) return t
-        if (t.startsWith("//")) return "https:$t"
-        return if (t.startsWith("/")) {
-            val baseUri = base.toHttpUrlOrNull()
-            "${baseUri?.scheme}://${baseUri?.host}$t"
-        } else {
-            val dir = base.substringBeforeLast('/')
-            "$dir/$t"
-        }
+        return base.toHttpUrlOrNull()?.resolve(t)?.toString()
+            ?: if (t.startsWith("//")) "https:$t" else t
     }
 
-    private fun fixUrl(url: String): String = when {
-        url.startsWith("//") -> "https:$url"
-        url.startsWith("/") -> "$baseUrl$url"
-        else -> url
-    }
+    // "12화", "3-4회" 같은 글자에서 앞 번호를 꺼냄 (없으면 0)
+    private fun episodeNumber(text: String): Float =
+        EP_REGEX.find(text)?.groupValues?.get(1)?.let { NUMBER_PREFIX_REGEX.find(it)?.value }
+            ?.toFloatOrNull() ?: 0f
 
     private fun cleanSeriesTitle(raw: String): String =
         raw.replace(TITLE_EP_SUFFIX_REGEX, "")
@@ -772,6 +775,7 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
 
         // 반복 사용되는 정규식은 한 번만 만들어 재사용
         private val EP_REGEX = Regex("""(\d+(?:[-.]\d+)?)\s*[화회]""")
+        private val NUMBER_PREFIX_REGEX = Regex("""^\d+(?:\.\d+)?""")
         private val DATE_REGEX = Regex("""(\d{4}[.-]\d{2}[.-]\d{2})""")
         private val YEAR_REGEX = Regex("""개봉년도\s*:\s*(\d{4})""")
         private val EP_URL_REGEX = Regex(".*/\\d+$")
