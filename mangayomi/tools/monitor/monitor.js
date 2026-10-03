@@ -208,16 +208,17 @@ async function runHealth(item) {
     const detail = await withTimeout(ext.getDetail(first.link), T, "상세");
     const eps = (detail && (detail.chapters || detail.episodes)) || [];
     if (!eps.length) throw new Error(`상세: 회차 0개 (${first.name})`);
-    if (item.depth === "detail") return `목록 ${list.length}개, 회차 ${eps.length}개`;
+    const st = { 0: "연재", 1: "완결" }[detail.status] || "상태 미확인";
+    if (item.depth === "detail") return `목록 ${list.length}개, 회차 ${eps.length}개, ${st}`;
     const ep = eps[0];
     if (item.depth === "pages") {
         const pages = await withTimeout(ext.getPageList(ep.url), T, "이미지");
         if (!pages || !pages.length) throw new Error(`이미지 0개 (${first.name} ${ep.name})`);
-        return `목록 ${list.length}개, 회차 ${eps.length}개, 이미지 ${pages.length}장`;
+        return `목록 ${list.length}개, 회차 ${eps.length}개, 이미지 ${pages.length}장, ${st}`;
     }
     const videos = await withTimeout(ext.getVideoList(ep.url), T, "영상");
     if (!videos || !videos.length) throw new Error(`영상 주소 0개 (${first.name} ${ep.name})`);
-    return `목록 ${list.length}개, 회차 ${eps.length}개, 영상 ${videos.length}개`;
+    return `목록 ${list.length}개, 회차 ${eps.length}개, 영상 ${videos.length}개, ${st}`;
 }
 
 async function checkHealth() {
@@ -295,6 +296,47 @@ async function checkWatch() {
     if (dirty) fs.writeFileSync(watchPath, JSON.stringify(list, null, 2) + "\n");
 }
 
+// ---------- 4) 실시간스포츠 경기 알림 ----------
+// teams.json(상태 브랜치)에 적은 팀 이름이 들어간 경기가 곧 시작하면(또는 이미 방송 중이면) 한 번 알림
+async function checkSports() {
+    const sp = config.sports;
+    if (!sp) return;
+    const teamsPath = path.join(stateDir, "teams.json");
+    const teams = fs.existsSync(teamsPath) ? JSON.parse(fs.readFileSync(teamsPath, "utf8")) : [];
+    if (!teams.length) return;
+    const norm = (s) => String(s || "").replace(/\s+/g, "").toLowerCase();
+    const records = [];
+    for (const col of ["view_bw_live_on", "view_bw_live_soon"]) {
+        try {
+            const res = await request("GET", `${sp.api}/api/collections/${col}/records?perPage=500`, { "User-Agent": UA });
+            const items = (JSON.parse(res.body).items || []);
+            for (const it of items) records.push(Object.assign({ live: col === "view_bw_live_on" || it.is_live === 1 }, it));
+        } catch (e) {
+            console.log(`[경기] ${col} 읽기 실패: ${e.message}`);
+        }
+    }
+    state.sports = state.sports || [];
+    const now = Date.now();
+    const windowMs = (sp.notifyBeforeMinutes || 75) * 60000;
+    for (const r of records) {
+        const home = r.team_name_home || "";
+        const away = r.team_name_away || "";
+        const hit = teams.find((t) => norm(home).includes(norm(t)) || norm(away).includes(norm(t)));
+        if (!hit || state.sports.includes(r.id)) continue;
+        // time_gmt9 는 한국시간 값에 Z 가 붙어 있음 → UTC 로 9시간 빼서 계산
+        const kst = String(r.time_gmt9 || "").replace(/Z$/, "").replace(" ", "T");
+        const start = kst ? Date.parse(kst + "+09:00") : NaN;
+        const soon = !isNaN(start) && start - now <= windowMs && start - now > -3 * 3600000;
+        if (!r.live && !soon) continue;
+        const hhmm = isNaN(start) ? "" : new Date(start + 9 * 3600000).toISOString().substring(11, 16);
+        const title = r.live ? `🔴 방송 중: ${home} vs ${away}` : `⏰ 곧 시작 ${hhmm}: ${home} vs ${away}`;
+        await notify(title, `${r.league_name || r.sports || ""} · 관심 팀 "${hit}" (실시간스포츠2)`, sp.site, "soccer");
+        state.sports.push(r.id);
+    }
+    state.sports = state.sports.slice(-300);
+    console.log(`[경기] 관심 팀 ${teams.length}개, 경기 ${records.length}개 확인`);
+}
+
 (async () => {
     if (mode === "test") {
         await notify("🔔 테스트 알림", "ntfy 구독이 정상입니다. 앞으로 주소 변경·고장·새 회차 알림이 이곳으로 옵니다.", "https://wfwf510.com/", "white_check_mark");
@@ -303,6 +345,7 @@ async function checkWatch() {
     if (mode === "all" || mode === "domains") await checkDomains();
     if (mode === "all" || mode === "health") await checkHealth();
     if (mode === "all" || mode === "watch") await checkWatch();
+    if (mode === "all" || mode === "watch" || mode === "sports") await checkSports();
     // 하루 한 번(all)만 시각을 남겨, 매시간 상태 커밋이 생기지 않게 함
     if (mode === "all") state.lastRun = { mode, at: new Date().toISOString() };
     fs.writeFileSync(statePath, JSON.stringify(state, null, 1) + "\n");
