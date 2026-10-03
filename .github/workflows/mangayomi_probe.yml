@@ -41,7 +41,7 @@ jobs:
         run: |
           for f in probe-out/*; do
             echo "=================== $f"
-            head -c 30000 "$f"
+            head -c 400000 "$f"
             echo
           done
 
