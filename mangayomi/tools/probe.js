@@ -35,7 +35,27 @@ global.Client = class {
     async post(url, headers, body) { return request("POST", url, headers, typeof body === "string" ? body : JSON.stringify(body)); }
 };
 
+// fetch 모드: node probe.js fetch "주소1 주소2 ..." → 각 주소의 본문을 문자셋(euc-kr 등)에 맞춰 저장
+async function fetchMode(urls) {
+    for (const url of urls.split(/\s+/).filter((u) => u)) {
+        try {
+            const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36" }, redirect: "follow" });
+            const buf = Buffer.from(await res.arrayBuffer());
+            const head = buf.toString("latin1");
+            const cs = (/charset=["']?([\w-]+)/i.exec(res.headers.get("content-type") || "") || /<meta[^>]+charset=["']?([\w-]+)/i.exec(head) || [null, "utf-8"])[1];
+            const text = new TextDecoder(cs.toLowerCase()).decode(buf);
+            const n = String(++seq).padStart(2, "0");
+            const name = `${n}_${url.replace(/^https?:\/\//, "").replace(/[^A-Za-z0-9._-]+/g, "_").substring(0, 80)}.txt`;
+            fs.writeFileSync(path.join(OUT, name), `GET ${url}\n최종 주소: ${res.url}\n상태: ${res.status}\n문자셋: ${cs}\n\n${text}`);
+            console.log(`[${n}] ${res.status} ${cs} ${url} (${text.length}자)`);
+        } catch (e) {
+            console.log(`실패 ${url}: ${e.message}`);
+        }
+    }
+}
+
 (async () => {
+    if (process.argv[2] === "fetch") return fetchMode(process.argv[3] || "");
     const file = process.argv[2];
     const src = fs.readFileSync(file, "utf8") + "\nmodule.exports=DefaultExtension;";
     const m = { exports: {} };
