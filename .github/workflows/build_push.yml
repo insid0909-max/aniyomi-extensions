@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - master
+    # 망가요미 저장소나 설명 문서만 바뀐 경우에는 확장앱을 다시 배포하지 않음
+    paths-ignore:
+      - 'mangayomi/**'
+      - '**.md'
   workflow_dispatch:
 
 permissions:
