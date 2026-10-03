@@ -8,7 +8,7 @@
         tools:replace="android:label,android:icon">
         <meta-data
             android:name="tachiyomi.animeextension.class"
-            android:value="eu.kanade.tachiyomi.animeextension.ko.tvroom.TVroom"
+            android:value="eu.kanade.tachiyomi.animeextension.ko.tvroom.TVroomFactory"
             tools:replace="android:value" />
         <meta-data
             android:name="tachiyomi.animeextension.version"
