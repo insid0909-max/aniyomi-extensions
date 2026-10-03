@@ -321,7 +321,11 @@ async function checkSports() {
     for (const r of records) {
         const home = r.team_name_home || "";
         const away = r.team_name_away || "";
-        const hit = teams.find((t) => norm(home).includes(norm(t)) || norm(away).includes(norm(t)));
+        // "=이름" 은 정확히 같은 팀만 (괄호 속 U23·(N)·여자 표기는 무시) → 국가대표용. 그 외는 이름 일부만 맞아도 됨
+        const bare = (s) => norm(String(s || "").replace(/\([^)]*\)/g, ""));
+        const match = (name, t) => t.startsWith("=") ? bare(name) === norm(t.substring(1)) : norm(name).includes(norm(t));
+        const hit0 = teams.find((t) => match(home, t) || match(away, t));
+        const hit = hit0 && hit0.replace(/^=/, "");
         if (!hit || state.sports.includes(r.id)) continue;
         // time_gmt9 는 한국시간 값에 Z 가 붙어 있음 → UTC 로 9시간 빼서 계산
         const kst = String(r.time_gmt9 || "").replace(/Z$/, "").replace(" ", "T");
