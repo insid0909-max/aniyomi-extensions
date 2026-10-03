@@ -1,0 +1,85 @@
+name: Monitor
+
+# 확장 감시 (사용자 승인: 자동 커밋·재배포 포함)
+# - 매시간: 등록한 작품의 새 회차 확인 → 휴대폰 알림 (ntfy)
+# - 매일 08:41(한국시간): 사이트 주소 확인·자동 갱신(바뀌면 커밋 후 재배포) + 확장 동작 점검
+# 상태와 감시 목록(watchlist.json)은 monitor-state 브랜치에 저장한다.
+on:
+  schedule:
+    - cron: '17 * * * *'
+    - cron: '41 23 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "all | watch | domains | health"
+        required: false
+        default: "all"
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      MONITOR_DIR: mangayomi/tools/monitor
+      STATE_DIR: ${{ github.workspace }}/../monitor-state
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Load state branch
+        run: |
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          if git ls-remote --exit-code --heads "$REMOTE" monitor-state >/dev/null 2>&1; then
+            git clone -q --depth 1 -b monitor-state "$REMOTE" "$STATE_DIR"
+          else
+            mkdir -p "$STATE_DIR" && cd "$STATE_DIR" && git init -q -b monitor-state && git remote add origin "$REMOTE"
+          fi
+
+      - name: Install
+        run: cd "$MONITOR_DIR" && npm install --no-save --silent linkedom@0.18
+
+      - name: Run monitor
+        env:
+          REPO_ROOT: ${{ github.workspace }}
+        run: |
+          MODE="${{ inputs.mode }}"
+          if [ -z "$MODE" ]; then
+            if [ "${{ github.event.schedule }}" = "41 23 * * *" ]; then MODE=all; else MODE=watch; fi
+          fi
+          echo "mode=$MODE"
+          node "$MONITOR_DIR/monitor.js" "$MONITOR_DIR/config.json" "$STATE_DIR" "$MODE"
+
+      - name: Save state
+        if: always()
+        run: |
+          cd "$STATE_DIR"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -q -m "monitor state"
+            git push -q origin monitor-state
+          fi
+
+      - name: Apply domain changes and redeploy
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then echo "주소 변경 없음"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          MSG=$(node -e "const s=require(process.env.STATE_DIR+'/summary.json');console.log(s.domainChanges.map(c=>c.name+' '+c.from.replace('https://','')+' -> '+c.to.replace('https://','')).join(', '))")
+          git add -A
+          git commit -q -m "사이트 주소 자동 갱신: $MSG"
+          git push -q origin HEAD:master
+          gh workflow run build_push.yml --ref master
