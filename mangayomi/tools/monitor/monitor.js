@@ -296,6 +296,10 @@ async function checkWatch() {
 }
 
 (async () => {
+    if (mode === "test") {
+        await notify("🔔 테스트 알림", "ntfy 구독이 정상입니다. 앞으로 주소 변경·고장·새 회차 알림이 이곳으로 옵니다.", "https://wfwf510.com/", "white_check_mark");
+        process.exit(0);
+    }
     if (mode === "all" || mode === "domains") await checkDomains();
     if (mode === "all" || mode === "health") await checkHealth();
     if (mode === "all" || mode === "watch") await checkWatch();
