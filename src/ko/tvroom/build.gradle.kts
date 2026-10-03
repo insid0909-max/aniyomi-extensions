@@ -8,7 +8,7 @@ val extCode = 8705
 
 ext {
     set("extName", "TVroom")
-    set("extClass", ".TVroom")
+    set("extClass", ".TVroomFactory")
     set("extVersionCode", extCode)
 }
 
