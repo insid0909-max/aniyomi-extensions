@@ -7,7 +7,7 @@ const mangayomiSources = [{
     "typeSource": "single",
     "itemType": 1,
     "isNsfw": false,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -231,8 +231,20 @@ class DefaultExtension extends MProvider {
         // window.open, 링크, 폼 이동
         const open = /window\.open\(\s*["']([^"']+)["']/gi;
         while ((m = open.exec(text)) !== null) add(m[1]);
-        const forms = /<form\b[^>]*action=["']([^"']+)["']/gi;
-        while ((m = forms.exec(text)) !== null) add(m[1]);
+        // 자동 제출 폼 (send5video go.php → mode.php?key=...): 숨은 입력값을 붙여 주소로 만든다
+        const forms = /<form\b([^>]*)>([\s\S]*?)<\/form>/gi;
+        while ((m = forms.exec(text)) !== null) {
+            const action = /\saction=["']([^"']*)["']/i.exec(m[1]);
+            const params = [];
+            const inputs = m[2].match(/<input\b[^>]*>/gi) || [];
+            for (const tag of inputs) {
+                const name = /\sname=["']([^"']+)["']/i.exec(tag);
+                const value = /\svalue=["']([^"']*)["']/i.exec(tag);
+                if (name) params.push(`${encodeURIComponent(name[1])}=${encodeURIComponent((value ? value[1] : "").replace(/&amp;/g, "&"))}`);
+            }
+            const target = action && action[1] ? action[1] : pageUrl;
+            add(params.length ? `${target}${target.includes("?") ? "&" : "?"}${params.join("&")}` : target);
+        }
         // 그래도 없으면 글자 안의 다른 사이트 플레이어 주소(mode.php, player, embed 등)를 후보로
         if (out.length === 0) {
             const host = (/^https?:\/\/([^/?#]+)/.exec(pageUrl) || [null, ""])[1];
@@ -240,7 +252,7 @@ class DefaultExtension extends MProvider {
             const ranked = cands
                 .map((u) => u.replace(/&amp;/g, "&"))
                 .filter((u) => !/\.(?:js|css|png|jpe?g|gif|webp|svg|ico|woff2?|ttf)(?:[?#]|$)/i.test(u))
-                .filter((u) => !/(?:googletagmanager|google-analytics|jsdelivr|cloudflare|jquery|fonts\.)/i.test(u))
+                .filter((u) => !/(?:google|youtube|youtu\.be|facebook|twitter|instagram|jsdelivr|cloudflare|jquery|fonts\.)/i.test(u))
                 .filter((u) => !u.includes(`//${host}/`) || /[?&](?:key|v|id|url)=/i.test(u))
                 .sort((a, b) => (PLAYER_HINT.test(b) ? 1 : 0) - (PLAYER_HINT.test(a) ? 1 : 0));
             for (const u of ranked) add(u);
