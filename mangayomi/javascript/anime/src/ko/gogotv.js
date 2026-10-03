@@ -7,7 +7,7 @@ const mangayomiSources = [{
     "typeSource": "single",
     "itemType": 1,
     "isNsfw": false,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -18,6 +18,7 @@ const DEFAULT_BASE_URL = "https://gogotv2.xyz";
 const DOMAIN_RE = /^https:\/\/gogotv\d+\.xyz$/;
 const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
     "Chrome/124.0.0.0 Mobile Safari/537.36";
+const PLAYER_HINT = /(?:mode\.php|player|embed|\/v\/|\/e\/|[?&]key=)/i;
 const MEDIA_RE = /https?:\/\/[^"'\s<>\\]+\.(?:m3u8|mp4)(?:\?[^"'\s<>\\]*)?/i;
 const SEARCH_PARAMS = ["stx", "q", "keyword", "kwd", "search"];
 
@@ -181,7 +182,7 @@ class DefaultExtension extends MProvider {
     }
 
     async crawl(url, referer, depth, visited, trail) {
-        if (depth > 3 || visited[url] || Object.keys(visited).length >= 8) return null;
+        if (depth > 3 || visited[url] || Object.keys(visited).length >= 12) return null;
         visited[url] = true;
 
         let body;
@@ -227,7 +228,24 @@ class DefaultExtension extends MProvider {
                 if (cand && !/^(about|javascript|data):/i.test(cand[1])) add(cand[1]);
             }
         }
-        return out.slice(0, 6);
+        // window.open, 링크, 폼 이동
+        const open = /window\.open\(\s*["']([^"']+)["']/gi;
+        while ((m = open.exec(text)) !== null) add(m[1]);
+        const forms = /<form\b[^>]*action=["']([^"']+)["']/gi;
+        while ((m = forms.exec(text)) !== null) add(m[1]);
+        // 그래도 없으면 글자 안의 다른 사이트 플레이어 주소(mode.php, player, embed 등)를 후보로
+        if (out.length === 0) {
+            const host = (/^https?:\/\/([^/?#]+)/.exec(pageUrl) || [null, ""])[1];
+            const cands = text.match(/https?:\/\/[^"'\s<>()]+/g) || [];
+            const ranked = cands
+                .map((u) => u.replace(/&amp;/g, "&"))
+                .filter((u) => !/\.(?:js|css|png|jpe?g|gif|webp|svg|ico|woff2?|ttf)(?:[?#]|$)/i.test(u))
+                .filter((u) => !/(?:googletagmanager|google-analytics|jsdelivr|cloudflare|jquery|fonts\.)/i.test(u))
+                .filter((u) => !u.includes(`//${host}/`) || /[?&](?:key|v|id|url)=/i.test(u))
+                .sort((a, b) => (PLAYER_HINT.test(b) ? 1 : 0) - (PLAYER_HINT.test(a) ? 1 : 0));
+            for (const u of ranked) add(u);
+        }
+        return out.slice(0, 8);
     }
 
     shortUrl(u) {
