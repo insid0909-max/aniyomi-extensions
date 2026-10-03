@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "all | watch | domains | health"
+        description: "all | watch | domains | health | test"
         required: false
         default: "all"
 
