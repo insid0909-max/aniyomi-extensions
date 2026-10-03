@@ -5,11 +5,11 @@ on:
   workflow_dispatch:
     inputs:
       source:
-        description: "확장 파일 이름 (예: gogotv)"
+        description: "확장 파일 이름 (예: gogotv) 또는 fetch"
         required: true
         default: "gogotv"
       episode:
-        description: "회차 주소 (비우면 인기 목록 첫 작품의 첫 회차)"
+        description: "회차 주소 (비우면 인기 목록 첫 작품의 첫 회차). fetch일 때는 공백으로 구분한 주소들"
         required: false
         default: ""
 
@@ -30,14 +30,18 @@ jobs:
         run: |
           cd mangayomi/tools
           npm install --no-save linkedom@0.18
-          PROBE_OUT="$GITHUB_WORKSPACE/probe-out" node probe.js "../javascript/anime/src/ko/${{ inputs.source }}.js" "${{ inputs.episode }}"
+          if [ "${{ inputs.source }}" = "fetch" ]; then
+            PROBE_OUT="$GITHUB_WORKSPACE/probe-out" node probe.js fetch "${{ inputs.episode }}"
+          else
+            PROBE_OUT="$GITHUB_WORKSPACE/probe-out" node probe.js "../javascript/anime/src/ko/${{ inputs.source }}.js" "${{ inputs.episode }}"
+          fi
 
       - name: Show page bodies
         if: always()
         run: |
           for f in probe-out/*; do
             echo "=================== $f"
-            head -c 30000 "$f"
+            head -c 400000 "$f"
             echo
           done
 
