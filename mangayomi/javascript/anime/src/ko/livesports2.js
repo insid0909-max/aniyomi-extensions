@@ -7,7 +7,7 @@ const mangayomiSources = [{
     "typeSource": "single",
     "itemType": 1,
     "isNsfw": false,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/livesports2.js"
@@ -369,7 +369,8 @@ class DefaultExtension extends MProvider {
         const srcMatch = /<iframe[^>]+src=["']([^"']+)["']/i.exec(filled);
         const playerUrl = this.resolveUrl(`${base}/broadcast`, srcMatch ? srcMatch[1] : filled.trim());
 
-        let m3u8 = this.findM3u8(filled);
+        // liventv 플레이어는 주소의 v 값을 AES로 풀어 m3u8을 얻는다 (앞 16자 = IV, 뒤 16자 = 키)
+        let m3u8 = decryptPlayerParam(playerUrl) || this.findM3u8(filled);
         let referer = playerUrl;
         if (!m3u8 && /^https?:\/\//.test(playerUrl)) {
             const found = await this.searchPage(playerUrl, `${base}/broadcast`, 0);
@@ -507,5 +508,119 @@ class DefaultExtension extends MProvider {
                 switchPreferenceCompat: { title: "팀 이름의 (N) 표기 지우기", summary: "", value: true },
             },
         ];
+    }
+}
+
+// ================= AES-128-CBC 복호화 (liventv 플레이어 v 값) =================
+const AES_SBOX = (() => {
+    const sbox = new Array(256);
+    const inv = new Array(256);
+    let p = 1;
+    let q = 1;
+    do {
+        p = p ^ ((p << 1) & 0xff) ^ (p & 0x80 ? 0x1b : 0);
+        q ^= q << 1;
+        q ^= q << 2;
+        q ^= q << 4;
+        q &= 0xff;
+        if (q & 0x80) q ^= 0x09;
+        const x = (q ^ ((q << 1) | (q >> 7)) ^ ((q << 2) | (q >> 6)) ^ ((q << 3) | (q >> 5)) ^ ((q << 4) | (q >> 4)) ^ 0x63) & 0xff;
+        sbox[p] = x;
+    } while (p !== 1);
+    sbox[0] = 0x63;
+    for (let i = 0; i < 256; i++) inv[sbox[i]] = i;
+    return { sbox, inv };
+})();
+
+function aesXtime(a) {
+    return ((a << 1) ^ (a & 0x80 ? 0x1b : 0)) & 0xff;
+}
+
+function aesMul(a, b) {
+    let r = 0;
+    while (b) {
+        if (b & 1) r ^= a;
+        a = aesXtime(a);
+        b >>= 1;
+    }
+    return r;
+}
+
+function aesExpandKey(key) {
+    const w = key.slice();
+    let rcon = 1;
+    for (let i = 16; i < 176; i += 4) {
+        let t = w.slice(i - 4, i);
+        if (i % 16 === 0) {
+            t = [AES_SBOX.sbox[t[1]] ^ rcon, AES_SBOX.sbox[t[2]], AES_SBOX.sbox[t[3]], AES_SBOX.sbox[t[0]]];
+            rcon = aesXtime(rcon);
+        }
+        for (let j = 0; j < 4; j++) w[i + j] = w[i + j - 16] ^ t[j];
+    }
+    return w;
+}
+
+function aesDecryptBlock(block, w) {
+    let s = block.map((b, i) => b ^ w[160 + i]);
+    for (let round = 9; round >= 0; round--) {
+        const t = new Array(16);
+        for (let c = 0; c < 4; c++) {
+            for (let r = 0; r < 4; r++) t[((c + r) % 4) * 4 + r] = s[c * 4 + r];
+        }
+        s = t.map((b, i) => AES_SBOX.inv[b] ^ w[round * 16 + i]);
+        if (round > 0) {
+            const m = new Array(16);
+            for (let c = 0; c < 4; c++) {
+                const [a0, a1, a2, a3] = s.slice(c * 4, c * 4 + 4);
+                m[c * 4] = aesMul(a0, 14) ^ aesMul(a1, 11) ^ aesMul(a2, 13) ^ aesMul(a3, 9);
+                m[c * 4 + 1] = aesMul(a0, 9) ^ aesMul(a1, 14) ^ aesMul(a2, 11) ^ aesMul(a3, 13);
+                m[c * 4 + 2] = aesMul(a0, 13) ^ aesMul(a1, 9) ^ aesMul(a2, 14) ^ aesMul(a3, 11);
+                m[c * 4 + 3] = aesMul(a0, 11) ^ aesMul(a1, 13) ^ aesMul(a2, 9) ^ aesMul(a3, 14);
+            }
+            s = m;
+        }
+    }
+    return s;
+}
+
+// v 값의 키·IV는 16진수 글자(ASCII)라 글자 코드가 곧 UTF-8 바이트다
+function utf8Bytes(str) {
+    return Array.from(str).map((c) => c.charCodeAt(0) & 0xff);
+}
+
+function aesCbcDecryptHex(hex, keyStr, ivStr) {
+    const data = [];
+    for (let i = 0; i + 1 < hex.length; i += 2) data.push(parseInt(hex.substring(i, i + 2), 16));
+    const key = utf8Bytes(keyStr);
+    let prev = utf8Bytes(ivStr);
+    if (key.length !== 16 || prev.length !== 16 || data.length === 0 || data.length % 16 !== 0) return null;
+    const w = aesExpandKey(key);
+    const out = [];
+    for (let i = 0; i < data.length; i += 16) {
+        const block = data.slice(i, i + 16);
+        const dec = aesDecryptBlock(block, w);
+        for (let j = 0; j < 16; j++) out.push(dec[j] ^ prev[j]);
+        prev = block;
+    }
+    const pad = out[out.length - 1];
+    if (pad < 1 || pad > 16) return null;
+    const text = String.fromCharCode.apply(null, out.slice(0, out.length - pad));
+    try {
+        return typeof escape === "function" ? decodeURIComponent(escape(text)) : text;
+    } catch (e) {
+        return text;
+    }
+}
+
+// 플레이어 주소의 v 값을 풀어 m3u8 주소를 돌려준다. 실패하면 null
+function decryptPlayerParam(playerUrl) {
+    const m = /[?&]v=([0-9a-fA-F]+)/.exec(playerUrl || "");
+    if (!m || m[1].length < 64) return null;
+    const v = m[1];
+    try {
+        const url = aesCbcDecryptHex(v.substring(16, v.length - 16), v.substring(v.length - 16), v.substring(0, 16));
+        return url && /^https?:\/\//.test(url.trim()) ? url.trim() : null;
+    } catch (e) {
+        return null;
     }
 }
