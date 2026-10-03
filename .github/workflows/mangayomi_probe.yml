@@ -1,0 +1,48 @@
+name: Mangayomi probe
+
+# 망가요미 확장을 실제 사이트에 접속해 돌려 보고, 지나간 페이지 본문을 산출물로 남기는 점검용 수동 작업
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "확장 파일 이름 (예: gogotv)"
+        required: true
+        default: "gogotv"
+      episode:
+        description: "회차 주소 (비우면 인기 목록 첫 작품의 첫 회차)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run probe
+        run: |
+          cd mangayomi/tools
+          npm install --no-save linkedom@0.18
+          PROBE_OUT="$GITHUB_WORKSPACE/probe-out" node probe.js "../javascript/anime/src/ko/${{ inputs.source }}.js" "${{ inputs.episode }}"
+
+      - name: Show page bodies
+        if: always()
+        run: |
+          for f in probe-out/*; do
+            echo "=================== $f"
+            head -c 30000 "$f"
+            echo
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-out
+          path: probe-out
