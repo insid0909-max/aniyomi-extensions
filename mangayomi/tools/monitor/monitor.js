@@ -304,6 +304,8 @@ async function checkWatch() {
     fs.writeFileSync(statePath, JSON.stringify(state, null, 1) + "\n");
     fs.writeFileSync(path.join(stateDir, "summary.json"), JSON.stringify(summary, null, 1) + "\n");
     console.log("요약:", JSON.stringify(summary));
+    // 시간 제한용 타이머가 남아 프로세스가 늦게 끝나지 않도록 바로 종료
+    process.exit(0);
 })().catch((e) => {
     console.error("오류", e);
     process.exit(1);
