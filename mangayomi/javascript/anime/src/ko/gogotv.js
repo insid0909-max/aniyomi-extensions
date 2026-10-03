@@ -7,7 +7,7 @@ const mangayomiSources = [{
     "typeSource": "single",
     "itemType": 1,
     "isNsfw": false,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -163,45 +163,88 @@ class DefaultExtension extends MProvider {
     }
 
     // ================= 재생 =================
-    // 회차 링크(외부 영상 사이트)를 열어 페이지, iframe, 압축된 스크립트 안에서 영상 주소를 찾는다
+    // 회차 링크(외부 영상 사이트)에서 시작해 새로고침 태그·스크립트 이동·iframe을 따라가며
+    // 각 페이지 글자 안에서 영상 주소를 찾는다 (망가요미에는 숨은 브라우저가 없음)
     async getVideoList(url) {
         const base = this.getBaseUrl();
-        const res = await this.client.get(url, this.headers(`${base}/`));
-        const pageUrl = (res.request && res.request.url) || url;
-
-        let found = this.findMedia(res.body);
-        let referer = pageUrl;
+        const trail = [];
+        const found = await this.crawl(url, `${base}/`, 0, {}, trail);
         if (!found) {
-            const doc = new Document(res.body);
-            for (const frame of doc.select("iframe[src]")) {
-                const src = this.resolveUrl(pageUrl, frame.attr("src"));
-                if (!/^https?:/.test(src)) continue;
-                try {
-                    const inner = await this.client.get(src, this.headers(pageUrl));
-                    found = this.findMedia(inner.body);
-                    if (found) {
-                        referer = src;
-                        break;
-                    }
-                } catch (e) {
-                    // 다음 iframe
-                }
+            throw new Error(`영상 주소를 찾지 못했습니다. 지나간 페이지: ${trail.join(" → ") || url}`);
+        }
+
+        const origin = (/^(https?:\/\/[^/]+)/.exec(found.referer) || [null, ""])[1];
+        const headers = { "User-Agent": UA, "Referer": found.referer };
+        if (origin) headers["Origin"] = origin;
+        const quality = found.url.includes(".m3u8") ? "고고티비 (HLS)" : "고고티비";
+        return [{ url: found.url, originalUrl: found.url, quality: quality, headers: headers }];
+    }
+
+    async crawl(url, referer, depth, visited, trail) {
+        if (depth > 3 || visited[url] || Object.keys(visited).length >= 8) return null;
+        visited[url] = true;
+
+        let body;
+        try {
+            const res = await this.client.get(url, this.headers(referer));
+            body = String(res.body || "");
+            trail.push(`${this.shortUrl(url)}(${res.statusCode})`);
+        } catch (e) {
+            trail.push(`${this.shortUrl(url)}(오류)`);
+            return null;
+        }
+
+        const media = this.findMedia(body);
+        if (media) return { url: media, referer: url };
+
+        for (const next of this.nextTargets(body, url)) {
+            const found = await this.crawl(next, url, depth + 1, visited, trail);
+            if (found) return found;
+        }
+        return null;
+    }
+
+    // 다음에 열어 볼 주소: 새로고침 태그, 스크립트 이동, iframe(src·data-src)
+    nextTargets(body, pageUrl) {
+        const out = [];
+        const add = (u) => {
+            if (/^(about|javascript|data):/i.test((u || "").trim())) return;
+            const abs = this.resolveUrl(pageUrl, (u || "").replace(/&amp;/g, "&"));
+            if (/^https?:\/\//.test(abs) && !out.includes(abs)) out.push(abs);
+        };
+        const text = body.replace(/\\\//g, "/");
+        let m;
+        const meta = /<meta[^>]+http-equiv=["']?refresh["']?[^>]+content=["'][^"']*url=([^"'>\s]+)/gi;
+        while ((m = meta.exec(text)) !== null) add(m[1]);
+        const js = /(?:location\.href|location\.replace|location\.assign|window\.location|document\.location|top\.location)\s*(?:=|\()\s*["']([^"']+)["']/gi;
+        while ((m = js.exec(text)) !== null) add(m[1]);
+        // 지연 로딩(data-src)을 먼저 보고, 자리표시(about:blank 등)는 건너뜀
+        const tags = text.match(/<iframe\b[^>]*>/gi) || [];
+        for (const tag of tags) {
+            const lazy = /\sdata-src=["']([^"']+)["']/i.exec(tag);
+            const src = /\ssrc=["']([^"']+)["']/i.exec(tag);
+            for (const cand of [lazy, src]) {
+                if (cand && !/^(about|javascript|data):/i.test(cand[1])) add(cand[1]);
             }
         }
-        if (!found) throw new Error(`영상 주소를 찾지 못했습니다: ${pageUrl}`);
+        return out.slice(0, 6);
+    }
 
-        const origin = (/^(https?:\/\/[^/]+)/.exec(referer) || [null, ""])[1];
-        const headers = { "User-Agent": UA, "Referer": referer };
-        if (origin) headers["Origin"] = origin;
-        const quality = found.includes(".m3u8") ? "고고티비 (HLS)" : "고고티비";
-        return [{ url: found, originalUrl: found, quality: quality, headers: headers }];
+    shortUrl(u) {
+        const m = /^https?:\/\/([^/?#]+)([^?#]*)/.exec(u || "");
+        return m ? (m[1] + m[2]).substring(0, 50) : String(u).substring(0, 50);
     }
 
     findMedia(html) {
         if (!html) return null;
-        let text = html.replace(/\\\//g, "/");
+        const text = html.replace(/\\\//g, "/");
         let m = MEDIA_RE.exec(text);
         if (m) return m[0];
+        // base64로 숨긴 주소 (aHR0c... = "http")
+        for (const b64 of text.match(/aHR0c[A-Za-z0-9+/_-]{10,}={0,2}/g) || []) {
+            m = MEDIA_RE.exec(this.base64Decode(b64));
+            if (m) return m[0];
+        }
         // eval(function(p,a,c,k,e,d) ...) 로 압축된 스크립트 풀기
         const packed = text.match(/eval\(function\(p,a,c,k,e,[rd]\)[\s\S]*?\)\)\)?/g) || [];
         for (const p of packed) {
@@ -213,6 +256,30 @@ class DefaultExtension extends MProvider {
             }
         }
         return null;
+    }
+
+    // atob가 없는 환경을 위한 base64(일반·URL용) → 글자 변환
+    base64Decode(s) {
+        const abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        const clean = s.replace(/-/g, "+").replace(/_/g, "/").replace(/=+$/, "");
+        let bits = 0;
+        let value = 0;
+        let out = "";
+        for (const ch of clean) {
+            const idx = abc.indexOf(ch);
+            if (idx < 0) continue;
+            value = (value << 6) | idx;
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                out += String.fromCharCode((value >> bits) & 0xff);
+            }
+        }
+        try {
+            return decodeURIComponent(escape(out));
+        } catch (e) {
+            return out;
+        }
     }
 
     // ================= 필터 / 설정 =================
