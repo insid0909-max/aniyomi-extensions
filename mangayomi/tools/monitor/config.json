@@ -15,7 +15,8 @@
    "range": [
     -3,
     40
-   ]
+   ],
+   "key": "tvwiki"
   },
   {
    "name": "고고티비",
@@ -30,7 +31,8 @@
    "range": [
     -2,
     30
-   ]
+   ],
+   "key": "gogotv"
   },
   {
    "name": "실시간스포츠",
@@ -46,7 +48,8 @@
    "range": [
     -2,
     60
-   ]
+   ],
+   "key": "livesports"
   }
  ],
  "replaceIn": [
@@ -64,18 +67,21 @@
   {
    "name": "티비위키 (망가요미)",
    "file": "mangayomi/javascript/anime/src/ko/tvwiki.js",
-   "depth": "video"
+   "depth": "video",
+   "key": "tvwiki"
   },
   {
    "name": "고고티비 (망가요미)",
    "file": "mangayomi/javascript/anime/src/ko/gogotv.js",
-   "depth": "detail"
+   "depth": "detail",
+   "key": "gogotv"
   },
   {
    "name": "실시간스포츠2 (망가요미)",
    "file": "mangayomi/javascript/anime/src/ko/livesports2.js",
    "depth": "list",
-   "allowEmpty": true
+   "allowEmpty": true,
+   "key": "livesports2"
   }
  ],
  "watchSources": {

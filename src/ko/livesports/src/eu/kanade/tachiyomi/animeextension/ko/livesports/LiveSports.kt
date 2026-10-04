@@ -426,15 +426,20 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
     override fun getFilterList(): AnimeFilterList {
         val (pc, ps) = savedRule(true)
         val (lc, ls) = savedRule(false)
-        return AnimeFilterList(
-            AnimeFilter.Header("종목을 고르면 해당 종목 카드만 표시됩니다"),
-            CategoryFilter(CATEGORY_CHOICES),
-            SortFilter(SORT_CHOICES),
-            AnimeFilter.Separator(),
-            AnimeFilter.Header("기본 인기: 전체 경기 · 기본 최신: 종목별 카드 모두"),
-            AnimeFilter.Header("현재 인기: ${ruleText(pc, ps)}"),
-            AnimeFilter.Header("현재 최신: ${ruleText(lc, ls)}"),
-            RuleFilter(RULE_CHOICES),
+        return ExtStatus.prepend(
+            "livesports",
+            baseUrl,
+            pref(PREF_AUTO_DOMAIN, true),
+            AnimeFilterList(
+                AnimeFilter.Header("종목을 고르면 해당 종목 카드만 표시됩니다"),
+                CategoryFilter(CATEGORY_CHOICES),
+                SortFilter(SORT_CHOICES),
+                AnimeFilter.Separator(),
+                AnimeFilter.Header("기본 인기: 전체 경기 · 기본 최신: 종목별 카드 모두"),
+                AnimeFilter.Header("현재 인기: ${ruleText(pc, ps)}"),
+                AnimeFilter.Header("현재 최신: ${ruleText(lc, ls)}"),
+                RuleFilter(RULE_CHOICES),
+            ),
         )
     }
 

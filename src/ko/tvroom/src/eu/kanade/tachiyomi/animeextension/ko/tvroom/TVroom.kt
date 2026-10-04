@@ -681,10 +681,15 @@ class TVroom : ParsedAnimeHttpSource(), ConfigurableAnimeSource {
     override fun videoFromElement(element: Element): Video = throw UnsupportedOperationException()
     override fun videoUrlParse(document: Document): String = throw UnsupportedOperationException()
 
-    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        CategoryFilter(CATEGORIES),
-        PeriodFilter(PERIODS),
-        ModeFilter(MODES),
+    override fun getFilterList(): AnimeFilterList = ExtStatus.prepend(
+        "tvwiki",
+        getAppPreferences().let { customDomain(it) ?: cachedDomain ?: lastGoodDomain(it) },
+        autoDomain(getAppPreferences()),
+        AnimeFilterList(
+            CategoryFilter(CATEGORIES),
+            PeriodFilter(PERIODS),
+            ModeFilter(MODES),
+        ),
     )
 
     // ================= 설정 화면 =================
