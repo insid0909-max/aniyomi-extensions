@@ -301,28 +301,28 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     private fun addYears(animes: List<SAnime>, movieList: Boolean) {
         val p = prefs()
         fun idOf(a: SAnime) = ID_REGEX.find(a.url)?.groupValues?.get(1)
-        if (movieList && p != null) {
-            val todo = animes.mapNotNull { idOf(it) }.filter { !p.contains("year_$it") }
-            if (todo.isNotEmpty()) {
-                val pool = Executors.newFixedThreadPool(6)
-                try {
-                    todo.map { id ->
-                        pool.submit {
-                            runCatching {
-                                client.newCall(GET("$baseUrl/index.php/vod/detail/id/$id.html", h())).execute().use { res ->
-                                    val doc = Jsoup.parse(res.body.string())
-                                    if (!doc.html().contains(PAGE_MARKER)) return@use
-                                    val eps = doc.select("a[href*=/vod/play/]").distinctBy { it.attr("href") }.size
-                                    val y = doc.selectFirst(".scroll-content a[href*=/year/]")?.text()?.trim().orEmpty()
-                                    // 영화(회차 1개)만 연도 저장, 시리즈는 "-" 로 기록해 다시 읽지 않음
-                                    p.edit().putString("year_$id", if (eps <= 1 && YEAR_REGEX.matches(y)) y else "-").apply()
-                                }
-                            }
-                        }
-                    }.forEach { runCatching { it.get(20, TimeUnit.SECONDS) } }
-                } finally {
-                    pool.shutdown()
+        // 한꺼번에 많이 읽으면 사이트(CloudFront)가 접속을 잠시 차단하므로
+        // 한 번에 하나씩, 간격을 두고, 목록 한 번에 최대 8개만 읽는다. 막히는 기미가 보이면 10분 쉼
+        if (movieList && p != null && System.currentTimeMillis() > p.getLong("year_pause_until", 0L)) {
+            val todo = animes.mapNotNull { idOf(it) }.filter { !p.contains("year_$it") }.take(8)
+            for (id in todo) {
+                val ok = runCatching {
+                    client.newCall(GET("$baseUrl/index.php/vod/detail/id/$id.html", h())).execute().use { res ->
+                        val html = res.body.string()
+                        if (res.code != 200 || !html.contains(PAGE_MARKER)) return@use false
+                        val doc = Jsoup.parse(html)
+                        val eps = doc.select("a[href*=/vod/play/]").distinctBy { it.attr("href") }.size
+                        val y = doc.selectFirst(".scroll-content a[href*=/year/]")?.text()?.trim().orEmpty()
+                        // 영화(회차 1개)만 연도 저장, 시리즈는 "-" 로 기록해 다시 읽지 않음
+                        p.edit().putString("year_$id", if (eps <= 1 && YEAR_REGEX.matches(y)) y else "-").apply()
+                        true
+                    }
+                }.getOrDefault(false)
+                if (!ok) {
+                    p.edit().putLong("year_pause_until", System.currentTimeMillis() + 10 * 60_000L).apply()
+                    break
                 }
+                Thread.sleep(700)
             }
         }
         animes.forEach { a ->

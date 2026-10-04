@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.11",
+    "version": "0.1.12",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -276,29 +276,36 @@ class DefaultExtension extends MProvider {
             const todo = result.list.map(idOf).filter((id) => id && !p.getString(`year_${id}`, ""));
             let ok = 0;
             let fail = 0;
-            for (let i = 0; i < todo.length; i += 6) {
-                await Promise.all(todo.slice(i, i + 6).map(async (id) => {
-                    try {
-                        const { html } = await this.getHtml(`/index.php/vod/detail/id/${id}.html`);
-                        if (!String(html || "").includes("maccms")) {
-                            fail++;
-                            return;
-                        }
-                        const doc = new Document(html);
-                        const eps = {};
-                        for (const a of doc.select("a[href*='/vod/play/']")) eps[a.attr("href")] = true;
-                        const y = doc.selectFirst(".scroll-content a[href*='/year/']");
-                        const year = y ? y.text.trim() : "";
-                        // 영화(회차 1개)만 연도 저장, 시리즈는 "-" 로 기록해 다시 읽지 않음
-                        p.setString(`year_${id}`, Object.keys(eps).length <= 1 && /^(?:19|20)\d{2}$/.test(year) ? year : "-");
-                        ok++;
-                    } catch (e) {
-                        fail++; // 다음에 다시 시도
+            // 한꺼번에 많이 읽으면 사이트(CloudFront)가 접속을 잠시 차단하므로
+            // 한 번에 하나씩, 간격을 두고, 목록 한 번에 최대 8개만 읽는다. 막히는 기미가 보이면 즉시 멈춤
+            const stopUntil = Number(p.getString("year_pause_until", "0")) || 0;
+            const batch = Date.now() < stopUntil ? [] : todo.slice(0, 8);
+            for (const id of batch) {
+                try {
+                    const { html, res } = await this.getHtml(`/index.php/vod/detail/id/${id}.html`);
+                    const code = res ? Number(res.statusCode) : 200;
+                    if (code === 403 || code === 202 || code === 429 || !String(html || "").includes("maccms")) {
+                        fail++;
+                        // 10분 동안 연도 읽기를 쉼
+                        p.setString("year_pause_until", String(Date.now() + 10 * 60000));
+                        break;
                     }
-                }));
+                    const doc = new Document(html);
+                    const eps = {};
+                    for (const a of doc.select("a[href*='/vod/play/']")) eps[a.attr("href")] = true;
+                    const y = doc.selectFirst(".scroll-content a[href*='/year/']");
+                    const year = y ? y.text.trim() : "";
+                    // 영화(회차 1개)만 연도 저장, 시리즈는 "-" 로 기록해 다시 읽지 않음
+                    p.setString(`year_${id}`, Object.keys(eps).length <= 1 && /^(?:19|20)\d{2}$/.test(year) ? year : "-");
+                    ok++;
+                } catch (e) {
+                    fail++;
+                    break;
+                }
+                await new Promise((r) => setTimeout(r, 700));
             }
             // 필터 화면에 보여 줄 진단 (연도 읽기 결과)
-            p.setString("year_diag", `목록 ${result.list.length}개 · 새로 읽음 ${todo.length}개 (성공 ${ok}, 실패 ${fail})`);
+            p.setString("year_diag", `목록 ${result.list.length}개 · 남은 ${todo.length - ok}개 · 이번에 읽음 ${ok}개${fail ? " · 사이트가 막아 10분 쉼" : ""}`);
         }
         let shown = 0;
         for (const x of result.list) {
