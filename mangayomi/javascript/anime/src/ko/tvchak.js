@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.7",
+    "version": "0.1.8",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -290,13 +290,37 @@ class DefaultExtension extends MProvider {
                 });
             });
         });
+        const plot = sum ? sum.text.trim() : "";
+        const rawName = title ? title.text.trim() : "";
+        let name = rawName;
+        let status = 5;
+        let description = plot;
+        if (episodes.length <= 1) {
+            // 영화(회차 1개): 제목 옆에 개봉 연도
+            name = this.titleWithYear(rawName, doc);
+            status = 1;
+        } else {
+            // 드라마·예능: 제목은 그대로, 가장 최근 방영일로 방영 중/종영 판단
+            const dates = episodes.map((e) => Number(e.dateUpload) || 0).filter((t) => t > 0);
+            const latest = dates.length ? Math.max(...dates) : 0;
+            let head = `총 ${episodes.length}회`;
+            if (latest) {
+                const ongoing = Date.now() - latest <= 21 * 86400000;
+                status = ongoing ? 0 : 1;
+                const k = new Date(latest + 9 * 3600000);
+                const pad = (n) => String(n).padStart(2, "0");
+                const day = "일월화수목금토"[k.getUTCDay()];
+                head = `${ongoing ? "방영 중" : "종영"} · 최근 방영: ${k.getUTCFullYear()}.${pad(k.getUTCMonth() + 1)}.${pad(k.getUTCDate())} (${day}) · ${head}`;
+            }
+            description = [head, plot].filter((t) => t).join("\n\n");
+        }
         return {
-            name: this.titleWithYear(title ? title.text.trim() : "", doc),
+            name,
             imageUrl: poster ? this.resolveUrl(`${base}/`, poster.attr("src")) : "",
-            description: sum ? sum.text.trim() : "",
+            description,
             author: doc.select("p.starLink a").map((e) => e.text.trim()).join(", "),
             genre: doc.select(".scroll-content a").map((e) => e.text.trim()).filter((t) => t),
-            status: 5,
+            status,
             link: `${base}${this.toPath(url)}`,
             episodes,
         };
