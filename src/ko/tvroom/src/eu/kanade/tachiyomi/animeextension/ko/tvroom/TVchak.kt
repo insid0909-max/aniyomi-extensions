@@ -308,7 +308,11 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     override fun animeDetailsParse(response: Response): SAnime {
         val doc = response.asDoc()
         return SAnime.create().apply {
-            title = doc.selectFirst("h1.movie-title")?.text()?.trim().orEmpty()
+            val name = doc.selectFirst("h1.movie-title")?.text()?.trim().orEmpty()
+            // 개봉(방영 시작) 연도를 제목 옆에 표시 - 제목에 이미 연도가 있으면 그대로
+            val year = doc.selectFirst(".scroll-content a[href*=/year/]")?.text()?.trim()
+                ?.takeIf { YEAR_REGEX.matches(it) }
+            title = if (year != null && !name.contains(year)) "$name ($year)" else name
             thumbnail_url = doc.selectFirst(".poster img")?.absUrl("src")?.ifEmpty { null }
             genre = doc.select(".scroll-content a").map { it.text().trim() }.filter { it.isNotEmpty() }
                 .joinToString(", ").ifEmpty { null }
@@ -539,6 +543,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         private val PAGE_REGEX = Regex("""/page/(\d+)""")
         private val BG_REGEX = Regex("""url\(['"]?([^'")]+)""")
         private val EP_REGEX = Regex("""(\d+)\s*(?:화|회)""")
+        private val YEAR_REGEX = Regex("""^(?:19|20)\d{2}$""")
         private val DATE_REGEX = Regex("""^(\d{2})/(\d{2})/(\d{2})$""")
         private val PLAYER_REGEX = Regex("""var\s+player_\w+\s*=\s*(\{.*?\})\s*</script>""", RegexOption.DOT_MATCHES_ALL)
         private val MEDIA_REGEX = Regex(
