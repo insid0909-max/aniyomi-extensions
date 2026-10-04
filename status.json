@@ -1,0 +1,30 @@
+{
+ "items": {
+  "tvwiki": {
+   "origin": "https://tvwiki51.net",
+   "domain": "alive",
+   "domainSince": "2026-10-03T17:30:22.767Z",
+   "ok": true,
+   "msg": "목록 30개, 회차 818개, 영상 1개, 상태 미확인",
+   "checkedAt": "2026-10-04T02:24:07.034Z"
+  },
+  "gogotv": {
+   "origin": "https://gogotv2.xyz",
+   "domain": "alive",
+   "domainSince": "2026-10-03T17:30:23.048Z",
+   "ok": true,
+   "msg": "목록 24개, 회차 8개, 상태 미확인",
+   "checkedAt": "2026-10-04T02:24:07.836Z"
+  },
+  "livesports": {
+   "origin": "https://njtv-01.com",
+   "domain": "dead",
+   "domainSince": "2026-10-03T17:30:25.871Z"
+  },
+  "livesports2": {
+   "ok": true,
+   "msg": "목록 5개",
+   "checkedAt": "2026-10-04T02:24:08.435Z"
+  }
+ }
+}
