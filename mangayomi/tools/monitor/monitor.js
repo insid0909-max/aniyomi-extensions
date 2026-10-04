@@ -1,6 +1,6 @@
-// 확장 감시: 사이트 주소 자동 갱신(domains) / 확장 동작 점검(health) / 새 회차 알림(watch)
-// 사용: node monitor.js <config.json> <상태 폴더> <모드: all|watch|domains|health>
-// 결과 알림은 ntfy 로 보내고, 상태는 상태 폴더(state.json, watchlist.json)에 저장한다.
+// 확장 감시: 사이트 주소 자동 갱신(domains) / 확장 동작 점검(health)
+// 사용: node monitor.js <config.json> <상태 폴더> <모드: all|domains|health>
+// 결과는 실행 기록에만 남기고, 상태는 상태 폴더(state.json, status.json)에 저장한다.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -10,26 +10,16 @@ const [configPath, stateDir, mode = "all"] = process.argv.slice(2);
 const ROOT = process.env.REPO_ROOT || process.cwd();
 const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
 const statePath = path.join(stateDir, "state.json");
-const watchPath = path.join(stateDir, "watchlist.json");
 const state = fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, "utf8")) : {};
 state.domains = state.domains || {};
 state.health = state.health || {};
-state.watch = state.watch || {};
 state.prefs = state.prefs || {};
 const summary = { changedFiles: [], domainChanges: [], notes: [] };
 const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
 
-// ---------- 알림 ----------
-async function notify(title, message, click, tag) {
+// ---------- 기록 ----------
+function notify(title, message) {
     console.log(`[알림] ${title} | ${message}`);
-    if (!config.ntfy || process.env.DRY_RUN) return;
-    const body = { topic: config.ntfy, title, message, tags: [tag || "bell"] };
-    if (click) body.click = click;
-    try {
-        await fetch("https://ntfy.sh/", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    } catch (e) {
-        console.log("알림 전송 실패:", e.message);
-    }
 }
 
 function withTimeout(promise, ms, label) {
@@ -125,14 +115,14 @@ async function checkDomains() {
             const files = replaceOrigin(cur, found);
             summary.domainChanges.push({ name: site.name, from: cur, to: found, files });
             state.domains[site.name] = { origin: found, status: "alive", since: new Date().toISOString() };
-            await notify(`🔁 ${site.name} 주소 변경`, `${cur.replace("https://", "")} → ${found.replace("https://", "")}\n확장 기본 주소를 바꿔 다시 배포합니다.`, found, "arrows_counterclockwise");
+            notify(`🔁 ${site.name} 주소 변경`, `${cur.replace("https://", "")} → ${found.replace("https://", "")}\n확장 기본 주소를 바꿔 다시 배포합니다.`, found, "arrows_counterclockwise");
         } else if (verdict === "dead") {
             if (prev.status !== "dead") {
-                await notify(`⚠️ ${site.name} 접속 불가`, `${cur.replace("https://", "")} 가 열리지 않고 새 주소도 찾지 못했습니다 (HTTP ${r.status}${r.error ? ", " + r.error : ""}).`, null, "warning");
+                notify(`⚠️ ${site.name} 접속 불가`, `${cur.replace("https://", "")} 가 열리지 않고 새 주소도 찾지 못했습니다 (HTTP ${r.status}${r.error ? ", " + r.error : ""}).`, null, "warning");
             }
             state.domains[site.name] = { origin: cur, status: "dead", since: prev.status === "dead" ? prev.since : new Date().toISOString() };
         } else {
-            if (prev.status === "dead") await notify(`✅ ${site.name} 다시 열림`, cur.replace("https://", ""), cur, "white_check_mark");
+            if (prev.status === "dead") notify(`✅ ${site.name} 다시 열림`, cur.replace("https://", ""), cur, "white_check_mark");
             state.domains[site.name] = { origin: cur, status: verdict, since: prev.status === verdict ? prev.since : new Date().toISOString() };
         }
     }
@@ -235,65 +225,14 @@ async function checkHealth() {
         console.log(`[점검] ${item.name}: ${ok ? "정상" : "문제"} - ${msg}`);
         report.push(`${ok ? "✅" : "❌"} ${item.name}`);
         const prev = state.health[item.name];
-        if (prev && prev.ok && !ok) await notify(`❌ ${item.name} 고장 의심`, msg, null, "x");
-        if (prev && !prev.ok && ok) await notify(`✅ ${item.name} 정상으로 돌아옴`, msg, null, "white_check_mark");
+        if (prev && prev.ok && !ok) notify(`❌ ${item.name} 고장 의심`, msg, null, "x");
+        if (prev && !prev.ok && ok) notify(`✅ ${item.name} 정상으로 돌아옴`, msg, null, "white_check_mark");
         state.health[item.name] = { ok, msg, at: new Date().toISOString(), since: prev && prev.ok === ok ? prev.since : new Date().toISOString() };
     }
     if (!state.healthStarted) {
         state.healthStarted = new Date().toISOString();
-        await notify(`🩺 ${config.label} 확장 점검 시작`, report.join("\n"), null, "stethoscope");
+        notify(`🩺 ${config.label} 확장 점검 시작`, report.join("\n"), null, "stethoscope");
     }
-}
-
-// ---------- 3) 새 회차 알림 ----------
-function normTitle(s) {
-    return String(s || "").replace(/\s+/g, "").toLowerCase();
-}
-
-async function checkWatch() {
-    const list = fs.existsSync(watchPath) ? JSON.parse(fs.readFileSync(watchPath, "utf8")) : [];
-    let dirty = false;
-    for (const w of list) {
-        const file = (config.watchSources || {})[w.source];
-        if (!file) {
-            console.log(`[회차] 알 수 없는 소스: ${w.source}`);
-            continue;
-        }
-        const key = `${w.source}|${w.url || w.title}`;
-        try {
-            const { ext, source } = loadExtension(path.join(ROOT, file), prefsFor(w.source));
-            if (!w.url) {
-                const res = await withTimeout(ext.search(w.title, 1, ext.getFilterList ? ext.getFilterList() : []), 60000, "검색");
-                const items = (res && res.list) || [];
-                const hit = items.find((x) => normTitle(x.name) === normTitle(w.title)) || items.find((x) => normTitle(x.name).includes(normTitle(w.title)));
-                if (!hit) throw new Error(`검색 결과에서 "${w.title}" 를 찾지 못함`);
-                w.url = hit.link;
-                w.name = hit.name;
-                dirty = true;
-            }
-            const detail = await withTimeout(ext.getDetail(w.url), 120000, "상세");
-            const eps = (detail.chapters || detail.episodes || []).filter((c) => c && c.url);
-            const known = state.watch[key];
-            const urls = eps.map((c) => c.url);
-            if (!known) {
-                state.watch[key] = urls.slice(0, 500);
-                console.log(`[회차] ${w.name || w.title}: 처음 등록 (${eps.length}화)`);
-                continue;
-            }
-            const fresh = eps.filter((c) => !known.includes(c.url));
-            console.log(`[회차] ${w.name || w.title}: 새 회차 ${fresh.length}개`);
-            const base = (prefsFor(w.source).auto_domain || source.baseUrl).replace(/\/+$/, "");
-            for (const c of fresh.slice(0, 5).reverse()) {
-                const link = /^https?:\/\//.test(c.url) ? c.url : base + c.url;
-                await notify(`📢 ${detail.name || w.name || w.title}`, `${c.name} 업데이트 (${source.name})`, link, "books");
-            }
-            if (fresh.length > 5) await notify(`📢 ${detail.name || w.name}`, `새 회차 ${fresh.length}개가 올라왔습니다`, null, "books");
-            state.watch[key] = urls.concat(known.filter((u) => !urls.includes(u))).slice(0, 500);
-        } catch (e) {
-            console.log(`[회차] ${w.title || w.url}: 실패 - ${e.message}`);
-        }
-    }
-    if (dirty) fs.writeFileSync(watchPath, JSON.stringify(list, null, 2) + "\n");
 }
 
 // ---------- 확장이 읽어 가는 상태 요약 (status.json) ----------
@@ -318,62 +257,10 @@ function writeStatus() {
     if (prev !== next) fs.writeFileSync(prevPath, next);
 }
 
-// ---------- 4) 실시간스포츠 경기 알림 ----------
-// teams.json(상태 브랜치)에 적은 팀 이름이 들어간 경기가 곧 시작하면(또는 이미 방송 중이면) 한 번 알림
-async function checkSports() {
-    const sp = config.sports;
-    if (!sp) return;
-    const teamsPath = path.join(stateDir, "teams.json");
-    const teams = fs.existsSync(teamsPath) ? JSON.parse(fs.readFileSync(teamsPath, "utf8")) : [];
-    if (!teams.length) return;
-    const norm = (s) => String(s || "").replace(/\s+/g, "").toLowerCase();
-    const records = [];
-    for (const col of ["view_bw_live_on", "view_bw_live_soon"]) {
-        try {
-            const res = await request("GET", `${sp.api}/api/collections/${col}/records?perPage=500`, { "User-Agent": UA });
-            const items = (JSON.parse(res.body).items || []);
-            for (const it of items) records.push(Object.assign({ live: col === "view_bw_live_on" || it.is_live === 1 }, it));
-        } catch (e) {
-            console.log(`[경기] ${col} 읽기 실패: ${e.message}`);
-        }
-    }
-    state.sports = state.sports || [];
-    const now = Date.now();
-    const windowMs = (sp.notifyBeforeMinutes || 75) * 60000;
-    for (const r of records) {
-        const home = r.team_name_home || "";
-        const away = r.team_name_away || "";
-        // "=이름" 은 정확히 같은 팀만 (괄호 속 U23·(N)·여자 표기는 무시) → 국가대표용. 그 외는 이름 일부만 맞아도 됨
-        const bare = (s) => norm(String(s || "").replace(/\([^)]*\)/g, ""));
-        const match = (name, t) => t.startsWith("=") ? bare(name) === norm(t.substring(1)) : norm(name).includes(norm(t));
-        const hit0 = teams.find((t) => match(home, t) || match(away, t));
-        const hit = hit0 && hit0.replace(/^=/, "");
-        if (!hit || state.sports.includes(r.id)) continue;
-        // time_gmt9 는 한국시간 값에 Z 가 붙어 있음 → UTC 로 9시간 빼서 계산
-        const kst = String(r.time_gmt9 || "").replace(/Z$/, "").replace(" ", "T");
-        const start = kst ? Date.parse(kst + "+09:00") : NaN;
-        const soon = !isNaN(start) && start - now <= windowMs && start - now > -3 * 3600000;
-        if (!r.live && !soon) continue;
-        const hhmm = isNaN(start) ? "" : new Date(start + 9 * 3600000).toISOString().substring(11, 16);
-        const title = r.live ? `🔴 방송 중: ${home} vs ${away}` : `⏰ 곧 시작 ${hhmm}: ${home} vs ${away}`;
-        await notify(title, `${r.league_name || r.sports || ""} · 관심 팀 "${hit}" (실시간스포츠2)`, sp.site, "soccer");
-        state.sports.push(r.id);
-    }
-    state.sports = state.sports.slice(-300);
-    console.log(`[경기] 관심 팀 ${teams.length}개, 경기 ${records.length}개 확인`);
-}
-
 (async () => {
-    if (mode === "test") {
-        await notify("🔔 테스트 알림", "ntfy 구독이 정상입니다. 앞으로 주소 변경·고장·새 회차 알림이 이곳으로 옵니다.", "https://wfwf510.com/", "white_check_mark");
-        process.exit(0);
-    }
     if (mode === "all" || mode === "domains") await checkDomains();
     if (mode === "all" || mode === "health") await checkHealth();
-    if (mode === "all" || mode === "watch") await checkWatch();
-    if (mode === "all" || mode === "watch" || mode === "sports") await checkSports();
     writeStatus();
-    // 하루 한 번(all)만 시각을 남겨, 매시간 상태 커밋이 생기지 않게 함
     if (mode === "all") state.lastRun = { mode, at: new Date().toISOString() };
     fs.writeFileSync(statePath, JSON.stringify(state, null, 1) + "\n");
     fs.writeFileSync(path.join(stateDir, "summary.json"), JSON.stringify(summary, null, 1) + "\n");
