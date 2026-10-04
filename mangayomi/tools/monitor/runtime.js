@@ -5,6 +5,7 @@ const fs = require("fs");
 const { parseHTML } = require("linkedom");
 
 const TIMEOUT_MS = 25000;
+const APP_UA = "Mozilla/5.0 (Linux; Android 13; 22081212UG Build/TKQ1.220829.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/114.0.5735.131 Mobile Safari/537.36";
 
 class El {
     constructor(n) { this.n = n; }
@@ -33,6 +34,8 @@ async function request(method, url, headers, body) {
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
     try {
         const h = Object.assign({}, headers || {});
+        // 망가요미처럼 요청에 User-Agent 가 없으면 앱 기본값(안드로이드 웹뷰)을 넣음
+        if (!Object.keys(h).some((k) => k.toLowerCase() === "user-agent")) h["User-Agent"] = APP_UA;
         let payload;
         if (body !== undefined && body !== null) {
             payload = typeof body === "string" ? body : JSON.stringify(body);
