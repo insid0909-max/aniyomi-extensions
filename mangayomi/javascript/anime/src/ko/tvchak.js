@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -291,7 +291,7 @@ class DefaultExtension extends MProvider {
             });
         });
         return {
-            name: title ? title.text.trim() : "",
+            name: this.titleWithYear(title ? title.text.trim() : "", doc),
             imageUrl: poster ? this.resolveUrl(`${base}/`, poster.attr("src")) : "",
             description: sum ? sum.text.trim() : "",
             author: doc.select("p.starLink a").map((e) => e.text.trim()).join(", "),
@@ -300,6 +300,13 @@ class DefaultExtension extends MProvider {
             link: `${base}${this.toPath(url)}`,
             episodes,
         };
+    }
+
+    /** 개봉(방영 시작) 연도를 제목 옆에 표시 - 제목에 이미 연도가 있으면 그대로 */
+    titleWithYear(name, doc) {
+        const y = doc.selectFirst(".scroll-content a[href*='/year/']");
+        const year = y ? y.text.trim() : "";
+        return /^(?:19|20)\d{2}$/.test(year) && !name.includes(year) ? `${name} (${year})` : name;
     }
 
     // ================= 재생 =================
