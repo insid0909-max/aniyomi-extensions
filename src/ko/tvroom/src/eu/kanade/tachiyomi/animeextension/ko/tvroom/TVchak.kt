@@ -307,18 +307,42 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     // ================= 상세 =================
     override fun animeDetailsParse(response: Response): SAnime {
         val doc = response.asDoc()
+        val name = doc.selectFirst("h1.movie-title")?.text()?.trim().orEmpty()
+        val labels = doc.select("#tagContent a[href*=/vod/play/], .content_playlist a[href*=/vod/play/]")
+            .distinctBy { it.attr("href") }.map { it.text().trim() }
+        val plot = doc.selectFirst("#sum_tag")?.text()?.trim().orEmpty()
         return SAnime.create().apply {
-            val name = doc.selectFirst("h1.movie-title")?.text()?.trim().orEmpty()
-            // 개봉(방영 시작) 연도를 제목 옆에 표시 - 제목에 이미 연도가 있으면 그대로
-            val year = doc.selectFirst(".scroll-content a[href*=/year/]")?.text()?.trim()
-                ?.takeIf { YEAR_REGEX.matches(it) }
-            title = if (year != null && !name.contains(year)) "$name ($year)" else name
             thumbnail_url = doc.selectFirst(".poster img")?.absUrl("src")?.ifEmpty { null }
             genre = doc.select(".scroll-content a").map { it.text().trim() }.filter { it.isNotEmpty() }
                 .joinToString(", ").ifEmpty { null }
             author = doc.select("p.starLink a").joinToString(", ") { it.text().trim() }.ifEmpty { null }
-            description = doc.selectFirst("#sum_tag")?.text()?.trim()
-            status = SAnime.UNKNOWN
+
+            if (labels.size <= 1) {
+                // 영화(회차 1개): 제목 옆에 개봉 연도
+                val year = doc.selectFirst(".scroll-content a[href*=/year/]")?.text()?.trim()
+                    ?.takeIf { YEAR_REGEX.matches(it) }
+                title = if (year != null && !name.contains(year)) "$name ($year)" else name
+                status = SAnime.COMPLETED
+                description = plot
+            } else {
+                // 드라마·예능: 제목은 그대로, 가장 최근 방영일로 방영 중/종영 판단
+                title = name
+                val latest = labels.map { dateOf(it) }.filter { it > 0 }.maxOrNull()
+                status = when {
+                    latest == null -> SAnime.UNKNOWN
+                    System.currentTimeMillis() - latest <= ONGOING_DAYS * 86_400_000L -> SAnime.ONGOING
+                    else -> SAnime.COMPLETED
+                }
+                val head = if (latest != null) {
+                    val fmt = java.text.SimpleDateFormat("yyyy.MM.dd (E)", java.util.Locale.KOREAN)
+                        .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }
+                    val st = if (status == SAnime.ONGOING) "방영 중" else "종영"
+                    "$st · 최근 방영: ${fmt.format(java.util.Date(latest))} · 총 ${labels.size}회"
+                } else {
+                    "총 ${labels.size}회"
+                }
+                description = listOf(head, plot).filter { it.isNotEmpty() }.joinToString("\n\n")
+            }
         }
     }
 
@@ -543,6 +567,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         private val PAGE_REGEX = Regex("""/page/(\d+)""")
         private val BG_REGEX = Regex("""url\(['"]?([^'")]+)""")
         private val EP_REGEX = Regex("""(\d+)\s*(?:화|회)""")
+        private const val ONGOING_DAYS = 21
         private val YEAR_REGEX = Regex("""^(?:19|20)\d{2}$""")
         private val DATE_REGEX = Regex("""^(\d{2})/(\d{2})/(\d{2})$""")
         private val PLAYER_REGEX = Regex("""var\s+player_\w+\s*=\s*(\{.*?\})\s*</script>""", RegexOption.DOT_MATCHES_ALL)
