@@ -310,27 +310,31 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     /**
-     * 목록 카드의 영화 제목 옆에 개봉 연도를 붙임.
-     * 목록 페이지에는 연도가 없어서, 영화 분류 목록일 때 각 작품 상세 페이지에서 연도를 읽어 폰에 저장해 두고
-     * (한 번 읽은 작품은 다시 읽지 않음) 모든 목록에서 저장된 연도를 붙인다.
+     * 목록 카드 제목에 정보를 붙임: 영화는 개봉 연도 "(2024)", 방영 중인 드라마·예능은 최근 방영일 "· 10.04".
+     * 목록 페이지에는 둘 다 없어서 각 작품 상세 페이지에서 읽어 폰에 저장해 둔다.
+     * 영화 연도는 한 번만 읽고, 방영일은 6시간이 지나면 다시 읽는다.
      */
     private fun addYears(animes: List<SAnime>, movieList: Boolean) {
         val p = prefs()
         fun idOf(a: SAnime) = ID_REGEX.find(a.url)?.groupValues?.get(1)
+        val now = System.currentTimeMillis()
         // 한꺼번에 많이 읽으면 사이트(CloudFront)가 접속을 잠시 차단하므로
         // 한 번에 하나씩, 간격을 두고, 목록 한 번에 최대 8개만 읽는다. 막히는 기미가 보이면 10분 쉼
-        if (movieList && p != null && System.currentTimeMillis() > p.getLong("year_pause_until", 0L)) {
-            val todo = animes.mapNotNull { idOf(it) }.filter { !p.contains("year_$it") }.take(8)
-            for (id in todo) {
+        if (p != null && now > p.getLong("year_pause_until", 0L)) {
+            val ids = animes.mapNotNull { idOf(it) }
+            // 처음 보는 작품 먼저, 그다음 방영일이 오래된 시리즈 (영화 목록에서는 시리즈를 다시 읽지 않음)
+            val unknown = ids.filter { !p.contains("year_$it") }
+            val stale = if (movieList) {
+                emptyList()
+            } else {
+                ids.filter { p.getString("year_$it", null) == "-" && now - airOf(p, it).second > AIR_TTL_MS }
+            }
+            for (id in (unknown + stale).take(8)) {
                 val ok = runCatching {
                     client.newCall(GET("$baseUrl/index.php/vod/detail/id/$id.html", h())).execute().use { res ->
                         val html = res.body.string()
                         if (res.code != 200 || !html.contains(PAGE_MARKER)) return@use false
-                        val doc = Jsoup.parse(html)
-                        val eps = doc.select("a[href*=/vod/play/]").distinctBy { it.attr("href") }.size
-                        val y = doc.selectFirst(".scroll-content a[href*=/year/]")?.text()?.trim().orEmpty()
-                        // 영화(회차 1개)만 연도 저장, 시리즈는 "-" 로 기록해 다시 읽지 않음
-                        p.edit().putString("year_$id", if (eps <= 1 && YEAR_REGEX.matches(y)) y else "-").apply()
+                        saveInfo(id, Jsoup.parse(html))
                         true
                     }
                 }.getOrDefault(false)
@@ -341,10 +345,44 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                 Thread.sleep(700)
             }
         }
+        val md = java.text.SimpleDateFormat("MM.dd", java.util.Locale.KOREAN)
+            .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }
         animes.forEach { a ->
-            val y = idOf(a)?.let { p?.getString("year_$it", null) }?.takeIf { YEAR_REGEX.matches(it) } ?: return@forEach
-            if (!a.title.contains(y)) a.title = "${a.title} ($y)"
+            val id = idOf(a) ?: return@forEach
+            val y = p?.getString("year_$id", null) ?: return@forEach
+            if (YEAR_REGEX.matches(y)) {
+                if (!a.title.contains(y)) a.title = "${a.title} ($y)"
+            } else {
+                val latest = airOf(p, id).first
+                if (latest > 0 && now - latest <= ONGOING_DAYS * 86_400_000L) {
+                    a.title = "${a.title} · ${md.format(java.util.Date(latest))}"
+                }
+            }
         }
+    }
+
+    /** 저장된 최근 방영일 (방영일, 읽은 시각). 없으면 (0, 0) */
+    private fun airOf(p: SharedPreferences, id: String): Pair<Long, Long> {
+        val v = p.getString("air_$id", null)?.split("|") ?: return 0L to 0L
+        return (v.getOrNull(0)?.toLongOrNull() ?: 0L) to (v.getOrNull(1)?.toLongOrNull() ?: 0L)
+    }
+
+    /** 상세 페이지에서 영화 연도 또는 시리즈 최근 방영일을 읽어 저장 (목록 카드용) */
+    private fun saveInfo(id: String, doc: Document) {
+        val p = prefs() ?: return
+        val labels = doc.select("#tagContent a[href*=/vod/play/], .content_playlist a[href*=/vod/play/]")
+            .ifEmpty { doc.select("a[href*=/vod/play/]") }
+            .distinctBy { it.attr("href") }.map { it.text().trim() }
+        val e = p.edit()
+        if (labels.size <= 1) {
+            val y = doc.selectFirst(".scroll-content a[href*=/year/]")?.text()?.trim().orEmpty()
+            e.putString("year_$id", if (YEAR_REGEX.matches(y)) y else "-")
+        } else {
+            // 시리즈는 "-" 로 표시하고, 최근 방영일은 따로 저장
+            val latest = labels.map { dateOf(it) }.filter { it > 0 }.maxOrNull() ?: 0L
+            e.putString("year_$id", "-").putString("air_$id", "$latest|${System.currentTimeMillis()}")
+        }
+        e.apply()
     }
 
     private fun thumbOf(box: Element): String? {
@@ -368,6 +406,8 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         val labels = doc.select("#tagContent a[href*=/vod/play/], .content_playlist a[href*=/vod/play/]")
             .distinctBy { it.attr("href") }.map { it.text().trim() }
         val plot = doc.selectFirst("#sum_tag")?.text()?.trim().orEmpty()
+        // 목록 카드에도 같은 연도/방영일이 붙도록 저장
+        ID_REGEX.find(response.request.url.encodedPath)?.groupValues?.get(1)?.let { saveInfo(it, doc) }
         return SAnime.create().apply {
             thumbnail_url = doc.selectFirst(".poster img")?.absUrl("src")?.ifEmpty { null }
             genre = doc.select(".scroll-content a").map { it.text().trim() }.filter { it.isNotEmpty() }
@@ -379,10 +419,6 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                 val year = doc.selectFirst(".scroll-content a[href*=/year/]")?.text()?.trim()
                     ?.takeIf { YEAR_REGEX.matches(it) }
                 title = if (year != null && !name.contains(year)) "$name ($year)" else name
-                // 목록 카드에도 같은 연도가 붙도록 저장
-                ID_REGEX.find(response.request.url.encodedPath)?.groupValues?.get(1)?.let { id ->
-                    prefs()?.edit()?.putString("year_$id", year ?: "-")?.apply()
-                }
                 status = SAnime.COMPLETED
                 description = plot
             } else {
@@ -632,6 +668,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         private val BG_REGEX = Regex("""url\(['"]?([^'")]+)""")
         private val EP_REGEX = Regex("""(\d+)\s*(?:화|회)""")
         private const val ONGOING_DAYS = 21
+        private const val AIR_TTL_MS = 6 * 3_600_000L
         private val ID_REGEX = Regex("""/id/(\d+)""")
         private val MOVIE_LIST_REGEX = Regex("""/vod/(?:show|type)/id/1[/.]""")
         private val YEAR_REGEX = Regex("""^(?:19|20)\d{2}$""")

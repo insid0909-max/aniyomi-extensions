@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.13",
+    "version": "0.1.14",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -33,6 +33,46 @@ const TYPES = [
 const SORTS = [["최신순", "time"], ["인기순", "hits"]];
 
 const RULE_SIZES = [TYPES.length, SORTS.length];
+
+// ---------- 목록 카드용 연도/방영일 저장 ----------
+const ONGOING_DAYS = 21;
+const AIR_TTL_MS = 6 * 3600000;
+
+// 저장된 최근 방영일 [방영일, 읽은 시각]. 없으면 [0, 0]
+function airOf(p, id) {
+    const v = String(p.getString(`air_${id}`, "") || "").split("|");
+    return [Number(v[0]) || 0, Number(v[1]) || 0];
+}
+
+// 회차 이름 "26/10/02" → 한국시간 그날 0시
+function airDate(label) {
+    const m = /^(\d{2})\/(\d{2})\/(\d{2})$/.exec(String(label || "").trim());
+    return m ? Date.UTC(2000 + Number(m[1]), Number(m[2]) - 1, Number(m[3])) - 9 * 3600000 : 0;
+}
+
+// 상세 페이지에서 영화 연도 또는 시리즈 최근 방영일을 읽어 저장
+function saveInfo(p, id, doc) {
+    let links = doc.select("#tagContent a[href*='/vod/play/'], .content_playlist a[href*='/vod/play/']");
+    if (!links.length) links = doc.select("a[href*='/vod/play/']");
+    const seen = {};
+    const labels = [];
+    for (const a of links) {
+        const h = a.attr("href");
+        if (seen[h]) continue;
+        seen[h] = true;
+        labels.push(a.text.trim());
+    }
+    if (labels.length <= 1) {
+        const y = doc.selectFirst(".scroll-content a[href*='/year/']");
+        const year = y ? y.text.trim() : "";
+        p.setString(`year_${id}`, /^(?:19|20)\d{2}$/.test(year) ? year : "-");
+    } else {
+        // 시리즈는 "-" 로 표시하고, 최근 방영일은 따로 저장
+        const latest = Math.max(0, ...labels.map(airDate));
+        p.setString(`year_${id}`, "-");
+        p.setString(`air_${id}`, `${latest}|${Date.now()}`);
+    }
+}
 
 // ---------- 인기/최신 탭 규칙 (필터 조건을 탭에 저장) ----------
 const RULE_CHOICES = [
@@ -339,7 +379,10 @@ class DefaultExtension extends MProvider {
      * 목록 페이지에는 연도가 없어서, 영화 분류 목록일 때 각 작품 상세 페이지에서 연도를 읽어 폰에 저장해 두고
      * (한 번 읽은 작품은 다시 읽지 않음) 모든 목록에서 저장된 연도를 붙인다.
      */
-    async withYears(result, fetchMissing) {
+    // 목록 카드 제목에 정보를 붙임: 영화는 개봉 연도 "(2024)", 방영 중인 드라마·예능은 최근 방영일 "· 10.04".
+    // 목록 페이지에는 둘 다 없어서 각 작품 상세 페이지에서 읽어 폰에 저장해 둔다.
+    // 영화 연도는 한 번만 읽고, 방영일은 6시간이 지나면 다시 읽는다.
+    async withYears(result, movieList) {
         let p;
         try {
             p = new SharedPreferences();
@@ -347,56 +390,59 @@ class DefaultExtension extends MProvider {
             return result;
         }
         const idOf = (x) => (/\/id\/(\d+)/.exec(x.link) || [])[1];
-        if (fetchMissing) {
-            const todo = result.list.map(idOf).filter((id) => id && !p.getString(`year_${id}`, ""));
-            let ok = 0;
-            let fail = 0;
-            // 한꺼번에 많이 읽으면 사이트(CloudFront)가 접속을 잠시 차단하므로
-            // 한 번에 하나씩, 간격을 두고, 목록 한 번에 최대 8개만 읽는다. 막히는 기미가 보이면 즉시 멈춤
-            const stopUntil = Number(p.getString("year_pause_until", "0")) || 0;
-            const batch = Date.now() < stopUntil ? [] : todo.slice(0, 8);
-            for (const id of batch) {
-                try {
-                    const { html, res } = await this.getHtml(`/index.php/vod/detail/id/${id}.html`);
-                    const code = res ? Number(res.statusCode) : 200;
-                    if (code === 403 || code === 202 || code === 429 || !String(html || "").includes("maccms")) {
-                        fail++;
-                        // 10분 동안 연도 읽기를 쉼
-                        p.setString("year_pause_until", String(Date.now() + 10 * 60000));
-                        break;
-                    }
-                    const doc = new Document(html);
-                    const eps = {};
-                    for (const a of doc.select("a[href*='/vod/play/']")) eps[a.attr("href")] = true;
-                    const y = doc.selectFirst(".scroll-content a[href*='/year/']");
-                    const year = y ? y.text.trim() : "";
-                    // 영화(회차 1개)만 연도 저장, 시리즈는 "-" 로 기록해 다시 읽지 않음
-                    p.setString(`year_${id}`, Object.keys(eps).length <= 1 && /^(?:19|20)\d{2}$/.test(year) ? year : "-");
-                    ok++;
-                } catch (e) {
+        const now = Date.now();
+        const ids = result.list.map(idOf).filter((id) => id);
+        // 처음 보는 작품 먼저, 그다음 방영일이 오래된 시리즈 (영화 목록에서는 시리즈를 다시 읽지 않음)
+        const unknown = ids.filter((id) => !p.getString(`year_${id}`, ""));
+        const stale = movieList ? [] : ids.filter((id) => p.getString(`year_${id}`, "") === "-" && now - airOf(p, id)[1] > AIR_TTL_MS);
+        const todo = unknown.concat(stale);
+        let ok = 0;
+        let fail = 0;
+        // 한꺼번에 많이 읽으면 사이트(CloudFront)가 접속을 잠시 차단하므로
+        // 한 번에 하나씩, 간격을 두고, 목록 한 번에 최대 8개만 읽는다. 막히는 기미가 보이면 즉시 멈춤
+        const stopUntil = Number(p.getString("year_pause_until", "0")) || 0;
+        const batch = now < stopUntil ? [] : todo.slice(0, 8);
+        for (const id of batch) {
+            try {
+                const { html, res } = await this.getHtml(`/index.php/vod/detail/id/${id}.html`);
+                const code = res ? Number(res.statusCode) : 200;
+                if (code === 403 || code === 202 || code === 429 || !String(html || "").includes("maccms")) {
                     fail++;
+                    // 10분 동안 읽기를 쉼
+                    p.setString("year_pause_until", String(Date.now() + 10 * 60000));
                     break;
                 }
-                await new Promise((r) => setTimeout(r, 700));
+                saveInfo(p, id, new Document(html));
+                ok++;
+            } catch (e) {
+                fail++;
+                break;
             }
-            // 필터 화면에 보여 줄 진단 (연도 읽기 결과)
-            p.setString("year_diag", `목록 ${result.list.length}개 · 남은 ${todo.length - ok}개 · 이번에 읽음 ${ok}개${fail ? " · 사이트가 막아 10분 쉼" : ""}`);
+            await new Promise((r) => setTimeout(r, 700));
         }
-        let shown = 0;
+        let years = 0;
+        let airs = 0;
         for (const x of result.list) {
             const id = idOf(x);
             const y = id ? p.getString(`year_${id}`, "") : "";
-            if (/^(?:19|20)\d{2}$/.test(y) && !x.name.includes(y)) {
-                x.name = `${x.name} (${y})`;
-                shown++;
+            if (/^(?:19|20)\d{2}$/.test(y)) {
+                if (!x.name.includes(y)) x.name = `${x.name} (${y})`;
+                years++;
+            } else if (y === "-") {
+                const latest = airOf(p, id)[0];
+                if (latest && now - latest <= ONGOING_DAYS * 86400000) {
+                    const k = new Date(latest + 9 * 3600000);
+                    const pad = (n) => String(n).padStart(2, "0");
+                    x.name = `${x.name} · ${pad(k.getUTCMonth() + 1)}.${pad(k.getUTCDate())}`;
+                    airs++;
+                }
             }
         }
-        if (fetchMissing) {
-            try {
-                p.setString("year_diag", `${p.getString("year_diag", "")} · 연도 붙임 ${shown}개`);
-            } catch (e) {
-                // 무시
-            }
+        // 필터 화면에 보여 줄 진단
+        try {
+            p.setString("year_diag", `목록 ${result.list.length}개 · 남은 ${todo.length - ok}개 · 이번에 읽음 ${ok}개${fail ? " · 사이트가 막아 10분 쉼" : ""} · 연도 ${years}개 · 방영일 ${airs}개`);
+        } catch (e) {
+            // 무시
         }
         return result;
     }
@@ -404,6 +450,13 @@ class DefaultExtension extends MProvider {
     // ================= 상세 / 회차 =================
     async getDetail(url) {
         const { doc, base } = await this.getDoc(this.toPath(url));
+        // 목록 카드에도 같은 연도/방영일이 붙도록 저장
+        try {
+            const id = (/\/id\/(\d+)/.exec(this.toPath(url)) || [])[1];
+            if (id) saveInfo(new SharedPreferences(), id, doc);
+        } catch (e) {
+            // 저장 실패는 무시
+        }
         const title = doc.selectFirst("h1.movie-title");
         const poster = doc.selectFirst(".poster img");
         const sum = doc.selectFirst("#sum_tag");
@@ -441,15 +494,6 @@ class DefaultExtension extends MProvider {
             // 영화(회차 1개): 제목 옆에 개봉 연도
             name = this.titleWithYear(rawName, doc);
             status = 1;
-            // 목록 카드에도 같은 연도가 붙도록 저장
-            try {
-                const id = (/\/id\/(\d+)/.exec(this.toPath(url)) || [])[1];
-                const y = doc.selectFirst(".scroll-content a[href*='/year/']");
-                const year = y ? y.text.trim() : "";
-                if (id) new SharedPreferences().setString(`year_${id}`, /^(?:19|20)\d{2}$/.test(year) ? year : "-");
-            } catch (e) {
-                // 저장 실패는 무시
-            }
         } else {
             // 드라마·예능: 제목은 그대로, 가장 최근 방영일로 방영 중/종영 판단
             const dates = episodes.map((e) => Number(e.dateUpload) || 0).filter((t) => t > 0);
