@@ -20,19 +20,19 @@
   "티비위키 (망가요미)": {
    "ok": true,
    "msg": "목록 30개, 회차 818개, 영상 1개, 상태 미확인",
-   "at": "2026-10-04T02:24:07.034Z",
+   "at": "2026-10-04T02:50:49.428Z",
    "since": "2026-10-03T17:30:31.242Z"
   },
   "고고티비 (망가요미)": {
    "ok": true,
    "msg": "목록 24개, 회차 8개, 상태 미확인",
-   "at": "2026-10-04T02:24:07.836Z",
+   "at": "2026-10-04T02:50:50.352Z",
    "since": "2026-10-03T17:30:32.035Z"
   },
   "실시간스포츠2 (망가요미)": {
    "ok": true,
    "msg": "목록 5개",
-   "at": "2026-10-04T02:24:08.435Z",
+   "at": "2026-10-04T02:50:50.929Z",
    "since": "2026-10-03T17:30:32.662Z"
   }
  },
@@ -40,19 +40,22 @@
  "prefs": {
   "티비위키 (망가요미)": {
    "tvwiki_last_good": "https://tvwiki51.net",
-   "status_at": "1791080639999"
+   "status_at": "1791082242079",
+   "status_json": "{\n \"items\": {\n  \"tvwiki\": {\n   \"origin\": \"https://tvwiki51.net\",\n   \"domain\": \"alive\",\n   \"domainSince\": \"2026-10-03T17:30:22.767Z\",\n   \"ok\": true,\n   \"msg\": \"목록 30개, 회차 818개, 영상 1개, 상태 미확인\",\n   \"checkedAt\": \"2026-10-04T02:24:07.034Z\"\n  },\n  \"gogotv\": {\n   \"origin\": \"https://gogotv2.xyz\",\n   \"domain\": \"alive\",\n   \"domainSince\": \"2026-10-03T17:30:23.048Z\",\n   \"ok\": true,\n   \"msg\": \"목록 24개, 회차 8개, 상태 미확인\",\n   \"checkedAt\": \"2026-10-04T02:24:07.836Z\"\n  },\n  \"livesports\": {\n   \"origin\": \"https://njtv-01.com\",\n   \"domain\": \"dead\",\n   \"domainSince\": \"2026-10-03T17:30:25.871Z\"\n  },\n  \"livesports2\": {\n   \"ok\": true,\n   \"msg\": \"목록 5개\",\n   \"checkedAt\": \"2026-10-04T02:24:08.435Z\"\n  }\n }\n}\n"
   },
   "고고티비 (망가요미)": {
-   "status_at": "1791080647035"
+   "status_at": "1791082249429",
+   "status_json": "{\n \"items\": {\n  \"tvwiki\": {\n   \"origin\": \"https://tvwiki51.net\",\n   \"domain\": \"alive\",\n   \"domainSince\": \"2026-10-03T17:30:22.767Z\",\n   \"ok\": true,\n   \"msg\": \"목록 30개, 회차 818개, 영상 1개, 상태 미확인\",\n   \"checkedAt\": \"2026-10-04T02:24:07.034Z\"\n  },\n  \"gogotv\": {\n   \"origin\": \"https://gogotv2.xyz\",\n   \"domain\": \"alive\",\n   \"domainSince\": \"2026-10-03T17:30:23.048Z\",\n   \"ok\": true,\n   \"msg\": \"목록 24개, 회차 8개, 상태 미확인\",\n   \"checkedAt\": \"2026-10-04T02:24:07.836Z\"\n  },\n  \"livesports\": {\n   \"origin\": \"https://njtv-01.com\",\n   \"domain\": \"dead\",\n   \"domainSince\": \"2026-10-03T17:30:25.871Z\"\n  },\n  \"livesports2\": {\n   \"ok\": true,\n   \"msg\": \"목록 5개\",\n   \"checkedAt\": \"2026-10-04T02:24:08.435Z\"\n  }\n }\n}\n"
   },
   "실시간스포츠2 (망가요미)": {
-   "status_at": "1791080647838"
+   "status_at": "1791082250354",
+   "status_json": "{\n \"items\": {\n  \"tvwiki\": {\n   \"origin\": \"https://tvwiki51.net\",\n   \"domain\": \"alive\",\n   \"domainSince\": \"2026-10-03T17:30:22.767Z\",\n   \"ok\": true,\n   \"msg\": \"목록 30개, 회차 818개, 영상 1개, 상태 미확인\",\n   \"checkedAt\": \"2026-10-04T02:24:07.034Z\"\n  },\n  \"gogotv\": {\n   \"origin\": \"https://gogotv2.xyz\",\n   \"domain\": \"alive\",\n   \"domainSince\": \"2026-10-03T17:30:23.048Z\",\n   \"ok\": true,\n   \"msg\": \"목록 24개, 회차 8개, 상태 미확인\",\n   \"checkedAt\": \"2026-10-04T02:24:07.836Z\"\n  },\n  \"livesports\": {\n   \"origin\": \"https://njtv-01.com\",\n   \"domain\": \"dead\",\n   \"domainSince\": \"2026-10-03T17:30:25.871Z\"\n  },\n  \"livesports2\": {\n   \"ok\": true,\n   \"msg\": \"목록 5개\",\n   \"checkedAt\": \"2026-10-04T02:24:08.435Z\"\n  }\n }\n}\n"
   }
  },
  "healthStarted": "2026-10-03T17:30:32.662Z",
  "lastRun": {
   "mode": "all",
-  "at": "2026-10-04T02:24:09.693Z"
+  "at": "2026-10-04T02:50:52.027Z"
  },
  "sports": []
 }
