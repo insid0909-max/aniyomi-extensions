@@ -171,7 +171,8 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
 
     override fun popularAnimeParse(response: Response): AnimesPage = parseList(response.asDoc())
 
-    override fun latestUpdatesRequest(page: Int): Request = GET(showUrl("", "time", page), h())
+    // 분류 없는 최신 목록 주소는 사이트에서 열리지 않아, 첫 화면(오늘의 핫업데이트 + 분류별 최신)을 쓴다
+    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/", h())
 
     override fun latestUpdatesParse(response: Response): AnimesPage = parseList(response.asDoc())
 
@@ -193,6 +194,9 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                 is SortFilter -> sort = SORTS[f.state].second
                 else -> {}
             }
+        }
+        if (type.isEmpty()) {
+            return if (sort == "hits") popularAnimeRequest(page) else latestUpdatesRequest(page)
         }
         return GET(showUrl(type, sort, page), h())
     }
