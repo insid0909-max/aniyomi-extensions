@@ -235,13 +235,20 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         return sb.append(".html").toString()
     }
 
+    // 인기/최신 탭: 필터에서 저장한 조건이 있으면 그 조건으로, 없으면 기본 목록
     override fun popularAnimeRequest(page: Int): Request =
+        TabRule.read(prefs(), true, RULE_SIZES)?.let { filterRequest(page, it) } ?: defaultPopular(page)
+
+    private fun defaultPopular(page: Int): Request =
         GET("$baseUrl/index.php/vod/show2/by/hits/id/100" + (if (page > 1) "/page/$page" else "") + ".html", h())
 
     override fun popularAnimeParse(response: Response): AnimesPage = parseList(response.asDoc())
 
     // 분류 없는 최신 목록 주소는 사이트에서 열리지 않아, 첫 화면(오늘의 핫업데이트 + 분류별 최신)을 쓴다
-    override fun latestUpdatesRequest(page: Int): Request = GET("$baseUrl/", h())
+    override fun latestUpdatesRequest(page: Int): Request =
+        TabRule.read(prefs(), false, RULE_SIZES)?.let { filterRequest(page, it) } ?: defaultLatest()
+
+    private fun defaultLatest(): Request = GET("$baseUrl/", h())
 
     override fun latestUpdatesParse(response: Response): AnimesPage = parseList(response.asDoc())
 
@@ -255,17 +262,26 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
             }
             return GET(url, h())
         }
-        var type = ""
-        var sort = "time"
+        val idx = IntArray(RULE_SIZES.size)
+        var rule = 0
         filters.forEach { f ->
             when (f) {
-                is TypeFilter -> type = TYPES[f.state].second
-                is SortFilter -> sort = SORTS[f.state].second
+                is TypeFilter -> idx[0] = f.state
+                is SortFilter -> idx[1] = f.state
+                is TabRule.RuleFilter -> rule = f.state
                 else -> {}
             }
         }
+        TabRule.apply(prefs(), rule, idx)
+        return filterRequest(page, idx)
+    }
+
+    /** idx = [분류, 정렬] 선택 번호 */
+    private fun filterRequest(page: Int, idx: IntArray): Request {
+        val type = TYPES[idx[0]].second
+        val sort = SORTS[idx[1]].second
         if (type.isEmpty()) {
-            return if (sort == "hits") popularAnimeRequest(page) else latestUpdatesRequest(page)
+            return if (sort == "hits") defaultPopular(page) else defaultLatest()
         }
         return GET(showUrl(type, sort, page), h())
     }
@@ -540,6 +556,9 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
             AnimeFilter.Header("검색어가 없을 때만 적용"),
             TypeFilter(),
             SortFilter(),
+            *TabRule.filters(prefs(), RULE_SIZES, "전체 · 인기순" to "첫 화면 최신") {
+                "${TYPES[it[0]].first} · ${SORTS[it[1]].first}"
+            }.toTypedArray(),
         ),
     )
 
@@ -650,5 +669,6 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
             "애니" to "4",
         )
         private val SORTS = listOf("최신순" to "time", "인기순" to "hits")
+        private val RULE_SIZES = intArrayOf(TYPES.size, SORTS.size)
     }
 }
