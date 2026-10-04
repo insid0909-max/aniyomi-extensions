@@ -73,6 +73,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
 
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor { chain -> domainIntercept(chain) }
+        .addInterceptor { chain -> challengeIntercept(chain) }
         .build()
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
@@ -113,6 +114,74 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         val finalHost = res.request.url.host
         if (finalHost != baseHost && HOST_REGEX.matches(finalHost)) saveDomain("https://$finalHost")
         return res
+    }
+
+    // ================= 보안 확인 페이지 자동 통과 =================
+    // 사이트(CloudFront)가 일정 시간마다 실제 페이지 대신 보안 확인 페이지를 보낸다.
+    // 그럴 때 숨은 WebView 로 같은 주소를 열어 확인을 끝내고(통과 쿠키 저장) 같은 요청을 다시 보낸다.
+    private fun isSitePage(req: Request): Boolean {
+        val path = req.url.encodedPath
+        return req.method == "GET" && HOST_REGEX.matches(req.url.host) &&
+            (path == "/" || path.startsWith("/index.php"))
+    }
+
+    private fun isChallenge(res: Response): Boolean {
+        if (res.header("x-amzn-waf-action") != null) return true
+        if (res.code == 202 || res.code == 405) return true
+        if (res.code !in 200..299) return false
+        val body = res.peekBody(2_000_000).string()
+        return !body.contains(PAGE_MARKER)
+    }
+
+    private fun challengeIntercept(chain: okhttp3.Interceptor.Chain): Response {
+        val req = chain.request()
+        val res = chain.proceed(req)
+        if (!isSitePage(req) || !isChallenge(res)) return res
+        res.close()
+        passChallenge(req.url.toString())
+        val again = chain.proceed(req)
+        if (isChallenge(again)) {
+            again.close()
+            throw Exception("사이트 보안 확인을 자동으로 통과하지 못했습니다. 오른쪽 위 메뉴의 WebView로 한 번 열었다 닫아 주세요.")
+        }
+        return again
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun passChallenge(url: String) = synchronized(CHALLENGE_LOCK) {
+        val latch = CountDownLatch(1)
+        val handler = Handler(Looper.getMainLooper())
+        var webViewRef: WebView? = null
+        handler.post {
+            try {
+                val context = Class.forName("android.app.ActivityThread")
+                    .getMethod("currentApplication").invoke(null) as Application
+                val webView = WebView(context)
+                webViewRef = webView
+                webView.settings.javaScriptEnabled = true
+                webView.settings.domStorageEnabled = true
+                webView.settings.userAgentString = USER_AGENT
+                android.webkit.CookieManager.getInstance().setAcceptCookie(true)
+                webView.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView, pageUrl: String) {
+                        // 확인이 끝나면 실제 페이지(maccms)가 다시 열린다
+                        view.evaluateJavascript("document.documentElement.outerHTML.indexOf('$PAGE_MARKER') >= 0") {
+                            if (it == "true") latch.countDown()
+                        }
+                    }
+                }
+                webView.loadUrl(url, mapOf("Referer" to "$baseUrl/"))
+            } catch (e: Exception) {
+                latch.countDown()
+            }
+        }
+        latch.await(25, TimeUnit.SECONDS)
+        handler.post {
+            android.webkit.CookieManager.getInstance().flush()
+            webViewRef?.stopLoading()
+            webViewRef?.destroy()
+        }
+        Thread.sleep(300)
     }
 
     @Volatile private var lastDiscover = 0L
@@ -460,6 +529,8 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                 "Chrome/124.0.0.0 Mobile Safari/537.36"
 
         private val DISCOVER_LOCK = Any()
+        private val CHALLENGE_LOCK = Any()
+        private const val PAGE_MARKER = "maccms"
 
         private val DOMAIN_REGEX = Regex("""^https://tvchak\d+\.com$""")
         private val HOST_REGEX = Regex("""^tvchak\d+\.com$""")
