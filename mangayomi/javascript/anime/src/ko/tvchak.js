@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.9",
+    "version": "0.1.10",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -261,28 +261,41 @@ class DefaultExtension extends MProvider {
 
     /**
      * 목록 카드의 영화 제목 옆에 개봉 연도를 붙임.
-     * 목록 페이지에는 연도가 없어서 사이트 프로그램(MacCMS)의 작품 정보 API 를 한 번 더 부른다. 막혀 있으면 그대로 둠.
+     * 목록 페이지에는 연도가 없어서, 영화 분류 목록일 때 각 작품 상세 페이지에서 연도를 읽어 폰에 저장해 두고
+     * (한 번 읽은 작품은 다시 읽지 않음) 모든 목록에서 저장된 연도를 붙인다.
      */
-    async withYears(result) {
+    async withYears(result, fetchMissing) {
+        let p;
         try {
-            const ids = result.list.map((x) => (/\/id\/(\d+)/.exec(x.link) || [])[1]).filter((x) => x);
-            if (!ids.length) return result;
-            const base = this.getBaseUrl();
-            const res = await this.client.get(`${base}/api.php/provide/vod/?ac=detail&ids=${ids.join(",")}`, this.headers());
-            const data = JSON.parse(String(res.body || ""));
-            const years = {};
-            for (const v of (data && data.list) || []) {
-                const movie = String(v.type_id) === "1" || String(v.type_id_1) === "1";
-                const y = String(v.vod_year || "").trim();
-                if (movie && /^(?:19|20)\d{2}$/.test(y)) years[String(v.vod_id)] = y;
-            }
-            for (const x of result.list) {
-                const id = (/\/id\/(\d+)/.exec(x.link) || [])[1];
-                const y = years[id];
-                if (y && !x.name.includes(y)) x.name = `${x.name} (${y})`;
-            }
+            p = new SharedPreferences();
         } catch (e) {
-            // API 가 없거나 막힌 사이트면 연도 없이 표시
+            return result;
+        }
+        const idOf = (x) => (/\/id\/(\d+)/.exec(x.link) || [])[1];
+        if (fetchMissing) {
+            const todo = result.list.map(idOf).filter((id) => id && !p.getString(`year_${id}`, ""));
+            for (let i = 0; i < todo.length; i += 6) {
+                await Promise.all(todo.slice(i, i + 6).map(async (id) => {
+                    try {
+                        const { html } = await this.getHtml(`/index.php/vod/detail/id/${id}.html`);
+                        if (!String(html || "").includes("maccms")) return;
+                        const doc = new Document(html);
+                        const eps = {};
+                        for (const a of doc.select("a[href*='/vod/play/']")) eps[a.attr("href")] = true;
+                        const y = doc.selectFirst(".scroll-content a[href*='/year/']");
+                        const year = y ? y.text.trim() : "";
+                        // 영화(회차 1개)만 연도 저장, 시리즈는 "-" 로 기록해 다시 읽지 않음
+                        p.setString(`year_${id}`, Object.keys(eps).length <= 1 && /^(?:19|20)\d{2}$/.test(year) ? year : "-");
+                    } catch (e) {
+                        // 다음에 다시 시도
+                    }
+                }));
+            }
+        }
+        for (const x of result.list) {
+            const id = idOf(x);
+            const y = id ? p.getString(`year_${id}`, "") : "";
+            if (/^(?:19|20)\d{2}$/.test(y) && !x.name.includes(y)) x.name = `${x.name} (${y})`;
         }
         return result;
     }
@@ -327,6 +340,15 @@ class DefaultExtension extends MProvider {
             // 영화(회차 1개): 제목 옆에 개봉 연도
             name = this.titleWithYear(rawName, doc);
             status = 1;
+            // 목록 카드에도 같은 연도가 붙도록 저장
+            try {
+                const id = (/\/id\/(\d+)/.exec(this.toPath(url)) || [])[1];
+                const y = doc.selectFirst(".scroll-content a[href*='/year/']");
+                const year = y ? y.text.trim() : "";
+                if (id) new SharedPreferences().setString(`year_${id}`, /^(?:19|20)\d{2}$/.test(year) ? year : "-");
+            } catch (e) {
+                // 저장 실패는 무시
+            }
         } else {
             // 드라마·예능: 제목은 그대로, 가장 최근 방영일로 방영 중/종영 판단
             const dates = episodes.map((e) => Number(e.dateUpload) || 0).filter((t) => t > 0);
@@ -446,7 +468,9 @@ class DefaultExtension extends MProvider {
                 if (b && b.param) f.param = b.param;
             }
         }
-        return this.withYears(await this.searchBase(query, page, list));
+        const typeF = list.find((f) => f.param === "type");
+        const isMovie = !query && typeF && TYPES[typeF.state || 0] && TYPES[typeF.state || 0][1] === "1";
+        return this.withYears(await this.searchBase(query, page, list), isMovie);
     }
 
     getSourcePreferences() {
