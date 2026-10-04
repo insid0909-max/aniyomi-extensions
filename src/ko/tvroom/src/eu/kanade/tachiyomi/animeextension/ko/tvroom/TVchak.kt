@@ -274,6 +274,8 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
 
     /** 본문(.mobile-main) 안의 작품 카드만 모음 - 옆 추천 목록은 제외 */
     private fun parseList(doc: Document): AnimesPage {
+        // 영화 분류(1) 목록이면 연도를 읽어 옴
+        val movieList = MOVIE_LIST_REGEX.containsMatchIn(doc.location())
         val main = doc.selectFirst(".mobile-main") ?: doc
         val seen = HashSet<String>()
         val animes = main.select(".movie-list-item, .vod-search-list").mapNotNull { box ->
@@ -287,31 +289,44 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                 thumbnail_url = thumbOf(box)
             }
         }.filter { it.title.isNotEmpty() }
-        addYears(animes)
+        addYears(animes, movieList)
         return AnimesPage(animes, hasNextPage(doc))
     }
 
     /**
      * 목록 카드의 영화 제목 옆에 개봉 연도를 붙임.
-     * 목록 페이지에는 연도가 없어서 사이트 프로그램(MacCMS)의 작품 정보 API 를 한 번 더 부른다. 막혀 있으면 그대로 둠.
+     * 목록 페이지에는 연도가 없어서, 영화 분류 목록일 때 각 작품 상세 페이지에서 연도를 읽어 폰에 저장해 두고
+     * (한 번 읽은 작품은 다시 읽지 않음) 모든 목록에서 저장된 연도를 붙인다.
      */
-    private fun addYears(animes: List<SAnime>) {
-        val ids = animes.mapNotNull { ID_REGEX.find(it.url)?.groupValues?.get(1) }
-        if (ids.isEmpty()) return
-        val years = runCatching {
-            val url = "$baseUrl/api.php/provide/vod/?ac=detail&ids=${ids.joinToString(",")}"
-            client.newCall(GET(url, h())).execute().use { res ->
-                val list = JSONObject(res.body.string()).optJSONArray("list") ?: return@use emptyMap<String, String>()
-                (0 until list.length()).mapNotNull { i ->
-                    val v = list.getJSONObject(i)
-                    val movie = v.optString("type_id") == "1" || v.optString("type_id_1") == "1"
-                    val y = v.optString("vod_year").trim()
-                    if (movie && YEAR_REGEX.matches(y)) v.optString("vod_id") to y else null
-                }.toMap()
+    private fun addYears(animes: List<SAnime>, movieList: Boolean) {
+        val p = prefs()
+        fun idOf(a: SAnime) = ID_REGEX.find(a.url)?.groupValues?.get(1)
+        if (movieList && p != null) {
+            val todo = animes.mapNotNull { idOf(it) }.filter { !p.contains("year_$it") }
+            if (todo.isNotEmpty()) {
+                val pool = Executors.newFixedThreadPool(6)
+                try {
+                    todo.map { id ->
+                        pool.submit {
+                            runCatching {
+                                client.newCall(GET("$baseUrl/index.php/vod/detail/id/$id.html", h())).execute().use { res ->
+                                    val doc = Jsoup.parse(res.body.string())
+                                    if (!doc.html().contains(PAGE_MARKER)) return@use
+                                    val eps = doc.select("a[href*=/vod/play/]").distinctBy { it.attr("href") }.size
+                                    val y = doc.selectFirst(".scroll-content a[href*=/year/]")?.text()?.trim().orEmpty()
+                                    // 영화(회차 1개)만 연도 저장, 시리즈는 "-" 로 기록해 다시 읽지 않음
+                                    p.edit().putString("year_$id", if (eps <= 1 && YEAR_REGEX.matches(y)) y else "-").apply()
+                                }
+                            }
+                        }
+                    }.forEach { runCatching { it.get(20, TimeUnit.SECONDS) } }
+                } finally {
+                    pool.shutdown()
+                }
             }
-        }.getOrNull() ?: return
+        }
         animes.forEach { a ->
-            val y = years[ID_REGEX.find(a.url)?.groupValues?.get(1)] ?: return@forEach
+            val y = idOf(a)?.let { p?.getString("year_$it", null) }?.takeIf { YEAR_REGEX.matches(it) } ?: return@forEach
             if (!a.title.contains(y)) a.title = "${a.title} ($y)"
         }
     }
@@ -348,6 +363,10 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                 val year = doc.selectFirst(".scroll-content a[href*=/year/]")?.text()?.trim()
                     ?.takeIf { YEAR_REGEX.matches(it) }
                 title = if (year != null && !name.contains(year)) "$name ($year)" else name
+                // 목록 카드에도 같은 연도가 붙도록 저장
+                ID_REGEX.find(response.request.url.encodedPath)?.groupValues?.get(1)?.let { id ->
+                    prefs()?.edit()?.putString("year_$id", year ?: "-")?.apply()
+                }
                 status = SAnime.COMPLETED
                 description = plot
             } else {
@@ -595,6 +614,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         private val EP_REGEX = Regex("""(\d+)\s*(?:화|회)""")
         private const val ONGOING_DAYS = 21
         private val ID_REGEX = Regex("""/id/(\d+)""")
+        private val MOVIE_LIST_REGEX = Regex("""/vod/(?:show|type)/id/1[/.]""")
         private val YEAR_REGEX = Regex("""^(?:19|20)\d{2}$""")
         private val DATE_REGEX = Regex("""^(\d{2})/(\d{2})/(\d{2})$""")
         private val PLAYER_REGEX = Regex("""var\s+player_\w+\s*=\s*(\{.*?\})\s*</script>""", RegexOption.DOT_MATCHES_ALL)
