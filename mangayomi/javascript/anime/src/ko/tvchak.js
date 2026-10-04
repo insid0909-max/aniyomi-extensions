@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -87,8 +87,17 @@ class DefaultExtension extends MProvider {
     }
 
     async getDoc(path) {
-        const { html, base } = await this.getHtml(path);
+        const { html, base } = await this.getPage(path);
         return { doc: new Document(html), base };
+    }
+
+    /** 사이트(CloudFront)가 일정 시간마다 실제 페이지 대신 보안 확인 페이지를 보냄 → 빈 목록 대신 안내 */
+    async getPage(path) {
+        const r = await this.getHtml(path);
+        if (!String(r.html || "").includes("maccms")) {
+            throw new Error("사이트 보안 확인이 필요합니다. 오른쪽 위 지구본(WebView) 버튼으로 한 번 열었다 닫은 뒤 다시 불러오세요.");
+        }
+        return r;
     }
 
     async discover(current) {
@@ -235,7 +244,7 @@ class DefaultExtension extends MProvider {
 
     // ================= 재생 =================
     async getVideoList(url) {
-        const { html, base } = await this.getHtml(this.toPath(url));
+        const { html, base } = await this.getPage(this.toPath(url));
         const m = /var\s+player_\w+\s*=\s*(\{[\s\S]*?\})\s*<\/script>/.exec(html);
         let media = null;
         if (m) {
