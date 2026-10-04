@@ -43,7 +43,8 @@ async function fetchMode(urls) {
             const buf = Buffer.from(await res.arrayBuffer());
             const head = buf.toString("latin1");
             const cs = (/charset=["']?([\w-]+)/i.exec(res.headers.get("content-type") || "") || /<meta[^>]+charset=["']?([\w-]+)/i.exec(head) || [null, "utf-8"])[1];
-            const text = new TextDecoder(cs.toLowerCase()).decode(buf);
+            const binary = /\.wasm(\?|$)/.test(url) || /wasm|octet-stream|image\//.test(res.headers.get("content-type") || "");
+            const text = binary ? `BASE64\n${buf.toString("base64")}` : new TextDecoder(cs.toLowerCase()).decode(buf);
             const n = String(++seq).padStart(2, "0");
             const name = `${n}_${url.replace(/^https?:\/\//, "").replace(/[^A-Za-z0-9._-]+/g, "_").substring(0, 80)}.txt`;
             fs.writeFileSync(path.join(OUT, name), `GET ${url}\n최종 주소: ${res.url}\n상태: ${res.status}\n문자셋: ${cs}\n\n${text}`);
