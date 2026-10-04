@@ -14,6 +14,7 @@ import android.widget.Toast
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
+import eu.kanade.tachiyomi.animeextension.ko.livesports.ExtStatus
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -332,11 +333,16 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
     class CategoryFilter(choices: Array<String>) : AnimeFilter.Select<String>("종목", choices)
     class SortFilter(choices: Array<String>) : AnimeFilter.Select<String>("정렬", choices)
 
-    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        AnimeFilter.Header("검색창에 팀명이나 대회명을 넣으면 해당 경기만 보입니다"),
-        SrcFilter(SRC_CHOICES),
-        CategoryFilter(CATEGORY_CHOICES),
-        SortFilter(SORT_CHOICES),
+    override fun getFilterList(): AnimeFilterList = ExtStatus.prepend(
+        "livesports2",
+        baseUrl,
+        pref(PREF_AUTO_DOMAIN, true),
+        AnimeFilterList(
+            AnimeFilter.Header("검색창에 팀명이나 대회명을 넣으면 해당 경기만 보입니다"),
+            SrcFilter(SRC_CHOICES),
+            CategoryFilter(CATEGORY_CHOICES),
+            SortFilter(SORT_CHOICES),
+        ),
     )
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
