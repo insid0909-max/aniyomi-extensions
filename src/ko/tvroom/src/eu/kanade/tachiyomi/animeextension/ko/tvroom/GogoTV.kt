@@ -362,11 +362,16 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     // ================= 필터 =================
-    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        AnimeFilter.Header("검색어가 없을 때만 적용"),
-        CategoryFilter(),
-        SortFilter(),
-        CountryFilter(),
+    override fun getFilterList(): AnimeFilterList = ExtStatus.prepend(
+        "gogotv",
+        baseUrl,
+        autoDomain(),
+        AnimeFilterList(
+            AnimeFilter.Header("검색어가 없을 때만 적용"),
+            CategoryFilter(),
+            SortFilter(),
+            CountryFilter(),
+        ),
     )
 
     class CategoryFilter : AnimeFilter.Select<String>("분류", CATEGORIES.map { it.first }.toTypedArray())

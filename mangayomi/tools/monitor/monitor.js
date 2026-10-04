@@ -296,6 +296,28 @@ async function checkWatch() {
     if (dirty) fs.writeFileSync(watchPath, JSON.stringify(list, null, 2) + "\n");
 }
 
+// ---------- 확장이 읽어 가는 상태 요약 (status.json) ----------
+// 확장 필터 화면 맨 위에 "주소 · 점검 결과"를 보여 주는 데 쓰인다. key 는 config 의 sites/health 항목에 적은 값.
+function writeStatus() {
+    const items = {};
+    for (const site of config.sites || []) {
+        if (!site.key) continue;
+        const d = state.domains[site.name];
+        if (!d) continue;
+        items[site.key] = Object.assign(items[site.key] || {}, { origin: d.origin, domain: d.status, domainSince: d.since });
+    }
+    for (const h of config.health || []) {
+        if (!h.key) continue;
+        const r = state.health[h.name];
+        if (!r) continue;
+        items[h.key] = Object.assign(items[h.key] || {}, { ok: r.ok, msg: r.msg, checkedAt: r.at });
+    }
+    const prevPath = path.join(stateDir, "status.json");
+    const prev = fs.existsSync(prevPath) ? fs.readFileSync(prevPath, "utf8") : "";
+    const next = JSON.stringify({ items }, null, 1) + "\n";
+    if (prev !== next) fs.writeFileSync(prevPath, next);
+}
+
 // ---------- 4) 실시간스포츠 경기 알림 ----------
 // teams.json(상태 브랜치)에 적은 팀 이름이 들어간 경기가 곧 시작하면(또는 이미 방송 중이면) 한 번 알림
 async function checkSports() {
@@ -350,6 +372,7 @@ async function checkSports() {
     if (mode === "all" || mode === "health") await checkHealth();
     if (mode === "all" || mode === "watch") await checkWatch();
     if (mode === "all" || mode === "watch" || mode === "sports") await checkSports();
+    writeStatus();
     // 하루 한 번(all)만 시각을 남겨, 매시간 상태 커밋이 생기지 않게 함
     if (mode === "all") state.lastRun = { mode, at: new Date().toISOString() };
     fs.writeFileSync(statePath, JSON.stringify(state, null, 1) + "\n");
