@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -131,7 +131,9 @@ class DefaultExtension extends MProvider {
 
     async getLatestUpdates(page) {
         await statusRefresh(this.client);
-        return this.parseList(await this.getDoc(this.showPath("", "time", page)));
+        // 분류 없는 최신 목록 주소는 사이트에서 열리지 않아, 첫 화면(오늘의 핫업데이트 + 분류별 최신)을 쓴다
+        const r = this.parseList(await this.getDoc("/"));
+        return { list: page > 1 ? [] : r.list, hasNextPage: false };
     }
 
     async searchBase(query, page, filters) {
@@ -147,6 +149,7 @@ class DefaultExtension extends MProvider {
             if (f.param === "type") type = TYPES[f.state || 0][1];
             if (f.param === "sort") sort = SORTS[f.state || 0][1];
         }
+        if (!type) return sort === "hits" ? this.popularBase(page) : this.getLatestUpdates(page);
         return this.parseList(await this.getDoc(this.showPath(type, sort, page)));
     }
 
