@@ -31,6 +31,8 @@ import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.io.ByteArrayInputStream
+import java.util.Calendar
+import java.util.TimeZone
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -230,9 +232,28 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
                 title = dl.selectFirst(".tit")?.text()?.trim()?.ifEmpty { null }
                     ?: img?.attr("alt")?.trim().orEmpty()
                 thumbnail_url = img?.absUrl("src")?.ifEmpty { null }
+                airLabel(dl.selectFirst(".date")?.text().orEmpty())?.let { if (title.isNotEmpty()) title = "$title · $it" }
             }
         }.filter { it.title.isNotEmpty() }
         return AnimesPage(animes, hasNextPage(doc))
+    }
+
+    /**
+     * 카드의 "제19회 26/10/04" · "E344 26/10/04" 에서 최근 방영일을 "10.04" 로.
+     * 최종회이거나 마지막 방영이 오래된(종영으로 보이는) 작품은 붙이지 않음
+     */
+    private fun airLabel(date: String): String? {
+        if (date.contains("최종")) return null
+        val m = CARD_DATE_REGEX.find(date) ?: return null
+        val (yy, mm, dd) = m.destructured
+        val at = runCatching {
+            Calendar.getInstance(TimeZone.getTimeZone("Asia/Seoul")).apply {
+                clear()
+                set(2000 + yy.toInt(), mm.toInt() - 1, dd.toInt())
+            }.timeInMillis
+        }.getOrNull() ?: return null
+        if (System.currentTimeMillis() - at > ONGOING_DAYS * 86_400_000L) return null
+        return "$mm.$dd"
     }
 
     private fun hasNextPage(doc: Document): Boolean {
@@ -494,6 +515,8 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
             "영국" to "7",
             "프랑스" to "8",
         )
+        private val CARD_DATE_REGEX = Regex("""(\d{2})/(\d{2})/(\d{2})""")
+        private const val ONGOING_DAYS = 21
         private val RULE_SIZES = intArrayOf(CATEGORIES.size, SORTS.size, COUNTRIES.size)
     }
 }

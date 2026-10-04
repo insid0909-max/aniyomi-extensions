@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -34,6 +34,18 @@ const COUNTRIES = [
 ];
 
 const RULE_SIZES = [CATEGORIES.length, SORTS.length, COUNTRIES.length];
+
+// 카드의 "제19회 26/10/04" · "E344 26/10/04" 에서 최근 방영일을 "10.04" 로.
+// 최종회이거나 마지막 방영이 오래된(종영으로 보이는) 작품은 붙이지 않음
+function airLabel(date) {
+    const t = String(date || "");
+    if (t.includes("최종")) return "";
+    const m = /(\d{2})\/(\d{2})\/(\d{2})/.exec(t);
+    if (!m) return "";
+    const at = Date.UTC(2000 + Number(m[1]), Number(m[2]) - 1, Number(m[3])) - 9 * 3600000;
+    if (Date.now() - at > 21 * 86400000) return "";
+    return `${m[2]}.${m[3]}`;
+}
 
 // ---------- 인기/최신 탭 규칙 (필터 조건을 탭에 저장) ----------
 const RULE_CHOICES = [
@@ -186,7 +198,8 @@ class DefaultExtension extends MProvider {
             const name = ((titleNode && titleNode.text) || (img && img.attr("alt")) || "").trim();
             if (!name) continue;
             seen[link] = true;
-            list.push({ name: name, imageUrl: img ? this.resolveUrl(`${base}/`, img.attr("src")) : "", link: link });
+            const air = airLabel(dl.selectFirst(".date") ? dl.selectFirst(".date").text : "");
+            list.push({ name: air ? `${name} · ${air}` : name, imageUrl: img ? this.resolveUrl(`${base}/`, img.attr("src")) : "", link: link });
         }
         return { list: list, hasNextPage: this.hasNextPage(doc) };
     }
