@@ -72,6 +72,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
+        .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS))
         .addInterceptor { chain -> domainIntercept(chain) }
         .addInterceptor { chain -> challengeIntercept(chain) }
         .build()
@@ -253,6 +254,10 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     override fun latestUpdatesParse(response: Response): AnimesPage = parseList(response.asDoc())
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        // 사이트 작품 주소를 붙여 넣으면 그 작품을 바로 보여 줌 (주소 번호가 달라도 됨)
+        URL_ID_REGEX.find(query.trim())?.let { m ->
+            return GET("$baseUrl/index.php/vod/detail/id/${m.groupValues[1]}.html", h())
+        }
         if (query.isNotBlank()) {
             val q = URLEncoder.encode(query.trim(), "UTF-8").replace("+", "%20")
             val url = if (page > 1) {
@@ -286,7 +291,24 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         return GET(showUrl(type, sort, page), h())
     }
 
-    override fun searchAnimeParse(response: Response): AnimesPage = parseList(response.asDoc())
+    override fun searchAnimeParse(response: Response): AnimesPage {
+        val doc = response.asDoc()
+        val path = response.request.url.encodedPath
+        if (!path.contains("/vod/detail/")) return parseList(doc)
+        // 주소로 찾은 작품 하나
+        val name = doc.selectFirst("h1.movie-title")?.text()?.trim().orEmpty()
+        if (name.isEmpty()) return AnimesPage(emptyList(), false)
+        return AnimesPage(
+            listOf(
+                SAnime.create().apply {
+                    url = "/index.php" + path.substringAfter("/index.php")
+                    title = name
+                    thumbnail_url = doc.selectFirst(".poster img")?.absUrl("src")?.ifEmpty { null }
+                },
+            ),
+            false,
+        )
+    }
 
     /** 본문(.mobile-main) 안의 작품 카드만 모음 - 옆 추천 목록은 제외 */
     private fun parseList(doc: Document): AnimesPage {
@@ -310,7 +332,8 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     /**
-     * 목록 카드 제목에 정보를 붙임: 영화는 개봉 연도 "(2024)", 방영 중인 드라마·예능은 최근 방영일 "· 10.04".
+     * 목록 카드 제목에 정보를 붙임: 영화는 개봉 연도 "(2024)", 방영 중인 드라마·예능은 앞에 최근 방영일 "10.04 · ".
+     * (제목이 길어 잘려도 날짜는 보이도록 앞에 붙임)
      * 목록 페이지에는 둘 다 없어서 각 작품 상세 페이지에서 읽어 폰에 저장해 둔다.
      * 영화 연도는 한 번만 읽고, 방영일은 6시간이 지나면 다시 읽는다.
      */
@@ -355,7 +378,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
             } else {
                 val latest = airOf(p, id).first
                 if (latest > 0 && now - latest <= ONGOING_DAYS * 86_400_000L) {
-                    a.title = "${a.title} · ${md.format(java.util.Date(latest))}"
+                    a.title = "${md.format(java.util.Date(latest))} · ${a.title}"
                 }
             }
         }
@@ -452,7 +475,8 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         val seen = HashSet<String>()
         boxes.forEachIndexed { bi, box ->
             val links = box.select("a[href*=/vod/play/]")
-            val prefix = if (boxes.size > 1) "[${tabs.getOrNull(bi)?.ifEmpty { null } ?: "서버 ${bi + 1}"}] " else ""
+            // 서버가 여러 개면 서버 이름을 "스캔레이터"로 넣어 앱에서 서버별로 거를 수 있게 함
+            val server = if (boxes.size > 1) tabs.getOrNull(bi)?.ifEmpty { null } ?: "서버 ${bi + 1}" else null
             links.forEachIndexed { i, a ->
                 val path = pathOf(a.attr("href"))
                 if (!seen.add(path)) return@forEachIndexed
@@ -460,7 +484,8 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                 out.add(
                     SEpisode.create().apply {
                         url = path
-                        name = prefix + label
+                        name = label
+                        scanlator = server
                         episode_number = EP_REGEX.find(label)?.groupValues?.get(1)?.toFloatOrNull()
                             ?: (links.size - i).toFloat()
                         date_upload = dateOf(label)
@@ -499,15 +524,15 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         val videos = ArrayList<Video>()
         if (media != null) {
             // 사이트 플레이어(iframe) 안에서 재생되는 것과 같은 Referer 를 붙임. 안 되면 두 번째 항목으로
-            videos.add(Video(media, qualityOf(media), media, videoHeaders(PLAYER_REFERER)))
+            videos.addAll(HlsQuality.expand(client, media, qualityOf(media), videoHeaders(PLAYER_REFERER)))
             videos.add(Video(media, qualityOf(media) + " (대체)", media, videoHeaders("$baseUrl/")))
-            return videos
+            return HlsQuality.sort(prefs(), videos)
         }
 
         // 영상 주소가 바로 없으면 숨은 화면(WebView)으로 열어 영상 요청을 가로챈다
         val (sniffed, referer) = sniffWithWebView(pageUrl)
             ?: throw Exception("영상 주소를 찾지 못했습니다: $pageUrl")
-        return listOf(Video(sniffed, qualityOf(sniffed), sniffed, videoHeaders(referer)))
+        return HlsQuality.sort(prefs(), HlsQuality.expand(client, sniffed, qualityOf(sniffed), videoHeaders(referer)))
     }
 
     private fun decodeUrl(raw: String, encrypt: Int): String = when (encrypt) {
@@ -639,6 +664,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
             summary = "접속이 안 되면 tvchak 번호 주소(현재 번호 -5 ~ +30)를 찾아 자동 변경합니다."
             setDefaultValue(true)
         }.also(screen::addPreference)
+        HlsQuality.addPreference(screen)
     }
 
     // ================= 공용 =================
@@ -669,6 +695,8 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         private val EP_REGEX = Regex("""(\d+)\s*(?:화|회)""")
         private const val ONGOING_DAYS = 21
         private const val AIR_TTL_MS = 6 * 3_600_000L
+        private const val RATE_GAP_MS = 350L
+        private val URL_ID_REGEX = Regex("""^https?://tvchak\d+\.com(?:/.*?)?/vod/(?:detail|play)/id/(\d+)""")
         private val ID_REGEX = Regex("""/id/(\d+)""")
         private val MOVIE_LIST_REGEX = Regex("""/vod/(?:show|type)/id/1[/.]""")
         private val YEAR_REGEX = Regex("""^(?:19|20)\d{2}$""")

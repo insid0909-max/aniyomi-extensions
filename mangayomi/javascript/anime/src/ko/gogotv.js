@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.7",
+    "version": "0.1.8",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -42,9 +42,82 @@ function airLabel(date) {
     if (t.includes("최종")) return "";
     const m = /(\d{2})\/(\d{2})\/(\d{2})/.exec(t);
     if (!m) return "";
-    const at = Date.UTC(2000 + Number(m[1]), Number(m[2]) - 1, Number(m[3])) - 9 * 3600000;
-    if (Date.now() - at > 21 * 86400000) return "";
+    if (Date.now() - airAt(t) > 21 * 86400000) return "";
     return `${m[2]}.${m[3]}`;
+}
+
+// "제19회 26/10/04" → 한국시간 그날 0시 (없으면 0)
+function airAt(text) {
+    const m = /(\d{2})\/(\d{2})\/(\d{2})/.exec(String(text || ""));
+    return m ? Date.UTC(2000 + Number(m[1]), Number(m[2]) - 1, Number(m[3])) - 9 * 3600000 : 0;
+}
+
+// ---------- 접속 속도 제한 · 화질 나누기 ----------
+// 사이트로 가는 요청 사이에 최소 간격 (한꺼번에 많이 요청하면 사이트가 403으로 막음)
+let lastSiteRequest = 0;
+async function siteWait() {
+    const wait = lastSiteRequest + 350 - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastSiteRequest = Date.now();
+}
+
+const QUALITY_CHOICES = ["자동", "1080p", "720p", "480p", "360p"];
+
+// HLS 마스터 목록에 화질이 여러 개면 각각 따로 고를 수 있게 나눔. 하나뿐이거나 읽지 못하면 그대로
+async function hlsExpand(client, url, label, headers) {
+    const one = [{ url, originalUrl: url, quality: label, headers }];
+    if (!url.includes(".m3u8")) return one;
+    let body = "";
+    try {
+        const res = await client.get(url, headers);
+        if (Number(res.statusCode) >= 400) return one;
+        body = String(res.body || "").replace(/\r/g, "");
+    } catch (e) {
+        return one;
+    }
+    const seen = {};
+    const variants = [];
+    const re = /#EXT-X-STREAM-INF:([^\n]*)\n\s*([^\s#][^\n]*)/g;
+    let m;
+    while ((m = re.exec(body))) {
+        const h = /RESOLUTION=\d+x(\d+)/.exec(m[1]);
+        if (!h || seen[h[1]]) continue;
+        seen[h[1]] = true;
+        let u = m[2].trim();
+        if (!/^https?:\/\//.test(u)) {
+            u = u.startsWith("/") ? (/^(https?:\/\/[^/]+)/.exec(url) || [null, ""])[1] + u : url.replace(/[^/]*(?:\?.*)?$/, "") + u;
+        }
+        variants.push({ h: Number(h[1]), u });
+    }
+    if (variants.length < 2) return one;
+    variants.sort((a, b) => b.h - a.h);
+    return [{ url, originalUrl: url, quality: `${label} 자동`, headers }]
+        .concat(variants.map((v) => ({ url: v.u, originalUrl: v.u, quality: `${label} ${v.h}p`, headers })));
+}
+
+// 설정의 선호 화질을 맨 앞으로
+function qualitySort(prefKey, list) {
+    let want = "자동";
+    try {
+        const v = new SharedPreferences().get(prefKey);
+        want = QUALITY_CHOICES[Number(v)] || (QUALITY_CHOICES.includes(v) ? v : "자동");
+    } catch (e) {
+        want = "자동";
+    }
+    return list.filter((x) => x.quality.endsWith(` ${want}`)).concat(list.filter((x) => !x.quality.endsWith(` ${want}`)));
+}
+
+function qualityPreference(key) {
+    return {
+        key,
+        listPreference: {
+            title: "선호 화질",
+            summary: "영상이 여러 화질을 제공할 때 이 화질을 먼저 재생합니다.",
+            valueIndex: 0,
+            entries: QUALITY_CHOICES,
+            entryValues: QUALITY_CHOICES,
+        },
+    };
 }
 
 // ---------- 인기/최신 탭 규칙 (필터 조건을 탭에 저장) ----------
@@ -128,6 +201,7 @@ class DefaultExtension extends MProvider {
     async getDoc(path) {
         const base = this.getBaseUrl();
         const url = path.startsWith("http") ? path : base + path;
+        await siteWait();
         const res = await this.client.get(url, this.headers());
         return { doc: new Document(res.body), base: base };
     }
@@ -158,6 +232,13 @@ class DefaultExtension extends MProvider {
     }
 
     async searchBase(query, page, filters) {
+        // 사이트 작품 주소를 붙여 넣으면 그 작품을 바로 보여 줌 (주소 번호가 달라도 됨)
+        const byUrl = /^https?:\/\/gogotv\d+\.xyz\/player\/([A-Za-z0-9]+)/.exec((query || "").trim());
+        if (byUrl) {
+            const link = `/player/${byUrl[1]}`;
+            const d = await this.getDetail(link);
+            return { list: d.name ? [{ name: d.name, imageUrl: d.imageUrl, link }] : [], hasNextPage: false };
+        }
         if (query && query.trim()) {
             const q = encodeURIComponent(query.trim());
             const pageParam = page > 1 ? `&page=${page}` : "";
@@ -198,8 +279,9 @@ class DefaultExtension extends MProvider {
             const name = ((titleNode && titleNode.text) || (img && img.attr("alt")) || "").trim();
             if (!name) continue;
             seen[link] = true;
+            // 방영 중이면 앞에 최근 방영일 (제목이 길어 잘려도 보이도록), 겹치는 "(2026)" 연도는 뺌
             const air = airLabel(dl.selectFirst(".date") ? dl.selectFirst(".date").text : "");
-            list.push({ name: air ? `${name} · ${air}` : name, imageUrl: img ? this.resolveUrl(`${base}/`, img.attr("src")) : "", link: link });
+            list.push({ name: air ? `${air} · ${name.replace(/\s*\((?:19|20)\d{2}\)\s*$/, "")}` : name, imageUrl: img ? this.resolveUrl(`${base}/`, img.attr("src")) : "", link: link });
         }
         return { list: list, hasNextPage: this.hasNextPage(doc) };
     }
@@ -234,16 +316,32 @@ class DefaultExtension extends MProvider {
             const href = this.resolveUrl(`${base}/`, a.attr("href"));
             if (!href || seen[href]) continue;
             seen[href] = true;
-            links.push({ name: a.text.trim() || "바로보기", url: href });
+            // 아이콘 글꼴 문자·탭 제거
+            const label = a.text.replace(/[\ue000-\uf8ff]/g, "").replace(/\s+/g, " ").trim() || "바로보기";
+            const at = airAt(label);
+            links.push({ name: label, url: href, dateUpload: at ? String(at) : null });
+        }
+
+        // 방영 기간 "2026년 7월 25일 ~ 2027년 1월 10일 (예정)" 과 회차 날짜로 방영 중/종영 판단
+        const period = info.find((t) => t.includes("~"));
+        const status = period ? (period.includes("예정") ? 0 : 1) : 5;
+        const latest = Math.max(0, ...links.map((l) => Number(l.dateUpload) || 0));
+        let head = "";
+        if (latest) {
+            const k = new Date(latest + 9 * 3600000);
+            const pad = (n) => String(n).padStart(2, "0");
+            const day = "일월화수목금토"[k.getUTCDay()];
+            const st = status === 0 ? "방영 중 · " : status === 1 ? "종영 · " : "";
+            head = `${st}최근 방영: ${k.getUTCFullYear()}.${pad(k.getUTCMonth() + 1)}.${pad(k.getUTCDate())} (${day})`;
         }
 
         return {
             name: titleNode ? titleNode.text.trim() : "",
             imageUrl: poster ? this.resolveUrl(`${base}/`, poster.attr("src")) : "",
-            description: info.concat(plotNode ? [plotNode.text.trim()] : []).filter((t) => t).join("\n\n"),
+            description: [head].concat(info, plotNode ? [plotNode.text.trim()] : []).filter((t) => t).join("\n\n"),
             author: cast,
             genre: [],
-            status: 5,
+            status,
             link: url,
             episodes: links,
         };
@@ -264,7 +362,7 @@ class DefaultExtension extends MProvider {
         const headers = { "User-Agent": UA, "Referer": found.referer };
         if (origin) headers["Origin"] = origin;
         const quality = found.url.includes(".m3u8") ? "고고티비 (HLS)" : "고고티비";
-        return [{ url: found.url, originalUrl: found.url, quality: quality, headers: headers }];
+        return qualitySort("gogotv_quality", await hlsExpand(this.client, found.url, quality, headers));
     }
 
     async crawl(url, referer, depth, visited, trail) {
@@ -460,7 +558,7 @@ class DefaultExtension extends MProvider {
                 dialogTitle: "고고티비 주소",
                 dialogMessage: "gogotv숫자.xyz 형식의 HTTPS 주소만 사용됩니다.",
             },
-        }];
+        }, qualityPreference("gogotv_quality")];
     }
 
     // ================= 유틸 =================

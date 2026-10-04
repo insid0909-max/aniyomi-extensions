@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.14",
+    "version": "0.1.15",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -72,6 +72,74 @@ function saveInfo(p, id, doc) {
         p.setString(`year_${id}`, "-");
         p.setString(`air_${id}`, `${latest}|${Date.now()}`);
     }
+}
+
+// ---------- 접속 속도 제한 · 화질 나누기 ----------
+// 사이트로 가는 요청 사이에 최소 간격 (한꺼번에 많이 요청하면 사이트가 403으로 막음)
+let lastSiteRequest = 0;
+async function siteWait() {
+    const wait = lastSiteRequest + 350 - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastSiteRequest = Date.now();
+}
+
+const QUALITY_CHOICES = ["자동", "1080p", "720p", "480p", "360p"];
+
+// HLS 마스터 목록에 화질이 여러 개면 각각 따로 고를 수 있게 나눔. 하나뿐이거나 읽지 못하면 그대로
+async function hlsExpand(client, url, label, headers) {
+    const one = [{ url, originalUrl: url, quality: label, headers }];
+    if (!url.includes(".m3u8")) return one;
+    let body = "";
+    try {
+        const res = await client.get(url, headers);
+        if (Number(res.statusCode) >= 400) return one;
+        body = String(res.body || "").replace(/\r/g, "");
+    } catch (e) {
+        return one;
+    }
+    const seen = {};
+    const variants = [];
+    const re = /#EXT-X-STREAM-INF:([^\n]*)\n\s*([^\s#][^\n]*)/g;
+    let m;
+    while ((m = re.exec(body))) {
+        const h = /RESOLUTION=\d+x(\d+)/.exec(m[1]);
+        if (!h || seen[h[1]]) continue;
+        seen[h[1]] = true;
+        let u = m[2].trim();
+        if (!/^https?:\/\//.test(u)) {
+            u = u.startsWith("/") ? (/^(https?:\/\/[^/]+)/.exec(url) || [null, ""])[1] + u : url.replace(/[^/]*(?:\?.*)?$/, "") + u;
+        }
+        variants.push({ h: Number(h[1]), u });
+    }
+    if (variants.length < 2) return one;
+    variants.sort((a, b) => b.h - a.h);
+    return [{ url, originalUrl: url, quality: `${label} 자동`, headers }]
+        .concat(variants.map((v) => ({ url: v.u, originalUrl: v.u, quality: `${label} ${v.h}p`, headers })));
+}
+
+// 설정의 선호 화질을 맨 앞으로
+function qualitySort(prefKey, list) {
+    let want = "자동";
+    try {
+        const v = new SharedPreferences().get(prefKey);
+        want = QUALITY_CHOICES[Number(v)] || (QUALITY_CHOICES.includes(v) ? v : "자동");
+    } catch (e) {
+        want = "자동";
+    }
+    return list.filter((x) => x.quality.endsWith(` ${want}`)).concat(list.filter((x) => !x.quality.endsWith(` ${want}`)));
+}
+
+function qualityPreference(key) {
+    return {
+        key,
+        listPreference: {
+            title: "선호 화질",
+            summary: "영상이 여러 화질을 제공할 때 이 화질을 먼저 재생합니다.",
+            valueIndex: 0,
+            entries: QUALITY_CHOICES,
+            entryValues: QUALITY_CHOICES,
+        },
+    };
 }
 
 // ---------- 인기/최신 탭 규칙 (필터 조건을 탭에 저장) ----------
@@ -171,6 +239,7 @@ class DefaultExtension extends MProvider {
         const base = this.getBaseUrl();
         const url = path.startsWith("http") ? path : base + path;
         let res = null;
+        await siteWait();
         try {
             res = await this.client.get(url, this.headers());
             if (res.statusCode < 500 && String(res.body || "").length > 0) return { html: res.body, base, res };
@@ -307,6 +376,16 @@ class DefaultExtension extends MProvider {
     }
 
     async searchBase(query, page, filters) {
+        // 사이트 작품 주소를 붙여 넣으면 그 작품을 바로 보여 줌 (주소 번호가 달라도 됨)
+        const byUrl = /^https?:\/\/tvchak\d+\.com(?:\/.*?)?\/vod\/(?:detail|play)\/id\/(\d+)/.exec((query || "").trim());
+        if (byUrl) {
+            const link = `/index.php/vod/detail/id/${byUrl[1]}.html`;
+            const { doc, base } = await this.getDoc(link);
+            const t = doc.selectFirst("h1.movie-title");
+            const img = doc.selectFirst(".poster img");
+            const name = t ? t.text.trim() : "";
+            return { list: name ? [{ name, imageUrl: img ? this.resolveUrl(`${base}/`, img.attr("src")) : "", link }] : [], hasNextPage: false };
+        }
         if (query && query.trim()) {
             const q = encodeURIComponent(query.trim());
             const path = page > 1 ? `/index.php/vod/search/page/${page}/wd/${q}.html` : `/index.php/vod/search.html?wd=${q}`;
@@ -379,7 +458,7 @@ class DefaultExtension extends MProvider {
      * 목록 페이지에는 연도가 없어서, 영화 분류 목록일 때 각 작품 상세 페이지에서 연도를 읽어 폰에 저장해 두고
      * (한 번 읽은 작품은 다시 읽지 않음) 모든 목록에서 저장된 연도를 붙인다.
      */
-    // 목록 카드 제목에 정보를 붙임: 영화는 개봉 연도 "(2024)", 방영 중인 드라마·예능은 최근 방영일 "· 10.04".
+    // 목록 카드 제목에 정보를 붙임: 영화는 개봉 연도 "(2024)", 방영 중인 드라마·예능은 앞에 최근 방영일 "10.04 · ".
     // 목록 페이지에는 둘 다 없어서 각 작품 상세 페이지에서 읽어 폰에 저장해 둔다.
     // 영화 연도는 한 번만 읽고, 방영일은 6시간이 지나면 다시 읽는다.
     async withYears(result, movieList) {
@@ -433,7 +512,8 @@ class DefaultExtension extends MProvider {
                 if (latest && now - latest <= ONGOING_DAYS * 86400000) {
                     const k = new Date(latest + 9 * 3600000);
                     const pad = (n) => String(n).padStart(2, "0");
-                    x.name = `${x.name} · ${pad(k.getUTCMonth() + 1)}.${pad(k.getUTCDate())}`;
+                    // 제목이 길어 잘려도 날짜는 보이도록 앞에 붙임
+                    x.name = `${pad(k.getUTCMonth() + 1)}.${pad(k.getUTCDate())} · ${x.name}`;
                     airs++;
                 }
             }
@@ -466,7 +546,8 @@ class DefaultExtension extends MProvider {
         const episodes = [];
         const seen = {};
         lists.forEach((box, bi) => {
-            const prefix = lists.length > 1 ? `[${tabs[bi] || `서버 ${bi + 1}`}] ` : "";
+            // 서버가 여러 개면 서버 이름을 "스캔레이터"로 넣어 앱에서 서버별로 거를 수 있게 함
+            const server = lists.length > 1 ? tabs[bi] || `서버 ${bi + 1}` : "";
             const links = box.select("a[href*='/vod/play/']");
             links.forEach((a, i) => {
                 const path = this.toPath(a.attr("href"));
@@ -479,8 +560,9 @@ class DefaultExtension extends MProvider {
                 const hasNo = /\d+\s*(?:화|회)/.test(label) && !d;
                 const name = hasNo ? label : `${links.length - i}회 · ${label}`;
                 episodes.push({
-                    name: prefix + name,
+                    name,
                     url: path,
+                    scanlator: server,
                     dateUpload: d ? String(Date.UTC(2000 + +d[1], +d[2] - 1, +d[3]) - 9 * 3600000) : null,
                 });
             });
@@ -548,10 +630,9 @@ class DefaultExtension extends MProvider {
         }
         const q = media.includes(".m3u8") ? "티비착 (HLS)" : "티비착";
         const hd = (ref) => ({ "User-Agent": UA, "Referer": ref, "Origin": ref.replace(/\/$/, "") });
-        return [
-            { url: media, originalUrl: media, quality: q, headers: hd(PLAYER_REFERER) },
-            { url: media, originalUrl: media, quality: `${q} (대체)`, headers: hd(`${base}/`) },
-        ];
+        const list = await hlsExpand(this.client, media, q, hd(PLAYER_REFERER));
+        list.push({ url: media, originalUrl: media, quality: `${q} (대체)`, headers: hd(`${base}/`) });
+        return qualitySort("tvchak_quality", list);
     }
 
     decodeUrl(raw, encrypt) {
@@ -645,7 +726,7 @@ class DefaultExtension extends MProvider {
                 summary: "접속이 안 되면 tvchak 번호 주소(현재 번호 -5 ~ +30)를 찾아 자동 변경",
                 value: true,
             },
-        }];
+        }, qualityPreference("tvchak_quality")];
     }
 
     // ================= 유틸 =================
