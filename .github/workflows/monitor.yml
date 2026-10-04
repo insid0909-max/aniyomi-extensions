@@ -7,6 +7,8 @@ name: Monitor
 on:
   schedule:
     - cron: '17 * * * *'
+    # GitHub 예약 실행이 자주 건너뛰어져서 30분 간격으로 한 번 더 걸어 둠
+    - cron: '47 * * * *'
     - cron: '41 23 * * *'
   workflow_dispatch:
     inputs:
