@@ -66,6 +66,7 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
 
     // 주소 번호가 바뀌어 접속이 안 되면 gogotv 번호 주소를 찾아 자동 연결
     override val client: OkHttpClient = network.client.newBuilder()
+        .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS))
         .addInterceptor { chain -> domainIntercept(chain) }
         .build()
 
@@ -176,6 +177,10 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
     override fun latestUpdatesParse(response: Response): AnimesPage = parseList(response.asDoc())
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
+        // 사이트 작품 주소를 붙여 넣으면 그 작품을 바로 보여 줌 (주소 번호가 달라도 됨)
+        URL_PLAYER_REGEX.find(query.trim())?.let { m ->
+            return GET("$baseUrl/player/${m.groupValues[1]}", h())
+        }
         if (query.isNotBlank()) {
             val url = "$baseUrl/search/".toHttpUrl().newBuilder()
                 .addQueryParameter(SEARCH_PARAMS.first(), query.trim())
@@ -204,6 +209,12 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
 
     override fun searchAnimeParse(response: Response): AnimesPage {
         val url = response.request.url
+        if (url.encodedPath.startsWith("/player/")) {
+            // 주소로 찾은 작품 하나
+            val d = animeDetailsParse(response)
+            if (d.title.isEmpty()) return AnimesPage(emptyList(), false)
+            return AnimesPage(listOf(d.apply { this.url = url.encodedPath }), false)
+        }
         val result = parseList(response.asDoc())
         val query = url.queryParameter(SEARCH_PARAMS.first())
         if (result.animes.isNotEmpty() || query == null || url.encodedPath != "/search/") return result
@@ -232,7 +243,10 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
                 title = dl.selectFirst(".tit")?.text()?.trim()?.ifEmpty { null }
                     ?: img?.attr("alt")?.trim().orEmpty()
                 thumbnail_url = img?.absUrl("src")?.ifEmpty { null }
-                airLabel(dl.selectFirst(".date")?.text().orEmpty())?.let { if (title.isNotEmpty()) title = "$title · $it" }
+                // 방영 중이면 앞에 최근 방영일 (제목이 길어 잘려도 보이도록), 겹치는 "(2026)" 연도는 뺌
+                airLabel(dl.selectFirst(".date")?.text().orEmpty())?.let {
+                    if (title.isNotEmpty()) title = "$it · ${title.replace(TITLE_YEAR_REGEX, "")}"
+                }
             }
         }.filter { it.title.isNotEmpty() }
         return AnimesPage(animes, hasNextPage(doc))
@@ -245,15 +259,20 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
     private fun airLabel(date: String): String? {
         if (date.contains("최종")) return null
         val m = CARD_DATE_REGEX.find(date) ?: return null
-        val (yy, mm, dd) = m.destructured
-        val at = runCatching {
+        val at = dateOf(date).takeIf { it > 0 } ?: return null
+        if (System.currentTimeMillis() - at > ONGOING_DAYS * 86_400_000L) return null
+        return "${m.groupValues[2]}.${m.groupValues[3]}"
+    }
+
+    /** "제19회 26/10/04" → 한국시간 그날 0시 (없으면 0) */
+    private fun dateOf(text: String): Long {
+        val (yy, mm, dd) = CARD_DATE_REGEX.find(text)?.destructured ?: return 0L
+        return runCatching {
             Calendar.getInstance(TimeZone.getTimeZone("Asia/Seoul")).apply {
                 clear()
                 set(2000 + yy.toInt(), mm.toInt() - 1, dd.toInt())
             }.timeInMillis
-        }.getOrNull() ?: return null
-        if (System.currentTimeMillis() - at > ONGOING_DAYS * 86_400_000L) return null
-        return "$mm.$dd"
+        }.getOrDefault(0L)
     }
 
     private fun hasNextPage(doc: Document): Boolean {
@@ -274,11 +293,30 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
             val info = doc.select(".view-floor2-lf-cont .list .right").map { it.text().trim() }
                 .filter { it.isNotEmpty() }
             val plot = doc.selectFirst(".view-floor2-lf-cont .cont")?.text()?.trim().orEmpty()
-            description = (info.filterNot { it.contains(",") } + listOf(plot))
+            // 방영 기간 "2026년 7월 25일 ~ 2027년 1월 10일 (예정)" 과 회차 날짜로 방영 중/종영 판단
+            val period = info.firstOrNull { it.contains("~") }
+            val latest = doc.select(".view-floor1-rt-cont li p.left a").map { dateOf(it.text()) }.maxOrNull() ?: 0L
+            status = when {
+                period != null && period.contains("예정") -> SAnime.ONGOING
+                period != null -> SAnime.COMPLETED
+                else -> SAnime.UNKNOWN
+            }
+            val head = if (latest > 0) {
+                val fmt = java.text.SimpleDateFormat("yyyy.MM.dd (E)", java.util.Locale.KOREAN)
+                    .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }
+                val st = when (status) {
+                    SAnime.ONGOING -> "방영 중 · "
+                    SAnime.COMPLETED -> "종영 · "
+                    else -> ""
+                }
+                "${st}최근 방영: ${fmt.format(java.util.Date(latest))}"
+            } else {
+                ""
+            }
+            description = (listOf(head) + info.filterNot { it.contains(",") } + listOf(plot))
                 .filter { it.isNotEmpty() }.joinToString("\n\n")
             author = doc.select(".view-floor2-lf-cont .list .blue a").joinToString(", ") { it.text().trim() }
                 .ifEmpty { null }
-            status = SAnime.UNKNOWN
         }
     }
 
@@ -288,13 +326,15 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
         val links = doc.select(".view-floor1-rt-cont li").mapNotNull { li ->
             val a = li.selectFirst("p.left a[href]") ?: li.selectFirst("a[href]") ?: return@mapNotNull null
             val href = a.absUrl("href").ifEmpty { return@mapNotNull null }
-            href to a.text().trim().ifEmpty { "바로보기" }
+            // 아이콘 글꼴 문자 제거
+            href to a.text().replace(ICON_REGEX, "").trim().ifEmpty { "바로보기" }
         }.distinctBy { it.first }
 
         return links.mapIndexed { i, (href, label) ->
             SEpisode.create().apply {
                 url = href
                 name = label
+                date_upload = dateOf(label)
                 episode_number = EP_REGEX.find(label)?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() }
                     ?.toFloatOrNull() ?: (links.size - i).toFloat()
             }
@@ -332,7 +372,7 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
             .apply { if (origin != null) set("Origin", origin) }
             .build()
         val quality = if (media.contains(".m3u8")) "고고티비 (HLS)" else "고고티비"
-        return listOf(Video(media, quality, media, vh))
+        return HlsQuality.sort(prefs(), HlsQuality.expand(client, media, quality, vh))
     }
 
     private fun findMedia(text: String): String? =
@@ -450,6 +490,8 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
             summary = "접속이 안 되거나 막히면 gogotv 번호 주소(현재 번호 -5 ~ +30)를 찾아 자동 변경합니다."
             setDefaultValue(true)
         }.also(screen::addPreference)
+
+        HlsQuality.addPreference(screen)
     }
 
     // ================= 공용 =================
@@ -517,6 +559,10 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
         )
         private val CARD_DATE_REGEX = Regex("""(\d{2})/(\d{2})/(\d{2})""")
         private const val ONGOING_DAYS = 21
+        private const val RATE_GAP_MS = 350L
+        private val ICON_REGEX = Regex("[\\uE000-\\uF8FF]")
+        private val TITLE_YEAR_REGEX = Regex("""\s*\((?:19|20)\d{2}\)\s*$""")
+        private val URL_PLAYER_REGEX = Regex("""^https?://gogotv\d+\.xyz/player/([A-Za-z0-9]+)""")
         private val RULE_SIZES = intArrayOf(CATEGORIES.size, SORTS.size, COUNTRIES.size)
     }
 }
