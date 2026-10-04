@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.10",
+    "version": "0.1.11",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -274,11 +274,16 @@ class DefaultExtension extends MProvider {
         const idOf = (x) => (/\/id\/(\d+)/.exec(x.link) || [])[1];
         if (fetchMissing) {
             const todo = result.list.map(idOf).filter((id) => id && !p.getString(`year_${id}`, ""));
+            let ok = 0;
+            let fail = 0;
             for (let i = 0; i < todo.length; i += 6) {
                 await Promise.all(todo.slice(i, i + 6).map(async (id) => {
                     try {
                         const { html } = await this.getHtml(`/index.php/vod/detail/id/${id}.html`);
-                        if (!String(html || "").includes("maccms")) return;
+                        if (!String(html || "").includes("maccms")) {
+                            fail++;
+                            return;
+                        }
                         const doc = new Document(html);
                         const eps = {};
                         for (const a of doc.select("a[href*='/vod/play/']")) eps[a.attr("href")] = true;
@@ -286,16 +291,30 @@ class DefaultExtension extends MProvider {
                         const year = y ? y.text.trim() : "";
                         // 영화(회차 1개)만 연도 저장, 시리즈는 "-" 로 기록해 다시 읽지 않음
                         p.setString(`year_${id}`, Object.keys(eps).length <= 1 && /^(?:19|20)\d{2}$/.test(year) ? year : "-");
+                        ok++;
                     } catch (e) {
-                        // 다음에 다시 시도
+                        fail++; // 다음에 다시 시도
                     }
                 }));
             }
+            // 필터 화면에 보여 줄 진단 (연도 읽기 결과)
+            p.setString("year_diag", `목록 ${result.list.length}개 · 새로 읽음 ${todo.length}개 (성공 ${ok}, 실패 ${fail})`);
         }
+        let shown = 0;
         for (const x of result.list) {
             const id = idOf(x);
             const y = id ? p.getString(`year_${id}`, "") : "";
-            if (/^(?:19|20)\d{2}$/.test(y) && !x.name.includes(y)) x.name = `${x.name} (${y})`;
+            if (/^(?:19|20)\d{2}$/.test(y) && !x.name.includes(y)) {
+                x.name = `${x.name} (${y})`;
+                shown++;
+            }
+        }
+        if (fetchMissing) {
+            try {
+                p.setString("year_diag", `${p.getString("year_diag", "")} · 연도 붙임 ${shown}개`);
+            } catch (e) {
+                // 무시
+            }
         }
         return result;
     }
@@ -449,7 +468,14 @@ class DefaultExtension extends MProvider {
     }
 
     getFilterList() {
-        return statusFilters("tvchak", this.getBaseUrl(), this.autoOn()).concat(this.baseFilterList());
+        let diag = "";
+        try {
+            diag = new SharedPreferences().getString("year_diag", "");
+        } catch (e) {
+            diag = "";
+        }
+        const extra = diag ? [{ type_name: "HeaderFilter", name: `🎬 영화 연도: ${diag}`, _status: true }] : [];
+        return statusFilters("tvchak", this.getBaseUrl(), this.autoOn()).concat(extra, this.baseFilterList());
     }
 
     async getPopular(page) {
