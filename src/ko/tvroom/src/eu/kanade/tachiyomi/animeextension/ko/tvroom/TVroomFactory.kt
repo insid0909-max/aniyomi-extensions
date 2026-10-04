@@ -18,11 +18,6 @@ class TVroomFactory : AnimeSourceFactory {
     override fun createSources(): List<AnimeSource> {
         val list = mutableListOf<AnimeSource>()
         try {
-            list.add(TVroom()) // 티비위키
-        } catch (e: Throwable) {
-            list.add(ErrorSource("티비위키 오류", e))
-        }
-        try {
             list.add(GogoTV()) // 고고티비
         } catch (e: Throwable) {
             list.add(ErrorSource("고고티비 오류", e))
