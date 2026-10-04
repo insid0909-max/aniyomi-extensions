@@ -27,6 +27,11 @@ class TVroomFactory : AnimeSourceFactory {
         } catch (e: Throwable) {
             list.add(ErrorSource("고고티비 오류", e))
         }
+        try {
+            list.add(TVchak()) // 티비착
+        } catch (e: Throwable) {
+            list.add(ErrorSource("티비착 오류", e))
+        }
         return list
     }
 }
