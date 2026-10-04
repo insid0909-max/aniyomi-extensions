@@ -160,11 +160,16 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
         return b.build().toString()
     }
 
-    override fun popularAnimeRequest(page: Int): Request = GET(listUrl("list-drama", "2", "", page), h())
+    // 인기/최신 탭: 필터에서 저장한 조건이 있으면 그 조건으로, 없으면 기본 목록
+    override fun popularAnimeRequest(page: Int): Request =
+        TabRule.read(prefs(), true, RULE_SIZES)?.let { filterRequest(page, it) }
+            ?: GET(listUrl("list-drama", "2", "", page), h())
 
     override fun popularAnimeParse(response: Response): AnimesPage = parseList(response.asDoc())
 
-    override fun latestUpdatesRequest(page: Int): Request = GET(listUrl("list-drama", "1", "", page), h())
+    override fun latestUpdatesRequest(page: Int): Request =
+        TabRule.read(prefs(), false, RULE_SIZES)?.let { filterRequest(page, it) }
+            ?: GET(listUrl("list-drama", "1", "", page), h())
 
     override fun latestUpdatesParse(response: Response): AnimesPage = parseList(response.asDoc())
 
@@ -176,19 +181,24 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
                 .build()
             return GET(url.toString(), h())
         }
-        var cat = CATEGORIES.first().second
-        var sort = ""
-        var country = ""
+        val idx = IntArray(RULE_SIZES.size)
+        var rule = 0
         filters.forEach { f ->
             when (f) {
-                is CategoryFilter -> cat = CATEGORIES[f.state].second
-                is SortFilter -> sort = SORTS[f.state].second
-                is CountryFilter -> country = COUNTRIES[f.state].second
+                is CategoryFilter -> idx[0] = f.state
+                is SortFilter -> idx[1] = f.state
+                is CountryFilter -> idx[2] = f.state
+                is TabRule.RuleFilter -> rule = f.state
                 else -> {}
             }
         }
-        return GET(listUrl(cat, sort, country, page), h())
+        TabRule.apply(prefs(), rule, idx)
+        return filterRequest(page, idx)
     }
+
+    /** idx = [분류, 정렬, 지역] 선택 번호 */
+    private fun filterRequest(page: Int, idx: IntArray): Request =
+        GET(listUrl(CATEGORIES[idx[0]].second, SORTS[idx[1]].second, COUNTRIES[idx[2]].second, page), h())
 
     override fun searchAnimeParse(response: Response): AnimesPage {
         val url = response.request.url
@@ -371,6 +381,9 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
             CategoryFilter(),
             SortFilter(),
             CountryFilter(),
+            *TabRule.filters(prefs(), RULE_SIZES, "드라마 · 주간인기순" to "드라마 · 업데이트순") {
+                "${CATEGORIES[it[0]].first} · ${SORTS[it[1]].first} · ${COUNTRIES[it[2]].first}"
+            }.toTypedArray(),
         ),
     )
 
@@ -481,5 +494,6 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
             "영국" to "7",
             "프랑스" to "8",
         )
+        private val RULE_SIZES = intArrayOf(CATEGORIES.size, SORTS.size, COUNTRIES.size)
     }
 }
