@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.4",
+    "version": "0.1.5",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -73,17 +73,17 @@ class DefaultExtension extends MProvider {
         let res = null;
         try {
             res = await this.client.get(url, this.headers());
-            if (res.statusCode < 500 && String(res.body || "").length > 0) return { html: res.body, base };
+            if (res.statusCode < 500 && String(res.body || "").length > 0) return { html: res.body, base, res };
         } catch (e) {
             res = null;
         }
         const found = this.autoOn() ? await this.discover(base) : null;
         if (!found) {
-            if (res) return { html: res.body, base };
+            if (res) return { html: res.body, base, res };
             throw new Error(`접속 실패: ${url}`);
         }
         const r2 = await this.client.get(found + url.substring(base.length), this.headers(`${found}/`));
-        return { html: r2.body, base: found };
+        return { html: r2.body, base: found, res: r2 };
     }
 
     async getDoc(path) {
@@ -99,7 +99,34 @@ class DefaultExtension extends MProvider {
         const url = path.startsWith("http") ? path : r.base + path;
         const html = await this.viaWebview(url);
         if (html && html.includes("maccms")) return { html, base: r.base };
-        throw new Error("사이트 보안 확인이 필요합니다. 오른쪽 위 지구본(WebView) 버튼으로 한 번 열었다 닫은 뒤 다시 불러오세요.");
+        throw new Error("사이트 보안 확인이 필요합니다. 오른쪽 위 지구본(WebView) 버튼으로 한 번 열었다 닫은 뒤 다시 불러오세요." +
+            ` [진단: ${this.diag(r, html)}]`);
+    }
+
+    /** 보안 확인 페이지가 어떤 것인지 알 수 있게 짧게 요약 (캡처해서 보내 주시면 원인 파악용) */
+    diag(r, webHtml) {
+        const body = String(r.html || "");
+        const res = r.res || {};
+        const h = res.headers || {};
+        const pick = (k) => {
+            for (const key in h) if (key.toLowerCase() === k) return String(h[key]).substring(0, 60);
+            return "";
+        };
+        const title = (/<title>([^<]*)/i.exec(body) || [null, ""])[1].trim().substring(0, 40);
+        const text = body.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<[^>]+>/g, " ")
+            .replace(/\s+/g, " ").trim().substring(0, 80);
+        const hints = ["awswaf", "challenge", "captcha", "cf-", "turnstile", "location.reload", "document.cookie"]
+            .filter((w) => body.toLowerCase().includes(w));
+        return [
+            `상태 ${res.statusCode}`,
+            `크기 ${body.length}`,
+            `제목 "${title}"`,
+            `server ${pick("server")}`,
+            pick("x-amzn-waf-action") ? `waf ${pick("x-amzn-waf-action")}` : "",
+            `웹뷰 ${typeof evaluateJavascriptViaWebview === "function" ? (webHtml ? "응답" + String(webHtml).length : "응답없음") : "미지원"}`,
+            hints.length ? `단서 ${hints.join(",")}` : "",
+            `내용 "${text}"`,
+        ].filter((x) => x).join(" · ");
     }
 
     async viaWebview(url) {
