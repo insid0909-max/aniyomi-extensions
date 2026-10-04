@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.5",
+    "version": "0.1.6",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -97,8 +97,15 @@ class DefaultExtension extends MProvider {
         if (String(r.html || "").includes("maccms")) return r;
         // 앱이 숨은 WebView 실행을 지원하면, 그 안에서 보안 확인을 끝내고 실제 페이지 내용을 받아 씀
         const url = path.startsWith("http") ? path : r.base + path;
-        const html = await this.viaWebview(url);
-        if (html && html.includes("maccms")) return { html, base: r.base };
+        let html = null;
+        // 숨은 WebView 는 앱이 15초만 기다려 주므로 최대 두 번 시도.
+        // 결과를 못 받아도 그 사이 통과 쿠키가 저장됐을 수 있으니 매번 원래 요청을 다시 해 본다
+        for (let i = 0; i < 2; i++) {
+            html = await this.viaWebview(url);
+            if (html && html.includes("maccms")) return { html, base: r.base };
+            const again = await this.getHtml(path);
+            if (String(again.html || "").includes("maccms")) return again;
+        }
         throw new Error("사이트 보안 확인이 필요합니다. 오른쪽 위 지구본(WebView) 버튼으로 한 번 열었다 닫은 뒤 다시 불러오세요." +
             ` [진단: ${this.diag(r, html)}]`);
     }
@@ -132,14 +139,14 @@ class DefaultExtension extends MProvider {
     async viaWebview(url) {
         if (typeof evaluateJavascriptViaWebview !== "function") return null;
         // 페이지에 실제 내용(maccms)이 나타날 때까지 기다렸다가 HTML 을 앱으로 돌려줌
-        const script = "(function(){var n=0;var t=setInterval(function(){n++;" +
-            "var h=document.documentElement.outerHTML;" +
-            "if(h.indexOf('maccms')>=0||n>40){clearInterval(t);" +
-            "window.flutter_inappwebview.callHandler('setResponse',h);}},500);})();";
+        // 확인 페이지에서는 기다리고(확인이 끝나면 사이트가 스스로 새로고침), 실제 페이지가 열리면 바로 HTML 을 돌려줌
+        const script = "(function(){function f(){var h=document.documentElement.outerHTML;" +
+            "if(h.indexOf('maccms')>=0){window.flutter_inappwebview.callHandler('setResponse',h);return true;}return false;}" +
+            "if(!f()){var t=setInterval(function(){if(f())clearInterval(t);},300);}})();";
         try {
             const timeout = new Promise((res) => setTimeout(() => res(null), 30000));
             const res = await Promise.race([
-                evaluateJavascriptViaWebview(url, { "Referer": `${this.getBaseUrl()}/` }, [script]),
+                evaluateJavascriptViaWebview(url, {}, [script]),
                 timeout,
             ]);
             return res ? String(res) : null;
