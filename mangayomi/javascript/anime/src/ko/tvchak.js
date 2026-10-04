@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.12",
+    "version": "0.1.13",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -31,6 +31,66 @@ const TYPES = [
     ["예능 - 금요일", "27"], ["예능 - 토요일", "28"], ["예능 - 일요일", "29"], ["애니", "4"],
 ];
 const SORTS = [["최신순", "time"], ["인기순", "hits"]];
+
+const RULE_SIZES = [TYPES.length, SORTS.length];
+
+// ---------- 인기/최신 탭 규칙 (필터 조건을 탭에 저장) ----------
+const RULE_CHOICES = [
+    "저장하지 않음 (필터 결과만 보기)",
+    "현재 조건을 인기 탭에 저장",
+    "현재 조건을 최신 탭에 저장",
+    "인기 탭을 기본값으로 복원",
+    "최신 탭을 기본값으로 복원",
+    "두 탭 모두 기본값으로 복원",
+];
+const RULE_NAME = "인기/최신 탭 규칙";
+
+// 저장 값은 필터 선택 번호를 쉼표로 이은 문자열. 없거나 맞지 않으면 null (= 기본값)
+function ruleRead(prefix, popular, sizes) {
+    let raw = "";
+    try {
+        raw = new SharedPreferences().getString(`${prefix}_${popular ? "pop" : "latest"}_rule`, "") || "";
+    } catch (e) {
+        return null;
+    }
+    if (!raw) return null;
+    const idx = raw.split(",").map((x) => parseInt(x, 10));
+    if (idx.length !== sizes.length || idx.some((v, i) => !(v >= 0 && v < sizes[i]))) return null;
+    return idx;
+}
+
+function ruleApply(prefix, rule, idx) {
+    try {
+        const p = new SharedPreferences();
+        const pop = `${prefix}_pop_rule`;
+        const latest = `${prefix}_latest_rule`;
+        const v = idx.join(",");
+        if (rule === 1) p.setString(pop, v);
+        else if (rule === 2) p.setString(latest, v);
+        else if (rule === 3) p.setString(pop, "");
+        else if (rule === 4) p.setString(latest, "");
+        else if (rule === 5) {
+            p.setString(pop, "");
+            p.setString(latest, "");
+        }
+    } catch (e) {
+        // 저장 실패는 무시 (필터 결과는 그대로 보여 줌)
+    }
+}
+
+function ruleFilters(prefix, sizes, defaults, text) {
+    const pop = ruleRead(prefix, true, sizes);
+    const latest = ruleRead(prefix, false, sizes);
+    return [
+        { type_name: "SeparatorFilter" },
+        { type_name: "HeaderFilter", name: `현재 인기: ${pop ? text(pop) : defaults[0] + " (기본)"}` },
+        { type_name: "HeaderFilter", name: `현재 최신: ${latest ? text(latest) : defaults[1] + " (기본)"}` },
+        {
+            type_name: "SelectFilter", name: RULE_NAME, param: "rule", state: 0,
+            values: RULE_CHOICES.map((c, i) => ({ type_name: "SelectOption", name: c, value: String(i) })),
+        },
+    ];
+}
 
 class DefaultExtension extends MProvider {
     constructor() {
@@ -195,9 +255,15 @@ class DefaultExtension extends MProvider {
 
     async getLatestUpdates(page) {
         await statusRefresh(this.client);
-        // 분류 없는 최신 목록 주소는 사이트에서 열리지 않아, 첫 화면(오늘의 핫업데이트 + 분류별 최신)을 쓴다
+        const saved = ruleRead("tvchak", false, RULE_SIZES);
+        if (saved) return this.withYears(await this.filterPage(page, saved), TYPES[saved[0]][1] === "1");
+        return this.withYears(await this.latestBase(page));
+    }
+
+    // 분류 없는 최신 목록 주소는 사이트에서 열리지 않아, 첫 화면(오늘의 핫업데이트 + 분류별 최신)을 쓴다
+    async latestBase(page) {
         const r = this.parseList(await this.getDoc("/"));
-        return this.withYears({ list: page > 1 ? [] : r.list, hasNextPage: false });
+        return { list: page > 1 ? [] : r.list, hasNextPage: false };
     }
 
     async searchBase(query, page, filters) {
@@ -206,14 +272,23 @@ class DefaultExtension extends MProvider {
             const path = page > 1 ? `/index.php/vod/search/page/${page}/wd/${q}.html` : `/index.php/vod/search.html?wd=${q}`;
             return this.parseList(await this.getDoc(path));
         }
-        let type = "";
-        let sort = "time";
+        const idx = [0, 0];
+        let rule = 0;
         for (const f of filters || []) {
             if (f.type_name !== "SelectFilter") continue;
-            if (f.param === "type") type = TYPES[f.state || 0][1];
-            if (f.param === "sort") sort = SORTS[f.state || 0][1];
+            if (f.param === "type") idx[0] = f.state || 0;
+            if (f.param === "sort") idx[1] = f.state || 0;
+            if (f.param === "rule") rule = f.state || 0;
         }
-        if (!type) return sort === "hits" ? this.popularBase(page) : this.getLatestUpdates(page);
+        ruleApply("tvchak", rule, idx);
+        return this.filterPage(page, idx);
+    }
+
+    // idx = [분류, 정렬] 선택 번호
+    async filterPage(page, idx) {
+        const type = TYPES[idx[0]][1];
+        const sort = SORTS[idx[1]][1];
+        if (!type) return sort === "hits" ? this.popularBase(page) : this.latestBase(page);
         return this.parseList(await this.getDoc(this.showPath(type, sort, page)));
     }
 
@@ -471,7 +546,8 @@ class DefaultExtension extends MProvider {
             { type_name: "HeaderFilter", name: "검색어가 없을 때만 적용" },
             sel("분류", "type", TYPES),
             sel("정렬", "sort", SORTS),
-        ];
+        ].concat(ruleFilters("tvchak", RULE_SIZES, ["전체 · 인기순", "첫 화면 최신"],
+            (i) => `${TYPES[i[0]][0]} · ${SORTS[i[1]][0]}`));
     }
 
     getFilterList() {
@@ -487,6 +563,8 @@ class DefaultExtension extends MProvider {
 
     async getPopular(page) {
         await statusRefresh(this.client);
+        const saved = ruleRead("tvchak", true, RULE_SIZES);
+        if (saved) return this.withYears(await this.filterPage(page, saved), TYPES[saved[0]][1] === "1");
         return this.withYears(await this.popularBase(page));
     }
 

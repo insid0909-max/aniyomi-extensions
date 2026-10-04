@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.5",
+    "version": "0.1.6",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -32,6 +32,66 @@ const COUNTRIES = [
     ["전체", ""], ["한국", "1"], ["미국", "2"], ["중국", "3"], ["홍콩", "4"],
     ["대만", "5"], ["일본", "6"], ["영국", "7"], ["프랑스", "8"],
 ];
+
+const RULE_SIZES = [CATEGORIES.length, SORTS.length, COUNTRIES.length];
+
+// ---------- 인기/최신 탭 규칙 (필터 조건을 탭에 저장) ----------
+const RULE_CHOICES = [
+    "저장하지 않음 (필터 결과만 보기)",
+    "현재 조건을 인기 탭에 저장",
+    "현재 조건을 최신 탭에 저장",
+    "인기 탭을 기본값으로 복원",
+    "최신 탭을 기본값으로 복원",
+    "두 탭 모두 기본값으로 복원",
+];
+const RULE_NAME = "인기/최신 탭 규칙";
+
+// 저장 값은 필터 선택 번호를 쉼표로 이은 문자열. 없거나 맞지 않으면 null (= 기본값)
+function ruleRead(prefix, popular, sizes) {
+    let raw = "";
+    try {
+        raw = new SharedPreferences().getString(`${prefix}_${popular ? "pop" : "latest"}_rule`, "") || "";
+    } catch (e) {
+        return null;
+    }
+    if (!raw) return null;
+    const idx = raw.split(",").map((x) => parseInt(x, 10));
+    if (idx.length !== sizes.length || idx.some((v, i) => !(v >= 0 && v < sizes[i]))) return null;
+    return idx;
+}
+
+function ruleApply(prefix, rule, idx) {
+    try {
+        const p = new SharedPreferences();
+        const pop = `${prefix}_pop_rule`;
+        const latest = `${prefix}_latest_rule`;
+        const v = idx.join(",");
+        if (rule === 1) p.setString(pop, v);
+        else if (rule === 2) p.setString(latest, v);
+        else if (rule === 3) p.setString(pop, "");
+        else if (rule === 4) p.setString(latest, "");
+        else if (rule === 5) {
+            p.setString(pop, "");
+            p.setString(latest, "");
+        }
+    } catch (e) {
+        // 저장 실패는 무시 (필터 결과는 그대로 보여 줌)
+    }
+}
+
+function ruleFilters(prefix, sizes, defaults, text) {
+    const pop = ruleRead(prefix, true, sizes);
+    const latest = ruleRead(prefix, false, sizes);
+    return [
+        { type_name: "SeparatorFilter" },
+        { type_name: "HeaderFilter", name: `현재 인기: ${pop ? text(pop) : defaults[0] + " (기본)"}` },
+        { type_name: "HeaderFilter", name: `현재 최신: ${latest ? text(latest) : defaults[1] + " (기본)"}` },
+        {
+            type_name: "SelectFilter", name: RULE_NAME, param: "rule", state: 0,
+            values: RULE_CHOICES.map((c, i) => ({ type_name: "SelectOption", name: c, value: String(i) })),
+        },
+    ];
+}
 
 class DefaultExtension extends MProvider {
     constructor() {
@@ -70,6 +130,8 @@ class DefaultExtension extends MProvider {
 
     // ================= 목록 =================
     async popularBase(page) {
+        const saved = ruleRead("gogotv", true, RULE_SIZES);
+        if (saved) return this.filterPage(page, saved);
         return this.parseList(await this.getDoc(this.listPath("list-drama", "2", "", page)));
     }
 
@@ -78,6 +140,8 @@ class DefaultExtension extends MProvider {
     }
 
     async getLatestUpdates(page) {
+        const saved = ruleRead("gogotv", false, RULE_SIZES);
+        if (saved) return this.filterPage(page, saved);
         return this.parseList(await this.getDoc(this.listPath("list-drama", "1", "", page)));
     }
 
@@ -93,12 +157,20 @@ class DefaultExtension extends MProvider {
             }
             return result;
         }
-        const pick = (i, list) => {
+        const st = (i) => {
             const f = filters && filters[i];
-            return list[(f && f.state) || 0][1];
+            return (f && f.state) || 0;
         };
+        const idx = [st(0), st(1), st(2)];
+        const ruleF = (filters || []).find((f) => f && f.name === RULE_NAME);
+        ruleApply("gogotv", (ruleF && ruleF.state) || 0, idx);
+        return this.filterPage(page, idx);
+    }
+
+    // idx = [분류, 정렬, 지역] 선택 번호
+    async filterPage(page, idx) {
         return this.parseList(await this.getDoc(
-            this.listPath(pick(0, CATEGORIES), pick(1, SORTS), pick(2, COUNTRIES), page)));
+            this.listPath(CATEGORIES[idx[0]][1], SORTS[idx[1]][1], COUNTRIES[idx[2]][1], page)));
     }
 
     parseList({ doc, base }) {
@@ -326,7 +398,8 @@ class DefaultExtension extends MProvider {
             select("분류", CATEGORIES),
             select("정렬", SORTS),
             select("지역", COUNTRIES),
-        ];
+        ].concat(ruleFilters("gogotv", RULE_SIZES, ["드라마 · 주간인기순", "드라마 · 업데이트순"],
+            (i) => `${CATEGORIES[i[0]][0]} · ${SORTS[i[1]][0]} · ${COUNTRIES[i[2]][0]}`));
     }
 
     // ---------- 상태 표시 ----------
