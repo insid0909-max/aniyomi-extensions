@@ -287,7 +287,33 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                 thumbnail_url = thumbOf(box)
             }
         }.filter { it.title.isNotEmpty() }
+        addYears(animes)
         return AnimesPage(animes, hasNextPage(doc))
+    }
+
+    /**
+     * 목록 카드의 영화 제목 옆에 개봉 연도를 붙임.
+     * 목록 페이지에는 연도가 없어서 사이트 프로그램(MacCMS)의 작품 정보 API 를 한 번 더 부른다. 막혀 있으면 그대로 둠.
+     */
+    private fun addYears(animes: List<SAnime>) {
+        val ids = animes.mapNotNull { ID_REGEX.find(it.url)?.groupValues?.get(1) }
+        if (ids.isEmpty()) return
+        val years = runCatching {
+            val url = "$baseUrl/api.php/provide/vod/?ac=detail&ids=${ids.joinToString(",")}"
+            client.newCall(GET(url, h())).execute().use { res ->
+                val list = JSONObject(res.body.string()).optJSONArray("list") ?: return@use emptyMap<String, String>()
+                (0 until list.length()).mapNotNull { i ->
+                    val v = list.getJSONObject(i)
+                    val movie = v.optString("type_id") == "1" || v.optString("type_id_1") == "1"
+                    val y = v.optString("vod_year").trim()
+                    if (movie && YEAR_REGEX.matches(y)) v.optString("vod_id") to y else null
+                }.toMap()
+            }
+        }.getOrNull() ?: return
+        animes.forEach { a ->
+            val y = years[ID_REGEX.find(a.url)?.groupValues?.get(1)] ?: return@forEach
+            if (!a.title.contains(y)) a.title = "${a.title} ($y)"
+        }
     }
 
     private fun thumbOf(box: Element): String? {
@@ -568,6 +594,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         private val BG_REGEX = Regex("""url\(['"]?([^'")]+)""")
         private val EP_REGEX = Regex("""(\d+)\s*(?:화|회)""")
         private const val ONGOING_DAYS = 21
+        private val ID_REGEX = Regex("""/id/(\d+)""")
         private val YEAR_REGEX = Regex("""^(?:19|20)\d{2}$""")
         private val DATE_REGEX = Regex("""^(\d{2})/(\d{2})/(\d{2})$""")
         private val PLAYER_REGEX = Regex("""var\s+player_\w+\s*=\s*(\{.*?\})\s*</script>""", RegexOption.DOT_MATCHES_ALL)

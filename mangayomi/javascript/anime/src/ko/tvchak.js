@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.8",
+    "version": "0.1.9",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -197,7 +197,7 @@ class DefaultExtension extends MProvider {
         await statusRefresh(this.client);
         // 분류 없는 최신 목록 주소는 사이트에서 열리지 않아, 첫 화면(오늘의 핫업데이트 + 분류별 최신)을 쓴다
         const r = this.parseList(await this.getDoc("/"));
-        return { list: page > 1 ? [] : r.list, hasNextPage: false };
+        return this.withYears({ list: page > 1 ? [] : r.list, hasNextPage: false });
     }
 
     async searchBase(query, page, filters) {
@@ -257,6 +257,34 @@ class DefaultExtension extends MProvider {
             if (m) max = Math.max(max, parseInt(m[1], 10));
         }
         return max > curNum;
+    }
+
+    /**
+     * 목록 카드의 영화 제목 옆에 개봉 연도를 붙임.
+     * 목록 페이지에는 연도가 없어서 사이트 프로그램(MacCMS)의 작품 정보 API 를 한 번 더 부른다. 막혀 있으면 그대로 둠.
+     */
+    async withYears(result) {
+        try {
+            const ids = result.list.map((x) => (/\/id\/(\d+)/.exec(x.link) || [])[1]).filter((x) => x);
+            if (!ids.length) return result;
+            const base = this.getBaseUrl();
+            const res = await this.client.get(`${base}/api.php/provide/vod/?ac=detail&ids=${ids.join(",")}`, this.headers());
+            const data = JSON.parse(String(res.body || ""));
+            const years = {};
+            for (const v of (data && data.list) || []) {
+                const movie = String(v.type_id) === "1" || String(v.type_id_1) === "1";
+                const y = String(v.vod_year || "").trim();
+                if (movie && /^(?:19|20)\d{2}$/.test(y)) years[String(v.vod_id)] = y;
+            }
+            for (const x of result.list) {
+                const id = (/\/id\/(\d+)/.exec(x.link) || [])[1];
+                const y = years[id];
+                if (y && !x.name.includes(y)) x.name = `${x.name} (${y})`;
+            }
+        } catch (e) {
+            // API 가 없거나 막힌 사이트면 연도 없이 표시
+        }
+        return result;
     }
 
     // ================= 상세 / 회차 =================
@@ -404,12 +432,21 @@ class DefaultExtension extends MProvider {
 
     async getPopular(page) {
         await statusRefresh(this.client);
-        return this.popularBase(page);
+        return this.withYears(await this.popularBase(page));
     }
 
     async search(query, page, filters) {
         await statusRefresh(this.client);
-        return this.searchBase(query, page, (filters || []).filter((f) => !(f && f._status)));
+        // 앱이 돌려준 필터에 param 이 빠져 있을 수 있어 같은 이름의 원래 필터에서 채움
+        const base = this.baseFilterList();
+        const list = (filters || []).filter((f) => f && !f._status && !(f.type_name === "HeaderFilter" && /^(?:📡|🩺|❌|🛡)/.test(String(f.name || ""))));
+        for (const f of list) {
+            if (!f.param) {
+                const b = base.find((x) => x.name === f.name && x.type_name === f.type_name);
+                if (b && b.param) f.param = b.param;
+            }
+        }
+        return this.withYears(await this.searchBase(query, page, list));
     }
 
     getSourcePreferences() {
