@@ -1,6 +1,5 @@
 {
  "label": "애니",
- "ntfy": "insid-ext-naqwwbg1dibo",
  "sites": [
   {
    "name": "고고티비",
@@ -59,13 +58,5 @@
    "allowEmpty": true,
    "key": "livesports2"
   }
- ],
- "watchSources": {
-  "gogotv": "mangayomi/javascript/anime/src/ko/gogotv.js"
- },
- "sports": {
-  "api": "https://live.tongtv.net",
-  "site": "https://www.tongtv.net/",
-  "notifyBeforeMinutes": 75
- }
+ ]
 }

@@ -1,19 +1,15 @@
 name: Monitor
 
 # 확장 감시 (사용자 승인: 자동 커밋·재배포 포함)
-# - 매시간: 등록한 작품의 새 회차 확인 → 휴대폰 알림 (ntfy)
 # - 매일 08:41(한국시간): 사이트 주소 확인·자동 갱신(바뀌면 커밋 후 재배포) + 확장 동작 점검
-# 상태와 감시 목록(watchlist.json)은 monitor-state 브랜치에 저장한다.
+# 상태(state.json, status.json)는 monitor-state 브랜치에 저장한다.
 on:
   schedule:
-    - cron: '17 * * * *'
-    # GitHub 예약 실행이 자주 건너뛰어져서 30분 간격으로 한 번 더 걸어 둠
-    - cron: '47 * * * *'
     - cron: '41 23 * * *'
   workflow_dispatch:
     inputs:
       mode:
-        description: "all | watch | domains | health | sports | test"
+        description: "all | domains | health"
         required: false
         default: "all"
 
@@ -57,9 +53,7 @@ jobs:
           REPO_ROOT: ${{ github.workspace }}
         run: |
           MODE="${{ inputs.mode }}"
-          if [ -z "$MODE" ]; then
-            if [ "${{ github.event.schedule }}" = "41 23 * * *" ]; then MODE=all; else MODE=watch; fi
-          fi
+          if [ -z "$MODE" ]; then MODE=all; fi
           echo "mode=$MODE"
           node "$MONITOR_DIR/monitor.js" "$MONITOR_DIR/config.json" "$STATE_DIR" "$MODE"
 
