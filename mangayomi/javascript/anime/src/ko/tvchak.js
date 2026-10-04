@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -217,18 +217,23 @@ class DefaultExtension extends MProvider {
         const seen = {};
         lists.forEach((box, bi) => {
             const prefix = lists.length > 1 ? `[${tabs[bi] || `서버 ${bi + 1}`}] ` : "";
-            for (const a of box.select("a[href*='/vod/play/']")) {
+            const links = box.select("a[href*='/vod/play/']");
+            links.forEach((a, i) => {
                 const path = this.toPath(a.attr("href"));
-                if (!path || seen[path]) continue;
+                if (!path || seen[path]) return;
                 seen[path] = true;
                 const label = a.text.trim() || "바로보기";
                 const d = /^(\d{2})\/(\d{2})\/(\d{2})$/.exec(label);
+                // 망가요미는 이름 맨 앞 숫자를 회차 번호로 써서 "26/10/02"처럼 연도로 시작하면 같은 해 회차를 중복으로 숨긴다
+                // → 날짜·특집처럼 회차 번호가 없는 이름은 순번을 붙임 (가장 오래된 회차가 1)
+                const hasNo = /\d+\s*(?:화|회)/.test(label) && !d;
+                const name = hasNo ? label : `${links.length - i}회 · ${label}`;
                 episodes.push({
-                    name: prefix + label,
+                    name: prefix + name,
                     url: path,
                     dateUpload: d ? String(Date.UTC(2000 + +d[1], +d[2] - 1, +d[3]) - 9 * 3600000) : null,
                 });
-            }
+            });
         });
         return {
             name: title ? title.text.trim() : "",
