@@ -75,35 +75,39 @@ jobs:
           echo "SIGNING_KEY=$SIGNING_KEY" >> $GITHUB_ENV
           echo "Fixed Fingerprint: $SIGNING_KEY"
 
-      - name: Calculate auto version
+      # 확장마다 따로 버전 번호를 매김: 그 확장 폴더(또는 공통 빌드 설정)를 마지막으로 바꾼 master 커밋까지의 커밋 수 + 4300
+      # → 바꾸지 않은 확장은 번호가 그대로라 앱에 업데이트가 뜨지 않음 (전에는 둘 다 전체 커밋 수를 써서 항상 같이 올라갔음)
+      - name: Calculate version per extension
         run: |
-          COMMIT_COUNT=$(git rev-list --count HEAD)
-          BASE_OFFSET=4300
-          AUTO_VCODE=$((BASE_OFFSET + COMMIT_COUNT))
-          if [ $AUTO_VCODE -le 4387 ]; then
-            AUTO_VCODE=4388
-          fi
-          echo "AUTO_VCODE=$AUTO_VCODE" >> $GITHUB_ENV
-          echo "Target Version Code: $AUTO_VCODE (Target versionName: 14.$AUTO_VCODE)"
+          vcode() {
+            local last
+            last=$(git log -1 --first-parent --format=%H HEAD -- "$@")
+            [ -z "$last" ] && last=HEAD
+            local v=$((4300 + $(git rev-list --count "$last")))
+            # 방식을 바꾸기 직전 두 확장 모두 8929 로 배포됨 → 그보다 낮아지지 않게
+            [ $v -lt 8929 ] && v=8929
+            echo $v
+          }
+          echo "VCODE_TVROOM=$(vcode src/ko/tvroom common.gradle)" >> $GITHUB_ENV
+          echo "VCODE_LIVESPORTS=$(vcode src/ko/livesports common.gradle)" >> $GITHUB_ENV
+          echo "TVroom: $(vcode src/ko/tvroom common.gradle) / 실시간스포츠: $(vcode src/ko/livesports common.gradle)"
 
-      # build.gradle.kts 파일의 extVersionCode와 extCode를 AUTO_VCODE 숫자로 명확히 치환 (tvroom, livesports 적용)
+      # 각 build.gradle.kts 의 extCode / extVersionCode 를 그 확장의 번호로 치환
       - name: Inject version into build.gradle
         run: |
-          TARGET_FILES=("src/ko/tvroom/build.gradle.kts" "src/ko/livesports/build.gradle.kts")
-          for TARGET_FILE in "${TARGET_FILES[@]}"; do
-            if [ -f "$TARGET_FILE" ]; then
-              sed -i -E "s/val extCode\s*=\s*[0-9]+/val extCode = $AUTO_VCODE/g" "$TARGET_FILE"
-              sed -i -E "s/set\(\"extVersionCode\".*\)/set\(\"extVersionCode\", $AUTO_VCODE\)/" "$TARGET_FILE"
-              echo "치환 결과 확인 ($TARGET_FILE):"
-              grep -E "extVersionCode|extCode" "$TARGET_FILE" || true
-            fi
-          done
+          inject() {
+            sed -i -E "s/val extCode\s*=\s*[0-9]+/val extCode = $2/g" "$1"
+            sed -i -E "s/set\(\"extVersionCode\".*\)/set\(\"extVersionCode\", $2\)/" "$1"
+            echo "치환 결과 확인 ($1):"
+            grep -E "extVersionCode|extCode" "$1" || true
+          }
+          inject src/ko/tvroom/build.gradle.kts "$VCODE_TVROOM"
+          inject src/ko/livesports/build.gradle.kts "$VCODE_LIVESPORTS"
 
       - name: Build extensions
         run: |
           mkdir -p src/ko/livesports/build src/ko/tvroom/build
           ./gradlew :src:ko:tvroom:assembleRelease :src:ko:livesports:assembleRelease \
-            -PextVersionCode=${{ env.AUTO_VCODE }} \
             -x lintKotlin -x lint \
             -PsigningStorePassword="aniyomi123" \
             -PsigningKeyPassword="aniyomi123" \
