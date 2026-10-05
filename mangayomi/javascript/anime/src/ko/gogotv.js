@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.12",
+    "version": "0.1.13",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -265,9 +265,9 @@ class DefaultExtension extends MProvider {
         const list = [];
         const yearRe = /\s*\((?:19|20)\d{2}\)\s*$/;
         for (const li of doc.select("li")) {
-            const box = li.selectFirst(".search-page");
-            const a = box ? box.selectFirst("a[href*='/player/']") : null;
-            if (!a) continue;
+            if (li.select(".search-page").length === 0) continue;
+            const a = li.selectFirst(".search-page a[href*='/player/']");
+            if (!a || !a.attr("href")) continue;
             const link = this.toPath(a.attr("href"));
             const t = li ? li.selectFirst(".view-floor2-lf-cont .tit") : null;
             const name = t ? t.text.trim() : "";
@@ -287,7 +287,8 @@ class DefaultExtension extends MProvider {
 
     parseList({ doc, base }) {
         // 검색 결과 화면은 모양이 달라 따로 읽음
-        if (doc.selectFirst(".search-page a[href*='/player/']")) return this.parseSearch({ doc, base });
+        // (망가요미의 selectFirst 는 못 찾아도 빈 요소를 돌려주므로 개수로 판단)
+        if (doc.select(".search-page").length > 0) return this.parseSearch({ doc, base });
         const seen = {};
         const list = [];
         for (const dl of doc.select(".itemLish-cont dl, .modList-ul dl, .view-floor3 .item dl")) {
