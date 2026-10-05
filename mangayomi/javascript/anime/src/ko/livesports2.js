@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.3",
+    "version": "0.1.4",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/livesports2.js"
@@ -203,20 +203,22 @@ class DefaultExtension extends MProvider {
         return `${THUMB_BASE}/${name}.png`;
     }
 
-    makeCard(p) {
-        return { name: this.cardTitle(p), imageUrl: this.thumbUrl(p.cat), link: this.cardLink(p) };
+    makeCard(p, games) {
+        // 경기 목록이 있으면 제목 옆에 경기 수
+        const n = games ? ` · ${games.filter((g) => this.matches(g, p)).length}경기` : "";
+        return { name: this.cardTitle(p) + n, imageUrl: this.thumbUrl(p.cat), link: this.cardLink(p) };
     }
 
     // 현재 목록에 있는 종목만 카드로 만든다
     cardsFor(games, src, sort) {
         const present = {};
         for (const g of games) present[g.label] = true;
-        const cards = [this.makeCard({ src: src, cat: ALL_CAT, sort: sort, q: "" })];
+        const cards = [this.makeCard({ src: src, cat: ALL_CAT, sort: sort, q: "" }, games)];
         for (const c of CATEGORY_ORDER) {
-            if (present[c]) cards.push(this.makeCard({ src: src, cat: c, sort: sort, q: "" }));
+            if (present[c]) cards.push(this.makeCard({ src: src, cat: c, sort: sort, q: "" }, games));
         }
         if (Object.keys(present).some((l) => l && !CATEGORY_ORDER.includes(l))) {
-            cards.push(this.makeCard({ src: src, cat: CAT_OTHER, sort: sort, q: "" }));
+            cards.push(this.makeCard({ src: src, cat: CAT_OTHER, sort: sort, q: "" }, games));
         }
         return cards;
     }

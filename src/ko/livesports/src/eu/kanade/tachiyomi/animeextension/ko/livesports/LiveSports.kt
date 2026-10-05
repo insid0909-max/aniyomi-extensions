@@ -230,11 +230,33 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
     // ================= 1. 카드와 필터 =================
     private fun isAllCat(cat: String) = cat == ALL_CAT || cat == CHOICE_ALL
 
+    // 실시간스포츠2 와 같은 모양: "📡 전체 경기", "⚽ 축구" (+ 목록 카드에는 " · 5경기")
     private fun cardTitle(cat: String): String = when {
-        isAllCat(cat) -> "실시간 스포츠 중계"
-        cat == CAT_OTHER -> "🏅 기타 종목 중계"
-        cat == LABEL_TV -> "📺 TV 채널 중계"
-        else -> "${categoryEmoji(cat)} $cat 중계"
+        isAllCat(cat) -> "📡 전체 경기"
+        cat == CAT_OTHER -> "🏅 기타 종목"
+        cat == LABEL_TV -> "📺 TV 채널"
+        else -> "${categoryEmoji(cat)} $cat"
+    }
+
+    /** 종목 카드에 들어가는 경기인지 (전체 보기에서 TV 숨김 설정 반영) */
+    private fun inCat(p: ParsedItem, cat: String, hideTv: Boolean): Boolean = when {
+        isAllCat(cat) -> !(hideTv && p.label == LABEL_TV)
+        cat == CAT_OTHER -> p.label != LABEL_TV && p.label !in CATEGORY_ORDER
+        else -> p.label == cat
+    }
+
+    /** 목록 카드용 현재 경기 목록 (가져오기 실패 시 30분 안의 직전 목록, 그것도 없으면 빈 목록) */
+    private fun currentItems(): List<ParsedItem> {
+        val items = runCatching {
+            ensureCaptured()
+            capturedJson?.let { parseItems(it) }.orEmpty()
+        }.getOrDefault(emptyList())
+        if (items.isNotEmpty()) {
+            lastGoodItems = items
+            lastGoodTime = System.currentTimeMillis()
+            return items
+        }
+        return lastGoodItems.takeIf { System.currentTimeMillis() - lastGoodTime < LAST_GOOD_MAX_AGE_MS }.orEmpty()
     }
 
     // ---- 카드 표지 이미지 ----
@@ -273,8 +295,8 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         return if (sort == SORT_TIME) "$base&sort=time" else base
     }
 
-    private fun makeCard(cat: String, sort: String): SAnime = SAnime.create().apply {
-        title = cardTitle(cat)
+    private fun makeCard(cat: String, sort: String, count: Int? = null): SAnime = SAnime.create().apply {
+        title = cardTitle(cat) + if (count != null) " · ${count}경기" else ""
         thumbnail_url = thumbUrl(cat)
         setUrlWithoutDomain(cardUrl(cat, sort))
     }
@@ -304,14 +326,21 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
             .toString()
 
     // 선택한 종목과 정렬에 해당하는 카드들을 만든다
-    private fun cardsFor(choice: String, sort: String): List<SAnime> = when {
-        choice == CHOICE_EACH ->
-            listOf(makeCard(ALL_CAT, sort)) +
-                CATEGORY_ORDER.map { makeCard(it, sort) } +
-                makeCard(LABEL_TV, sort) +
-                makeCard(CAT_OTHER, sort)
-        isAllCat(choice) -> listOf(makeCard(ALL_CAT, sort))
-        else -> listOf(makeCard(choice, sort))
+    // 경기 목록을 읽었으면 경기가 있는 종목만, 카드 제목 옆에 경기 수. 못 읽었으면 예전처럼 모든 종목 카드
+    private fun cardsFor(choice: String, sort: String): List<SAnime> {
+        val items = currentItems()
+        val hideTv = pref(PREF_HIDE_TV, false)
+        fun card(cat: String) =
+            if (items.isEmpty()) makeCard(cat, sort) else makeCard(cat, sort, items.count { inCat(it, cat, hideTv) })
+        return when {
+            choice == CHOICE_EACH -> {
+                val cats = CATEGORY_ORDER + LABEL_TV + CAT_OTHER
+                val shown = if (items.isEmpty()) cats else cats.filter { c -> items.any { inCat(it, c, false) } }
+                listOf(card(ALL_CAT)) + shown.map { card(it) }
+            }
+            isAllCat(choice) -> listOf(card(ALL_CAT))
+            else -> listOf(card(choice))
+        }
     }
 
     // ---- 인기/최신 탭에 저장된 규칙 ----
@@ -624,13 +653,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         val showStart = pref(PREF_START_TIME, true)
 
         // 1) 종목으로 거르기 (TV는 전체 보기에서만 숨길 수 있고, 직접 고르면 보인다)
-        val filtered = items.filter { p ->
-            when {
-                isAllCat(cat) -> !(hideTv && p.label == LABEL_TV)
-                cat == CAT_OTHER -> p.label != LABEL_TV && p.label !in CATEGORY_ORDER
-                else -> p.label == cat
-            }
-        }
+        val filtered = items.filter { inCat(it, cat, hideTv) }
         if (filtered.isEmpty()) {
             return listOf(infoEpisode("현재 방송 중인 경기가 없습니다"))
         }
