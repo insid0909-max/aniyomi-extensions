@@ -332,10 +332,10 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     /**
-     * 목록 카드 제목에 정보를 붙임: 영화는 개봉 연도 "(2024)", 방영 중인 드라마·예능은 앞에 최근 방영일 "10.04 · ".
-     * (제목이 길어 잘려도 날짜는 보이도록 앞에 붙임)
+     * 목록 카드 제목 뒤에 정보를 붙임: 영화와 방영이 끝난 드라마·예능은 연도 "(2024)",
+     * 방영 중인 드라마·예능은 최근 방영일 " · 10.04".
      * 목록 페이지에는 둘 다 없어서 각 작품 상세 페이지에서 읽어 폰에 저장해 둔다.
-     * 영화 연도는 한 번만 읽고, 방영일은 6시간이 지나면 다시 읽는다.
+     * 영화 연도는 한 번만 읽고, 방영 중인 시리즈는 6시간, 끝난 시리즈는 7일이 지나면 다시 읽는다.
      */
     private fun addYears(animes: List<SAnime>, movieList: Boolean) {
         val p = prefs()
@@ -350,7 +350,11 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
             val stale = if (movieList) {
                 emptyList()
             } else {
-                ids.filter { p.getString("year_$it", null) == "-" && now - airOf(p, it).second > AIR_TTL_MS }
+                ids.filter { id ->
+                    val (latest, checked) = airOf(p, id)
+                    val ttl = if (now - latest <= ONGOING_DAYS * 86_400_000L) AIR_TTL_MS else ENDED_TTL_MS
+                    p.getString("year_$id", null) == "-" && now - checked > ttl
+                }
             }
             for (id in (unknown + stale).take(8)) {
                 val ok = runCatching {
@@ -370,19 +374,29 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         }
         val md = java.text.SimpleDateFormat("MM.dd", java.util.Locale.KOREAN)
             .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }
+        val yf = java.text.SimpleDateFormat("yyyy", java.util.Locale.KOREAN)
+            .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }
+        fun withYear(a: SAnime, y: String) {
+            if (!a.title.contains(y)) a.title = "${a.title} ($y)"
+        }
         animes.forEach { a ->
             val id = idOf(a) ?: return@forEach
             val y = p?.getString("year_$id", null) ?: return@forEach
-            if (YEAR_REGEX.matches(y)) {
-                if (!a.title.contains(y)) a.title = "${a.title} ($y)"
+            if (YEAR_REGEX.matches(y)) return@forEach withYear(a, y)
+            val latest = airOf(p, id).first
+            if (latest <= 0) return@forEach
+            if (now - latest <= ONGOING_DAYS * 86_400_000L) {
+                a.title = "${a.title} · ${md.format(java.util.Date(latest))}"
             } else {
-                val latest = airOf(p, id).first
-                if (latest > 0 && now - latest <= ONGOING_DAYS * 86_400_000L) {
-                    a.title = "${md.format(java.util.Date(latest))} · ${a.title}"
-                }
+                // 방영이 끝난 시리즈: 사이트의 연도, 없으면 마지막 방영 연도
+                withYear(a, seriesYear(p, id) ?: yf.format(java.util.Date(latest)))
             }
         }
     }
+
+    /** 저장된 시리즈 연도 (사이트 표기) */
+    private fun seriesYear(p: SharedPreferences, id: String): String? =
+        p.getString("air_$id", null)?.split("|")?.getOrNull(2)?.takeIf { YEAR_REGEX.matches(it) }
 
     /** 저장된 최근 방영일 (방영일, 읽은 시각). 없으면 (0, 0) */
     private fun airOf(p: SharedPreferences, id: String): Pair<Long, Long> {
@@ -397,13 +411,13 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
             .ifEmpty { doc.select("a[href*=/vod/play/]") }
             .distinctBy { it.attr("href") }.map { it.text().trim() }
         val e = p.edit()
+        val y = doc.selectFirst(".scroll-content a[href*=/year/]")?.text()?.trim().orEmpty()
         if (labels.size <= 1) {
-            val y = doc.selectFirst(".scroll-content a[href*=/year/]")?.text()?.trim().orEmpty()
             e.putString("year_$id", if (YEAR_REGEX.matches(y)) y else "-")
         } else {
-            // 시리즈는 "-" 로 표시하고, 최근 방영일은 따로 저장
+            // 시리즈는 "-" 로 표시하고, 최근 방영일·읽은 시각·연도는 따로 저장
             val latest = labels.map { dateOf(it) }.filter { it > 0 }.maxOrNull() ?: 0L
-            e.putString("year_$id", "-").putString("air_$id", "$latest|${System.currentTimeMillis()}")
+            e.putString("year_$id", "-").putString("air_$id", "$latest|${System.currentTimeMillis()}|$y")
         }
         e.apply()
     }
@@ -695,6 +709,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         private val EP_REGEX = Regex("""(\d+)\s*(?:화|회)""")
         private const val ONGOING_DAYS = 21
         private const val AIR_TTL_MS = 6 * 3_600_000L
+        private const val ENDED_TTL_MS = 7 * 86_400_000L
         private const val RATE_GAP_MS = 350L
         private val URL_ID_REGEX = Regex("""^https?://tvchak\d+\.com(?:/.*?)?/vod/(?:detail|play)/id/(\d+)""")
         private val ID_REGEX = Regex("""/id/(\d+)""")

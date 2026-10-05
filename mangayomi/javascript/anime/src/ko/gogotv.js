@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.8",
+    "version": "0.1.9",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -279,9 +279,14 @@ class DefaultExtension extends MProvider {
             const name = ((titleNode && titleNode.text) || (img && img.attr("alt")) || "").trim();
             if (!name) continue;
             seen[link] = true;
-            // 방영 중이면 앞에 최근 방영일 (제목이 길어 잘려도 보이도록), 겹치는 "(2026)" 연도는 뺌
-            const air = airLabel(dl.selectFirst(".date") ? dl.selectFirst(".date").text : "");
-            list.push({ name: air ? `${air} · ${name.replace(/\s*\((?:19|20)\d{2}\)\s*$/, "")}` : name, imageUrl: img ? this.resolveUrl(`${base}/`, img.attr("src")) : "", link: link });
+            // 방영 중이면 제목 뒤에 최근 방영일 (겹치는 "(2026)" 연도는 뺌),
+            // 방영이 끝났으면 제목 뒤에 연도 (사이트 제목에 없으면 마지막 방영 연도)
+            const date = dl.selectFirst(".date") ? dl.selectFirst(".date").text : "";
+            const air = airLabel(date);
+            const yearRe = /\s*\((?:19|20)\d{2}\)\s*$/;
+            const d = /(\d{2})\/\d{2}\/\d{2}/.exec(date);
+            const shown = air ? `${name.replace(yearRe, "")} · ${air}` : !yearRe.test(name) && d ? `${name} (20${d[1]})` : name;
+            list.push({ name: shown, imageUrl: img ? this.resolveUrl(`${base}/`, img.attr("src")) : "", link: link });
         }
         return { list: list, hasNextPage: this.hasNextPage(doc) };
     }
