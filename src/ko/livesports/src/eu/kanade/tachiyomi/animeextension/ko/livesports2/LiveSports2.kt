@@ -15,6 +15,7 @@ import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animeextension.ko.livesports.ExtStatus
+import eu.kanade.tachiyomi.animeextension.ko.livesports.LiveQuality
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -822,9 +823,17 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         }
         val proxied = proxyUrl(port, m3u8)
 
-        return listOf(
-            Video(proxied, "프록시 [${chosen.label}]$suffix", proxied, Headers.Builder().build()),
-            Video(m3u8, "직접 [${chosen.label} ${chosen.result}]$suffix", m3u8, chosen.headers),
+        // 중계가 여러 화질을 주면 화질별로도 고를 수 있게 (프록시를 거쳐 재생)
+        val qualities = LiveQuality.variants(client, m3u8, chosen.headers).map { (h, u) ->
+            runCatching { allowedHosts.add(u.toHttpUrl().host) }
+            val pu = proxyUrl(port, u)
+            Video(pu, "프록시 [${chosen.label}] ${h}p$suffix", pu, Headers.Builder().build())
+        }
+        return LiveQuality.sort(
+            prefs(),
+            listOf(Video(proxied, "프록시 [${chosen.label}]$suffix", proxied, Headers.Builder().build())) +
+                qualities +
+                Video(m3u8, "직접 [${chosen.label} ${chosen.result}]$suffix", m3u8, chosen.headers),
         )
     }
 
@@ -1136,6 +1145,8 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
                 true,
             ),
         )
+
+        LiveQuality.addPreference(screen)
     }
 
     companion object {

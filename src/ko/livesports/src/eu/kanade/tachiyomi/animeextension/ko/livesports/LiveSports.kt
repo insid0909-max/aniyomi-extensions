@@ -1223,7 +1223,16 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
             // 무시
         }
         val proxied = proxyUrl(port, best.url)
-        return listOf(Video(proxied, "프록시 [${best.label}]", proxied, Headers.Builder().build()))
+        // 중계가 여러 화질을 주면 화질별로도 고를 수 있게 (프록시를 거쳐 재생)
+        val qualities = LiveQuality.variants(client, best.url, best.headers).map { (h, u) ->
+            runCatching { allowedHosts.add(u.toHttpUrl().host) }
+            val pu = proxyUrl(port, u)
+            Video(pu, "프록시 [${best.label}] ${h}p", pu, Headers.Builder().build())
+        }
+        return LiveQuality.sort(
+            prefs(),
+            listOf(Video(proxied, "프록시 [${best.label}]", proxied, Headers.Builder().build())) + qualities,
+        )
     }
 
     override fun videoUrlParse(response: Response): String = ""
@@ -1361,6 +1370,8 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
                 false,
             ),
         )
+
+        LiveQuality.addPreference(screen)
     }
 
     companion object {
