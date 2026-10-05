@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.9",
+    "version": "0.1.10",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -331,6 +331,19 @@ class DefaultExtension extends MProvider {
         const period = info.find((t) => t.includes("~"));
         const status = period ? (period.includes("예정") ? 0 : 1) : 5;
         const latest = Math.max(0, ...links.map((l) => Number(l.dateUpload) || 0));
+        // 제목: 방영 중이면 "제목 · 10.04" (겹치는 연도는 뺌), 끝났으면 "제목 (2026)" (없으면 방영 시작 연도)
+        // — 망가요미는 서재 작품 제목도 업데이트 때마다 새로 받으므로 날짜가 따라 바뀜
+        const rawName = titleNode ? titleNode.text.trim() : "";
+        const yearRe = /\s*\((?:19|20)\d{2}\)\s*$/;
+        let detailName = rawName;
+        if (status === 0 && latest) {
+            const k = new Date(latest + 9 * 3600000);
+            const pad = (n) => String(n).padStart(2, "0");
+            detailName = `${rawName.replace(yearRe, "")} · ${pad(k.getUTCMonth() + 1)}.${pad(k.getUTCDate())}`;
+        } else if (rawName && !yearRe.test(rawName)) {
+            const sy = /((?:19|20)\d{2})년/.exec(period || "");
+            if (sy) detailName = `${rawName} (${sy[1]})`;
+        }
         let head = "";
         if (latest) {
             const k = new Date(latest + 9 * 3600000);
@@ -341,7 +354,7 @@ class DefaultExtension extends MProvider {
         }
 
         return {
-            name: titleNode ? titleNode.text.trim() : "",
+            name: detailName,
             imageUrl: poster ? this.resolveUrl(`${base}/`, poster.attr("src")) : "",
             description: [head].concat(info, plotNode ? [plotNode.text.trim()] : []).filter((t) => t).join("\n\n"),
             author: cast,
