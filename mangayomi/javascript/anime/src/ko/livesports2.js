@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.5",
+    "version": "0.1.6",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/livesports2.js"
@@ -169,9 +169,10 @@ class DefaultExtension extends MProvider {
         return cat === ALL_CAT || cat === CHOICE_ALL;
     }
 
-    // v=2: 회차 자리 고정 방식으로 바뀐 카드. 예전 카드(지난 경기가 쌓인 것)와 다른 항목으로 보이게 함
+    // 카드 주소는 사이트 첫 화면(/) 뒤에 조건을 붙인 모양: 망가요미 웹뷰 버튼이 "사이트 주소 + 카드 주소"를 열므로
+    // 실제로 있는 화면이어야 한다 (예전 /tong 은 사이트에 없는 화면). v=2 는 회차 자리 고정 방식으로 바뀐 카드 표시
     cardLink(p) {
-        let link = `/tong?src=${p.src}&cat=${encodeURIComponent(p.cat)}&sort=${p.sort}`;
+        let link = `/?src=${p.src}&cat=${encodeURIComponent(p.cat)}&sort=${p.sort}`;
         if (p.q) link += `&q=${encodeURIComponent(p.q)}`;
         return link + "&v=2";
     }
