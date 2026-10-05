@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/livesports2.js"
@@ -57,6 +57,43 @@ const THUMB_NAMES = {
     "골프": "golf", "배드민턴": "badminton", "탁구": "tabletennis", "핸드볼": "handball",
     "럭비": "rugby", "크리켓": "cricket",
 };
+
+// ---------- 화질 나누기 · 선호 화질 ----------
+const LIVE_QUALITY_CHOICES = ["자동", "1080p", "720p", "480p", "360p"];
+
+// 마스터 m3u8 본문에서 화질별 주소를 뽑음 (높은 화질부터, 2개 이상일 때만)
+function liveVariants(url, body) {
+    const text = String(body || "").replace(/\r/g, "");
+    const re = /#EXT-X-STREAM-INF:([^\n]*)\n\s*([^\s#][^\n]*)/g;
+    const seen = {};
+    const out = [];
+    let m;
+    while ((m = re.exec(text))) {
+        const h = /RESOLUTION=\d+x(\d+)/.exec(m[1]);
+        if (!h || seen[h[1]]) continue;
+        seen[h[1]] = true;
+        let u = m[2].trim();
+        if (!/^https?:\/\//.test(u)) {
+            u = u.startsWith("/") ? (/^(https?:\/\/[^/]+)/.exec(url) || [null, ""])[1] + u : url.replace(/[^/]*(?:\?.*)?$/, "") + u;
+        }
+        out.push({ h: Number(h[1]), u });
+    }
+    out.sort((a, b) => b.h - a.h);
+    return out.length >= 2 ? out : [];
+}
+
+// 설정의 선호 화질이 이름에 든 영상을 맨 앞으로 (자동이면 그대로)
+function liveQualitySort(list) {
+    let want = "자동";
+    try {
+        const v = new SharedPreferences().get("ls2_quality");
+        want = LIVE_QUALITY_CHOICES[Number(v)] || (LIVE_QUALITY_CHOICES.includes(v) ? v : "자동");
+    } catch (e) {
+        want = "자동";
+    }
+    if (want === "자동") return list;
+    return list.filter((x) => x.quality.includes(` ${want}`)).concat(list.filter((x) => !x.quality.includes(` ${want}`)));
+}
 
 class DefaultExtension extends MProvider {
     constructor() {
@@ -438,7 +475,12 @@ class DefaultExtension extends MProvider {
             try {
                 const res = await this.client.get(m3u8, h);
                 if (res.statusCode === 200 && String(res.body).trim().startsWith("#EXTM3U")) {
-                    return [{ url: m3u8, originalUrl: m3u8, quality: `직접 [${label}]${suffix}`, headers: h }];
+                    // 중계가 여러 화질을 주면 화질별로도 고를 수 있게
+                    const list = [{ url: m3u8, originalUrl: m3u8, quality: `직접 [${label}]${suffix}`, headers: h }]
+                        .concat(liveVariants(m3u8, String(res.body)).map((v) => ({
+                            url: v.u, originalUrl: v.u, quality: `직접 [${label}] ${v.h}p${suffix}`, headers: h,
+                        })));
+                    return liveQualitySort(list);
                 }
                 log.push(`${label}:${res.statusCode}`);
             } catch (e) {
@@ -555,6 +597,16 @@ class DefaultExtension extends MProvider {
 
     getSourcePreferences() {
         return [
+            {
+                key: "ls2_quality",
+                listPreference: {
+                    title: "선호 화질",
+                    summary: "중계가 여러 화질을 제공할 때 이 화질을 먼저 재생합니다.",
+                    valueIndex: 0,
+                    entries: LIVE_QUALITY_CHOICES,
+                    entryValues: LIVE_QUALITY_CHOICES,
+                },
+            },
             {
                 key: "ls2_domain",
                 editTextPreference: {
