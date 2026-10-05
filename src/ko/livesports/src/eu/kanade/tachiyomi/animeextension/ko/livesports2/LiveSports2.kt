@@ -377,6 +377,9 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         }
     }
 
+    // 웹뷰 버튼: 내부 데이터 주소 대신 사이트 첫 화면(중계 목록)을 연다
+    override fun getAnimeUrl(anime: SAnime): String = "$baseUrl/"
+
     override fun animeDetailsRequest(anime: SAnime): Request = listRequest(paramsFromCard(anime.url))
 
     override fun animeDetailsParse(response: Response): SAnime {
