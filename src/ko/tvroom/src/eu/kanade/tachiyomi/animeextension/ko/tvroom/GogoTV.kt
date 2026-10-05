@@ -182,8 +182,9 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
             return GET("$baseUrl/player/${m.groupValues[1]}", h())
         }
         if (query.isNotBlank()) {
+            // 사이트 검색창과 같은 주소: /search/검색어 (?page=N)
             val url = "$baseUrl/search/".toHttpUrl().newBuilder()
-                .addQueryParameter(SEARCH_PARAMS.first(), query.trim())
+                .addPathSegment(query.trim())
                 .apply { if (page > 1) addQueryParameter("page", page.toString()) }
                 .build()
             return GET(url.toString(), h())
@@ -215,23 +216,12 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
             if (d.title.isEmpty()) return AnimesPage(emptyList(), false)
             return AnimesPage(listOf(d.apply { this.url = url.encodedPath }), false)
         }
-        val result = parseList(response.asDoc())
-        val query = url.queryParameter(SEARCH_PARAMS.first())
-        if (result.animes.isNotEmpty() || query == null || url.encodedPath != "/search/") return result
-
-        // 검색 주소의 이름표(파라미터)가 다르면 다른 이름으로 다시 시도
-        for (param in SEARCH_PARAMS.drop(1)) {
-            val retry = url.newBuilder().removeAllQueryParameters(SEARCH_PARAMS.first())
-                .addQueryParameter(param, query).build()
-            val page = runCatching {
-                client.newCall(GET(retry.toString(), h())).execute().use { parseList(it.asDoc()) }
-            }.getOrNull()
-            if (page != null && page.animes.isNotEmpty()) return page
-        }
-        return result
+        return parseList(response.asDoc())
     }
 
     private fun parseList(doc: Document): AnimesPage {
+        // 검색 결과 화면은 모양이 달라 따로 읽음
+        if (doc.selectFirst(".search-page a[href*=/player/]") != null) return parseSearch(doc)
         val seen = HashSet<String>()
         val animes = doc.select(".itemLish-cont dl, .modList-ul dl, .view-floor3 .item dl").mapNotNull { dl ->
             val a = dl.selectFirst("a[href*=/player/]") ?: return@mapNotNull null
@@ -278,6 +268,26 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
                 set(2000 + yy.toInt(), mm.toInt() - 1, dd.toInt())
             }.timeInMillis
         }.getOrDefault(0L)
+    }
+
+    /** 검색 결과: li > .search-page(포스터·링크) + .view-floor2-lf-cont .tit(제목, 검색어 강조 표시 포함) */
+    private fun parseSearch(doc: Document): AnimesPage {
+        val seen = HashSet<String>()
+        val animes = doc.select(".search-page").mapNotNull { box ->
+            val li = box.parent() ?: return@mapNotNull null
+            val a = box.selectFirst("a[href*=/player/]") ?: return@mapNotNull null
+            val path = pathOf(a.attr("href"))
+            if (!seen.add(path)) return@mapNotNull null
+            SAnime.create().apply {
+                url = path
+                title = li.selectFirst(".view-floor2-lf-cont .tit")?.text()?.trim().orEmpty()
+                thumbnail_url = a.selectFirst("img")?.absUrl("src")?.ifEmpty { null }
+                airLabel(li.selectFirst(".date")?.text().orEmpty())?.let {
+                    if (title.isNotEmpty()) title = "${title.replace(TITLE_YEAR_REGEX, "")} · $it"
+                }
+            }
+        }.filter { it.title.isNotEmpty() }
+        return AnimesPage(animes, hasNextPage(doc))
     }
 
     private fun hasNextPage(doc: Document): Boolean {
@@ -539,7 +549,6 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
         )
 
         // 검색 파라미터 이름 후보 (앞에서부터 시도)
-        private val SEARCH_PARAMS = listOf("stx", "q", "keyword", "kwd", "search")
 
         private val BLOCKED_HOSTS = listOf(
             "googletagmanager.com",
