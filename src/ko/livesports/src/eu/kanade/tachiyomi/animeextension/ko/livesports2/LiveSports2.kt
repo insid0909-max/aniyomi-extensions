@@ -293,19 +293,20 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
 
     private fun thumbUrl(cat: String): String = "$thumbBase/${thumbName(cat)}.$THUMB_EXT"
 
-    private fun makeCard(p: Params): SAnime = SAnime.create().apply {
-        title = cardTitle(p)
+    private fun makeCard(p: Params, count: Int? = null): SAnime = SAnime.create().apply {
+        title = cardTitle(p) + if (count != null) " · ${count}경기" else ""
         thumbnail_url = thumbUrl(p.cat)
         setUrlWithoutDomain(cardUrl(p))
     }
 
-    // 현재 목록에 있는 종목만 카드로 만든다
+    // 현재 목록에 있는 종목만 카드로 만들고, 제목 옆에 경기 수
     private fun cardsForTab(games: List<Game>, src: String, sort: String): List<SAnime> {
         val present = games.map { it.label }.toSet()
-        val cards = mutableListOf(makeCard(Params(src, ALL_CAT, sort, "")))
-        CATEGORY_ORDER.filter { it in present }.forEach { cards.add(makeCard(Params(src, it, sort, ""))) }
+        fun card(cat: String) = Params(src, cat, sort, "").let { p -> makeCard(p, games.count { matches(it, p) }) }
+        val cards = mutableListOf(card(ALL_CAT))
+        CATEGORY_ORDER.filter { it in present }.forEach { cards.add(card(it)) }
         if (present.any { it.isNotEmpty() && it !in CATEGORY_ORDER }) {
-            cards.add(makeCard(Params(src, CAT_OTHER, sort, "")))
+            cards.add(card(CAT_OTHER))
         }
         return cards
     }
