@@ -449,6 +449,9 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         return AnimesPage(cardsFor(c.cat, c.sort, c.soon), false)
     }
 
+    // 웹뷰 버튼: 확장이 붙인 값 없이 사이트 중계 화면을 연다
+    override fun getAnimeUrl(anime: SAnime): String = livePageUrl
+
     override fun animeDetailsRequest(anime: SAnime): Request = GET(pageUrlWith(cardParams(anime.url)), headers)
 
     override fun animeDetailsParse(response: Response): SAnime {
