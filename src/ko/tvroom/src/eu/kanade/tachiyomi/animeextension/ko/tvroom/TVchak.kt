@@ -459,8 +459,9 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                 status = SAnime.COMPLETED
                 description = plot
             } else {
-                // 드라마·예능: 가장 최근 방영일로 방영 중/종영 판단.
-                // 제목: 방영 중이면 그대로, 끝났으면 연도 — 애니요미는 서재에 담을 때의 제목을 계속 쓰므로 바뀌는 방영일은 넣지 않음
+                // 드라마·예능: 가장 최근 방영일로 방영 중/종영 판단 (목록 카드와 같은 기준).
+                // 제목도 목록 카드와 똑같이 (애니요미는 한 번 연 작품을 목록에서 이 제목으로 보여 줌):
+                // 방영 중 "제목 · 10.04", 끝났으면 "제목 (2019)"
                 val year = doc.selectFirst(".scroll-content a[href*=/year/]")?.text()?.trim()
                     ?.takeIf { YEAR_REGEX.matches(it) }
                 val latest = labels.map { dateOf(it) }.filter { it > 0 }.maxOrNull()
@@ -473,7 +474,13 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                     java.text.SimpleDateFormat("yyyy", java.util.Locale.KOREAN)
                         .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }.format(java.util.Date(it))
                 }
-                title = if (status != SAnime.ONGOING && endYear != null && !name.contains(endYear)) "$name ($endYear)" else name
+                title = when {
+                    status == SAnime.ONGOING && latest != null -> "$name · " +
+                        java.text.SimpleDateFormat("MM.dd", java.util.Locale.KOREAN)
+                            .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }.format(java.util.Date(latest))
+                    endYear != null && !name.contains(endYear) -> "$name ($endYear)"
+                    else -> name
+                }
                 val head = if (latest != null) {
                     val fmt = java.text.SimpleDateFormat("yyyy.MM.dd (E)", java.util.Locale.KOREAN)
                         .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }

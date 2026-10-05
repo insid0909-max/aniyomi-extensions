@@ -294,25 +294,28 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
         return SAnime.create().apply {
             val name = doc.selectFirst(".view-floor2-lf-cont .tit")?.text()?.trim()
                 ?: doc.selectFirst(".view-floor2-tit")?.ownText()?.trim().orEmpty()
-            // 제목: 방영 중(방영 기간에 "예정")이면 연도 없이, 끝났으면 연도 (사이트 제목에 없으면 방영 시작 연도)
-            // — 애니요미는 서재에 담을 때의 제목을 계속 쓰므로 바뀌는 방영일은 넣지 않음
+            // 방영 중/종영 판단은 목록 카드와 같은 기준: 가장 최근 회차가 최종회가 아니고 21일 안이면 방영 중
+            // 제목도 목록 카드와 똑같이 (애니요미는 한 번 연 작품을 목록에서 이 제목으로 보여 줌):
+            // 방영 중 "제목 · 10.04", 끝났으면 "제목 (2026)" (사이트 제목에 연도가 없으면 방영 시작 연도, 그것도 없으면 마지막 방영 연도)
+            val epLabels = doc.select(".view-floor1-rt-cont li p.left a").map { it.text().replace(ICON_REGEX, "").trim() }
+            val newest = epLabels.maxByOrNull { dateOf(it) }?.takeIf { dateOf(it) > 0 }
+            val air = newest?.let { airLabel(it) }
             val periodText = doc.select(".view-floor2-lf-cont .list .right").map { it.text() }.firstOrNull { it.contains("~") }
-            val startYear = periodText?.let { PERIOD_YEAR_REGEX.find(it)?.groupValues?.get(1) }
+            val year = periodText?.let { PERIOD_YEAR_REGEX.find(it)?.groupValues?.get(1) }
+                ?: newest?.let { CARD_DATE_REGEX.find(it)?.groupValues?.get(1) }?.let { "20$it" }
             title = when {
-                periodText != null && periodText.contains("예정") -> name.replace(TITLE_YEAR_REGEX, "")
-                startYear != null && !TITLE_YEAR_REGEX.containsMatchIn(name) -> "$name ($startYear)"
+                air != null -> "${name.replace(TITLE_YEAR_REGEX, "")} · $air"
+                year != null && !TITLE_YEAR_REGEX.containsMatchIn(name) -> "$name ($year)"
                 else -> name
             }
             thumbnail_url = doc.selectFirst(".view-floor2-lf-img img")?.absUrl("src")?.ifEmpty { null }
             val info = doc.select(".view-floor2-lf-cont .list .right").map { it.text().trim() }
                 .filter { it.isNotEmpty() }
             val plot = doc.selectFirst(".view-floor2-lf-cont .cont")?.text()?.trim().orEmpty()
-            // 방영 기간 "2026년 7월 25일 ~ 2027년 1월 10일 (예정)" 과 회차 날짜로 방영 중/종영 판단
-            val period = info.firstOrNull { it.contains("~") }
-            val latest = doc.select(".view-floor1-rt-cont li p.left a").map { dateOf(it.text()) }.maxOrNull() ?: 0L
+            val latest = newest?.let { dateOf(it) } ?: 0L
             status = when {
-                period != null && period.contains("예정") -> SAnime.ONGOING
-                period != null -> SAnime.COMPLETED
+                air != null -> SAnime.ONGOING
+                latest > 0 || periodText != null -> SAnime.COMPLETED
                 else -> SAnime.UNKNOWN
             }
             val head = if (latest > 0) {
