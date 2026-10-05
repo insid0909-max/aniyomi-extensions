@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.14",
+    "version": "0.1.15",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -183,26 +183,83 @@ class DefaultExtension extends MProvider {
         this.client = appClient(new Client());
     }
 
+    // 직접 지정한 주소 > 자동으로 찾은 주소 > 기본 주소
     getBaseUrl() {
         let custom = "";
+        let auto = "";
         try {
-            custom = (new SharedPreferences().get("gogotv_domain") || "").trim().replace(/\/+$/, "");
+            const p = new SharedPreferences();
+            custom = (p.get("gogotv_domain") || "").trim().replace(/\/+$/, "");
+            auto = (p.getString("gogotv_auto_domain", "") || "").trim();
         } catch (e) {
             custom = "";
         }
-        return DOMAIN_RE.test(custom) ? custom : DEFAULT_BASE_URL;
+        if (DOMAIN_RE.test(custom)) return custom;
+        return DOMAIN_RE.test(auto) ? auto : DEFAULT_BASE_URL;
+    }
+
+    autoOn() {
+        try {
+            const v = new SharedPreferences().get("gogotv_auto_on");
+            return v !== false && v !== "false";
+        } catch (e) {
+            return true;
+        }
+    }
+
+    // gogotv 번호 주소를 현재 번호 -5 ~ +30 범위에서 동시에 열어 보고, 실제 고고티비인 가장 큰 번호를 고른다 (1분에 한 번만)
+    async discover(current) {
+        const p = new SharedPreferences();
+        const last = Number(p.getString("gogotv_auto_at", "0")) || 0;
+        if (Date.now() - last < 60000) return null;
+        p.setString("gogotv_auto_at", String(Date.now()));
+        const num = (u) => parseInt((/gogotv(\d+)\.xyz/.exec(u) || [0, "0"])[1], 10) || 0;
+        const cur = num(current) || num(DEFAULT_BASE_URL);
+        const cands = [];
+        for (let i = Math.max(1, cur - 5); i <= cur + 30; i++) {
+            const c = `https://gogotv${i}.xyz`;
+            if (c !== current) cands.push(c);
+        }
+        const hits = await Promise.all(cands.map(async (c) => {
+            try {
+                const r = await this.client.get(c + "/", { "User-Agent": UA });
+                return r.statusCode === 200 && /gogotv/i.test(String(r.body || "")) ? c : null;
+            } catch (e) {
+                return null;
+            }
+        }));
+        const ok = hits.filter((x) => x).sort((a, b) => num(b) - num(a));
+        if (ok[0]) p.setString("gogotv_auto_domain", ok[0]);
+        return ok[0] || null;
     }
 
     headers(referer) {
         return { "User-Agent": UA, "Referer": referer || `${this.getBaseUrl()}/` };
     }
 
+    // 접속이 안 되면(오류·5xx·451) gogotv 번호 주소를 찾아 바꾼 뒤 다시 요청 (도메인 자동 찾기)
     async getDoc(path) {
         const base = this.getBaseUrl();
         const url = path.startsWith("http") ? path : base + path;
+        const ours = url.startsWith(base);
         await siteWait();
-        const res = await this.client.get(url, this.headers());
-        return { doc: new Document(res.body), base: base };
+        let res = null;
+        try {
+            res = await this.client.get(url, this.headers());
+            const code = Number(res.statusCode);
+            if (!ours || !(code >= 500 || code === 451)) return { doc: new Document(res.body), base: base };
+        } catch (e) {
+            if (!ours) throw e;
+            res = null;
+        }
+        const found = this.autoOn() ? await this.discover(base) : null;
+        if (!found) {
+            if (res) return { doc: new Document(res.body), base: base };
+            throw new Error(`접속 실패: ${url}`);
+        }
+        await siteWait();
+        const r2 = await this.client.get(found + url.substring(base.length), this.headers(`${found}/`));
+        return { doc: new Document(r2.body), base: found };
     }
 
     listPath(cat, sort, country, page) {
@@ -604,10 +661,17 @@ class DefaultExtension extends MProvider {
             key: "gogotv_domain",
             editTextPreference: {
                 title: "고고티비 주소 직접 지정 (선택)",
-                summary: "비워 두면 기본 주소(https://gogotv2.xyz)를 사용합니다. 주소가 바뀌면 여기에 새 주소를 넣으세요.",
+                summary: "비워 두면 자동으로 찾은 주소나 기본 주소(https://gogotv2.xyz)를 사용합니다.",
                 value: "",
                 dialogTitle: "고고티비 주소",
                 dialogMessage: "gogotv숫자.xyz 형식의 HTTPS 주소만 사용됩니다.",
+            },
+        }, {
+            key: "gogotv_auto_on",
+            switchPreferenceCompat: {
+                title: "도메인 자동 찾기",
+                summary: "접속이 안 되면 gogotv 번호 주소(현재 번호 -5 ~ +30)를 찾아 자동 변경",
+                value: true,
             },
         }, qualityPreference("gogotv_quality")];
     }
