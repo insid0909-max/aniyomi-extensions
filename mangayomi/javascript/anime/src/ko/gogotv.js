@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.11",
+    "version": "0.1.12",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -21,7 +21,6 @@ const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, 
     "Chrome/124.0.0.0 Mobile Safari/537.36";
 const PLAYER_HINT = /(?:mode\.php|player|embed|\/v\/|\/e\/|[?&]key=)/i;
 const MEDIA_RE = /https?:\/\/[^"'\s<>\\]+\.(?:m3u8|mp4)(?:\?[^"'\s<>\\]*)?/i;
-const SEARCH_PARAMS = ["stx", "q", "keyword", "kwd", "search"];
 
 const CATEGORIES = [
     ["드라마", "list-drama"], ["영화", "list-movie"], ["예능", "list-vraiety"],
@@ -240,15 +239,9 @@ class DefaultExtension extends MProvider {
             return { list: d.name ? [{ name: d.name, imageUrl: d.imageUrl, link }] : [], hasNextPage: false };
         }
         if (query && query.trim()) {
+            // 사이트 검색창과 같은 주소: /search/검색어 (?page=N)
             const q = encodeURIComponent(query.trim());
-            const pageParam = page > 1 ? `&page=${page}` : "";
-            // 검색 주소의 파라미터 이름을 몰라서 후보를 차례로 시도
-            let result = { list: [], hasNextPage: false };
-            for (const param of SEARCH_PARAMS) {
-                result = this.parseList(await this.getDoc(`/search/?${param}=${q}${pageParam}`));
-                if (result.list.length > 0) break;
-            }
-            return result;
+            return this.parseList(await this.getDoc(`/search/${q}${page > 1 ? `?page=${page}` : ""}`));
         }
         const st = (i) => {
             const f = filters && filters[i];
@@ -266,7 +259,35 @@ class DefaultExtension extends MProvider {
             this.listPath(CATEGORIES[idx[0]][1], SORTS[idx[1]][1], COUNTRIES[idx[2]][1], page)));
     }
 
+    // 검색 결과: li > .search-page(포스터·링크) + .view-floor2-lf-cont .tit(제목, 검색어 강조 표시 포함)
+    parseSearch({ doc, base }) {
+        const seen = {};
+        const list = [];
+        const yearRe = /\s*\((?:19|20)\d{2}\)\s*$/;
+        for (const li of doc.select("li")) {
+            const box = li.selectFirst(".search-page");
+            const a = box ? box.selectFirst("a[href*='/player/']") : null;
+            if (!a) continue;
+            const link = this.toPath(a.attr("href"));
+            const t = li ? li.selectFirst(".view-floor2-lf-cont .tit") : null;
+            const name = t ? t.text.trim() : "";
+            if (!link || !name || seen[link]) continue;
+            seen[link] = true;
+            const img = a.selectFirst("img");
+            const dateNode = li ? li.selectFirst(".date") : null;
+            const air = airLabel(dateNode ? dateNode.text : "");
+            list.push({
+                name: air ? `${name.replace(yearRe, "")} · ${air}` : name,
+                imageUrl: img ? this.resolveUrl(`${base}/`, img.attr("src")) : "",
+                link,
+            });
+        }
+        return { list, hasNextPage: this.hasNextPage(doc) };
+    }
+
     parseList({ doc, base }) {
+        // 검색 결과 화면은 모양이 달라 따로 읽음
+        if (doc.selectFirst(".search-page a[href*='/player/']")) return this.parseSearch({ doc, base });
         const seen = {};
         const list = [];
         for (const dl of doc.select(".itemLish-cont dl, .modList-ul dl, .view-floor3 .item dl")) {
