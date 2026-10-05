@@ -474,10 +474,12 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                     java.text.SimpleDateFormat("yyyy", java.util.Locale.KOREAN)
                         .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }.format(java.util.Date(it))
                 }
+                val md = latest?.let {
+                    java.text.SimpleDateFormat("MM.dd", java.util.Locale.KOREAN)
+                        .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }.format(java.util.Date(it))
+                }
                 title = when {
-                    status == SAnime.ONGOING && latest != null -> "$name · " +
-                        java.text.SimpleDateFormat("MM.dd", java.util.Locale.KOREAN)
-                            .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }.format(java.util.Date(latest))
+                    status == SAnime.ONGOING && md != null -> "$name · $md"
                     endYear != null && !name.contains(endYear) -> "$name ($endYear)"
                     else -> name
                 }
