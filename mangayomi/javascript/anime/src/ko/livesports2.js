@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.7",
+    "version": "0.1.8",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/livesports2.js"
@@ -111,9 +111,57 @@ class DefaultExtension extends MProvider {
         }
     }
 
+    // 직접 지정한 주소 > 자동으로 찾은 주소 > 기본 주소
     getBaseUrl() {
         const custom = String(this.pref("ls2_domain", "")).trim().replace(/\/+$/, "");
-        return DOMAIN_RE.test(custom) ? custom : DEFAULT_BASE_URL;
+        if (DOMAIN_RE.test(custom)) return custom;
+        const auto = String(this.pref("ls2_auto_domain", "")).trim();
+        return DOMAIN_RE.test(auto) ? auto : DEFAULT_BASE_URL;
+    }
+
+    autoOn() {
+        return this.pref("ls2_auto_on", true) !== false && this.pref("ls2_auto_on", true) !== "false";
+    }
+
+    // 사이트 주소가 바뀌었으면 새 주소를 찾아 저장 (1분에 한 번만).
+    // 옛 주소 첫 화면(자동으로 새 주소로 넘어감)에 적힌 경기 데이터 주소(live.<사이트>)에서 새 사이트를 알아내고,
+    // 그 데이터 주소가 실제로 응답할 때만 바꾼다
+    async discover() {
+        let p;
+        try {
+            p = new SharedPreferences();
+        } catch (e) {
+            return null;
+        }
+        const last = Number(p.getString("ls2_auto_at", "0")) || 0;
+        if (Date.now() - last < 60000) return null;
+        p.setString("ls2_auto_at", String(Date.now()));
+        const site = this.siteHost();
+        for (const host of [`www.${site}`, site]) {
+            let body = "";
+            try {
+                body = String((await this.client.get(`https://${host}/`, { "User-Agent": UA })).body || "");
+            } catch (e) {
+                continue;
+            }
+            const re = /https:\/\/live\.([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/g;
+            let m;
+            while ((m = re.exec(body))) {
+                const next = m[1];
+                if (next === site) continue;
+                try {
+                    const r = await this.client.get(`https://live.${next}/api/collections/view_bw_live_on/records?perPage=1&skipTotal=true`, { "User-Agent": UA });
+                    if (Number(r.statusCode) === 200 && String(r.body || "").trim().startsWith("{")) {
+                        const found = `https://www.${next}`;
+                        p.setString("ls2_auto_domain", found);
+                        return found;
+                    }
+                } catch (e) {
+                    // 다음 후보
+                }
+            }
+        }
+        return null;
     }
 
     siteHost() {
@@ -140,9 +188,23 @@ class DefaultExtension extends MProvider {
     }
 
     async fetchItems(src, filter, perPage) {
-        const url = `${this.apiBase()}/api/collections/${this.collectionOf(src)}/records` +
+        const make = () => `${this.apiBase()}/api/collections/${this.collectionOf(src)}/records` +
             `?page=1&perPage=${perPage}&skipTotal=true&filter=${encodeURIComponent(filter)}`;
-        const res = await this.client.get(url, this.headers());
+        let res = null;
+        try {
+            res = await this.client.get(make(), this.headers());
+        } catch (e) {
+            res = null;
+        }
+        // 접속이 안 되면(오류·5xx·451·403) 사이트 새 주소를 찾아 한 번 더 (도메인 자동 찾기)
+        const code = res ? Number(res.statusCode) : 0;
+        if ((!res || code >= 500 || code === 451 || code === 403) && this.autoOn() && (await this.discover())) {
+            try {
+                res = await this.client.get(make(), this.headers());
+            } catch (e) {
+                res = null;
+            }
+        }
         try {
             return JSON.parse(res.body).items || [];
         } catch (e) {
@@ -239,7 +301,9 @@ class DefaultExtension extends MProvider {
 
     thumbUrl(cat) {
         const name = this.isAllCat(cat) ? "all" : (THUMB_NAMES[cat] || "other");
-        return `${THUMB_BASE}/${name}.png`;
+        // 설정에 올바른 폴더 주소가 있으면 그것을, 아니면 기본 폴더를 사용
+        const custom = String(this.pref("ls2_thumb_base", "")).trim().replace(/\/+$/, "");
+        return `${/^https:\/\/\S+$/.test(custom) ? custom : THUMB_BASE}/${name}.png`;
     }
 
     makeCard(p, games) {
@@ -330,7 +394,10 @@ class DefaultExtension extends MProvider {
             for (const g of ordered) counts[g.label] = (counts[g.label] || 0) + 1;
             const useEmoji = this.pref("ls2_emoji", true) !== false;
             const showScore = this.pref("ls2_score", true) !== false;
-            const showHeaders = p.sort === SORT_CATEGORY && !p.q && (this.isAllCat(p.cat) || p.cat === CAT_OTHER);
+            const showHeaders = this.pref("ls2_headers", true) !== false &&
+                p.sort === SORT_CATEGORY && !p.q && (this.isAllCat(p.cat) || p.cat === CAT_OTHER);
+            // 방송 중 목록의 시작 시각 표시 (예정 경기는 설정과 관계없이 항상 표시)
+            const showStartLive = this.pref("ls2_start", false) === true || this.pref("ls2_start", false) === "true";
 
             let last = null;
             for (const g of ordered) {
@@ -346,7 +413,8 @@ class DefaultExtension extends MProvider {
                     info = g.startKey ? `시작 ${this.startShort(g.startKey)}` : "";
                 } else {
                     const score = showScore && g.scoreHome && g.scoreAway ? `${g.scoreHome}:${g.scoreAway}` : "";
-                    info = [g.qTime, score].filter((x) => x).join(" · ");
+                    const start = showStartLive && g.startKey ? `시작 ${this.startShort(g.startKey)}` : "";
+                    info = [g.qTime, score, start].filter((x) => x).join(" · ");
                 }
                 let name;
                 if (!g.label) name = g.title;
@@ -616,6 +684,32 @@ class DefaultExtension extends MProvider {
                     dialogTitle: "사이트 주소",
                     dialogMessage: "https:// 로 시작하는 주소를 입력하세요.",
                 },
+            },
+            {
+                key: "ls2_auto_on",
+                switchPreferenceCompat: {
+                    title: "도메인 자동 찾기",
+                    summary: "접속이 안 되면 사이트가 넘겨 주는 새 주소를 찾아 자동 변경",
+                    value: true,
+                },
+            },
+            {
+                key: "ls2_thumb_base",
+                editTextPreference: {
+                    title: "표지 이미지 폴더 주소 (선택)",
+                    summary: "비워 두면 기본 폴더를 사용합니다. 폴더 안에 soccer.png, baseball.png 같은 종목별 이미지가 있어야 합니다.",
+                    value: "",
+                    dialogTitle: "표지 이미지 폴더 주소",
+                    dialogMessage: "https:// 로 시작하는 폴더 주소",
+                },
+            },
+            {
+                key: "ls2_headers",
+                switchPreferenceCompat: { title: "종목 구분 줄 표시", summary: "전체 경기를 종목순으로 볼 때 종목마다 구분 줄을 넣습니다.", value: true },
+            },
+            {
+                key: "ls2_start",
+                switchPreferenceCompat: { title: "시작 시각 표시", summary: "방송 중인 경기 줄에도 시작 시각을 표시합니다. 예정 경기에는 항상 표시됩니다.", value: false },
             },
             {
                 key: "ls2_emoji",
