@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.4",
+    "version": "0.1.5",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/livesports2.js"
@@ -169,10 +169,11 @@ class DefaultExtension extends MProvider {
         return cat === ALL_CAT || cat === CHOICE_ALL;
     }
 
+    // v=2: 회차 자리 고정 방식으로 바뀐 카드. 예전 카드(지난 경기가 쌓인 것)와 다른 항목으로 보이게 함
     cardLink(p) {
         let link = `/tong?src=${p.src}&cat=${encodeURIComponent(p.cat)}&sort=${p.sort}`;
         if (p.q) link += `&q=${encodeURIComponent(p.q)}`;
-        return link;
+        return link + "&v=2";
     }
 
     paramsFromLink(link) {
@@ -325,17 +326,55 @@ class DefaultExtension extends MProvider {
             name: this.cardTitle(p),
             imageUrl: this.thumbUrl(p.cat),
             description: `${live ? "방송 중" : "예정"} ${games.length}경기 · 정렬: ${p.sort === SORT_TIME ? "시간순" : "종목순"}`,
+            episodes: this.slotify(p, episodes),
             status: 0,
             genre: [],
             link: url,
-            episodes: episodes,
         };
+    }
+
+    // 망가요미는 목록에서 빠진 회차를 지우지 않고 계속 쌓아 둔다 (지난 경기가 남는 원인).
+    // 그래서 회차를 "자리"로 쓴다: 위에서부터 고정 번호(ep N)를 붙이면, 망가요미가 같은 번호의 기존 회차를
+    // 새 경기로 덮어쓴다. 바뀌는 정보(진행·점수)는 이름에 넣고 스캔레이터는 비워서 같은 자리로 인식되게 하고,
+    // 경기가 전보다 적으면 남는 자리는 "빈 칸"으로 덮는다. 맨 위가 가장 큰 번호라 번호순·원래순 어느 쪽으로 봐도 순서가 같다.
+    slotify(p, rows) {
+        const key = `ls2_slots_${p.src}_${p.cat}_${p.sort}_${p.q}`;
+        let prefs = null;
+        let saved = 0;
+        try {
+            prefs = new SharedPreferences();
+            saved = Number(prefs.getString(key, "0")) || 0;
+        } catch (e) {
+            prefs = null;
+        }
+        const total = Math.max(rows.length, saved);
+        if (prefs && total !== saved) {
+            try {
+                prefs.setString(key, String(total));
+            } catch (e) {
+                // 저장 실패는 무시
+            }
+        }
+        // 경기 이름 속 "Ep 3", "S2" 같은 글자를 망가요미가 회차·시즌 번호로 읽지 않게, 사이에 보이지 않는 글자를 넣음
+        const plain = (t) => String(t || "").replace(/\b(folge|episode|ep\.?|staffel|season|saison|temporada|s)(\s*\d)/gi, "$1\u200b$2");
+        const out = rows.map((r, i) => ({
+            name: `${plain(r.name)}${r.scanlator ? ` · ${plain(r.scanlator)}` : ""} · ep${total - i}`,
+            // 주소에도 자리 번호를 넣음: 망가요미는 주소가 같은 회차를 먼저 찾으므로, 경기가 다른 자리로 옮겨 가면
+            // 주소도 달라져야 자리 번호로 맞춰진다
+            url: `${r.url}&slot=${total - i}`,
+            scanlator: "",
+        }));
+        for (let j = rows.length; j < total; j++) {
+            out.push({ name: `─ 빈 칸 · ep${total - j}`, url: `/play?kind=empty&n=${total - j}`, scanlator: "" });
+        }
+        return out;
     }
 
     // ================= 재생 =================
     async getVideoList(url) {
         if (url.includes("kind=header")) throw new Error("구분 줄입니다. 아래의 경기를 선택하세요");
         if (url.includes("kind=none")) throw new Error("선택할 수 있는 경기가 없습니다");
+        if (url.includes("kind=empty")) throw new Error("빈 칸입니다. 지금은 이 자리에 경기가 없습니다");
 
         const p = this.paramsFromLink(url);
         const idMatch = /[?&]id=([^&]*)/.exec(url);
