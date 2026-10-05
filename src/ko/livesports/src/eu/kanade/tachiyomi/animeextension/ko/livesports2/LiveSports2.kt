@@ -231,9 +231,12 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         q = url.queryParameter("ls_q").orEmpty(),
     )
 
-    private fun cardUrl(p: Params): String {
+    // 경기 수(n)도 주소에 넣는다: 애니요미는 한 번 본 카드의 제목을 저장해 두고 다시 쓰므로,
+    // 경기 수가 바뀌면 다른 카드로 보이게 해야 새 제목(경기 수)이 화면에 나온다. n 은 읽을 때 무시
+    private fun cardUrl(p: Params, count: Int? = null): String {
         val b = StringBuilder("/tong?src=${p.src}&cat=${URLEncoder.encode(p.cat, "UTF-8")}&sort=${p.sort}")
         if (p.q.isNotEmpty()) b.append("&q=").append(URLEncoder.encode(p.q, "UTF-8"))
+        if (count != null) b.append("&n=").append(count)
         return b.toString()
     }
 
@@ -296,7 +299,7 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
     private fun makeCard(p: Params, count: Int? = null): SAnime = SAnime.create().apply {
         title = cardTitle(p) + if (count != null) " · ${count}경기" else ""
         thumbnail_url = thumbUrl(p.cat)
-        setUrlWithoutDomain(cardUrl(p))
+        setUrlWithoutDomain(cardUrl(p, count))
     }
 
     // 현재 목록에 있는 종목만 카드로 만들고, 제목 옆에 경기 수
