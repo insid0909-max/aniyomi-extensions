@@ -459,8 +459,11 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                 status = SAnime.COMPLETED
                 description = plot
             } else {
-                // 드라마·예능: 제목은 그대로, 가장 최근 방영일로 방영 중/종영 판단
-                title = name
+                // 드라마·예능: 제목 옆에 연도 (애니요미는 서재에 담을 때의 제목을 계속 쓰므로, 바뀌지 않는 연도만 붙임),
+                // 가장 최근 방영일로 방영 중/종영 판단
+                val year = doc.selectFirst(".scroll-content a[href*=/year/]")?.text()?.trim()
+                    ?.takeIf { YEAR_REGEX.matches(it) }
+                title = if (year != null && !name.contains(year)) "$name ($year)" else name
                 val latest = labels.map { dateOf(it) }.filter { it > 0 }.maxOrNull()
                 status = when {
                     latest == null -> SAnime.UNKNOWN
