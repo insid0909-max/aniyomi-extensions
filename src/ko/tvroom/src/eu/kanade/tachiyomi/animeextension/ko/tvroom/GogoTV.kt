@@ -16,6 +16,7 @@ import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import eu.kanade.tachiyomi.animesource.model.AnimeUpdateStrategy
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
@@ -66,6 +67,7 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
 
     // 주소 번호가 바뀌어 접속이 안 되면 gogotv 번호 주소를 찾아 자동 연결
     override val client: OkHttpClient = network.client.newBuilder()
+        .addInterceptor(PageCache(Regex("^/player/")))
         .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS))
         .addInterceptor { chain -> domainIntercept(chain) }
         .build()
@@ -323,6 +325,8 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
                 .filter { it.isNotEmpty() }
             val plot = doc.selectFirst(".view-floor2-lf-cont .cont")?.text()?.trim().orEmpty()
             val latest = newest?.let { dateOf(it) } ?: 0L
+            // 날짜 있는 회차가 없으면 영화: 회차가 늘지 않으므로 서재 업데이트 때 다시 확인하지 않음
+            if (newest == null && epLabels.isNotEmpty()) update_strategy = AnimeUpdateStrategy.ONLY_FETCH_ONCE
             status = when {
                 air != null -> SAnime.ONGOING
                 latest > 0 || periodText != null -> SAnime.COMPLETED
@@ -358,12 +362,19 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
         }.distinctBy { it.first }
 
         return links.mapIndexed { i, (href, label) ->
+            val no = EP_REGEX.find(label)?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() }?.toFloatOrNull()
+            val d = CARD_DATE_REGEX.find(label)
             SEpisode.create().apply {
                 url = href
-                name = label
+                // "제19회 26/10/04 - 최종회" → "19회 (10.04) 최종회" 처럼 보기 좋게 (날짜가 없으면 그대로)
+                name = if (no != null && d != null) {
+                    val note = label.substringAfter(" - ", "").trim()
+                    "${no.toInt()}회 (${d.groupValues[2]}.${d.groupValues[3]})" + if (note.isNotEmpty()) " $note" else ""
+                } else {
+                    label
+                }
                 date_upload = dateOf(label)
-                episode_number = EP_REGEX.find(label)?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() }
-                    ?.toFloatOrNull() ?: (links.size - i).toFloat()
+                episode_number = no ?: (links.size - i).toFloat()
             }
         }
     }
@@ -388,8 +399,10 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
                 }.getOrNull()
             }
 
-        // 2) 없으면 숨은 화면(WebView)으로 열어 영상 요청을 가로챈다
-        val (media, referer) = direct?.let { it to pageUrl } ?: sniffWithWebView(pageUrl)
+        // 2) 없거나, 찾았는데 실제로 열리지 않으면 숨은 화면(WebView)으로 열어 영상 요청을 가로챈다 (자동 전환)
+        val directOk = direct?.takeIf { HlsQuality.works(client, it, headersBuilder().set("Referer", pageUrl).build()) }
+        val (media, referer) = directOk?.let { it to pageUrl } ?: sniffWithWebView(pageUrl)
+            ?: direct?.let { it to pageUrl }
             ?: throw Exception("영상 주소를 찾지 못했습니다: $pageUrl")
 
         val origin = referer.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" }

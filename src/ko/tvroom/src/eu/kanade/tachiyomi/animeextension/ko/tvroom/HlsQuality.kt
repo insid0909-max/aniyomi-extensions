@@ -40,6 +40,15 @@ internal object HlsQuality {
         return listOf(auto) + variants.map { (h, u) -> Video(u, "$label ${h}p", u, headers) }
     }
 
+    /** 이 헤더로 영상 주소가 실제로 열리는지 (m3u8 이면 내용까지 확인) */
+    fun works(client: OkHttpClient, url: String, headers: Headers): Boolean = runCatching {
+        client.newCall(GET(url, headers)).execute().use { res ->
+            if (!res.isSuccessful) return@use false
+            if (!url.contains(".m3u8")) return@use true
+            res.body.source().peek().readUtf8(16).trimStart().startsWith("#EXTM3U")
+        }
+    }.getOrDefault(false)
+
     /** 선호 화질을 맨 앞으로 (같은 화질 안에서는 원래 순서 유지) */
     fun sort(p: SharedPreferences?, videos: List<Video>): List<Video> {
         val want = p?.getString(PREF_KEY, AUTO) ?: AUTO

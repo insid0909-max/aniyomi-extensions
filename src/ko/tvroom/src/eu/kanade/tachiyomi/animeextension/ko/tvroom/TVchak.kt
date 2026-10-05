@@ -16,6 +16,7 @@ import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
+import eu.kanade.tachiyomi.animesource.model.AnimeUpdateStrategy
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
@@ -72,6 +73,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
+        .addInterceptor(PageCache(Regex("/vod/detail/")))
         .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS))
         .addInterceptor { chain -> domainIntercept(chain) }
         .addInterceptor { chain -> challengeIntercept(chain) }
@@ -336,6 +338,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
      * 방영 중인 드라마·예능은 최근 방영일 " · 10.04".
      * 목록 페이지에는 둘 다 없어서 각 작품 상세 페이지에서 읽어 폰에 저장해 둔다.
      * 영화 연도는 한 번만 읽고, 방영 중인 시리즈는 6시간, 끝난 시리즈는 7일이 지나면 다시 읽는다.
+     * 읽기는 뒤에서 하므로 목록은 기다리지 않고 바로 뜬다 (새로 읽은 정보는 다음에 목록을 열 때 붙음).
      */
     private fun addYears(animes: List<SAnime>, movieList: Boolean) {
         val p = prefs()
@@ -343,7 +346,8 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         val now = System.currentTimeMillis()
         // 한꺼번에 많이 읽으면 사이트(CloudFront)가 접속을 잠시 차단하므로
         // 한 번에 하나씩, 간격을 두고, 목록 한 번에 최대 8개만 읽는다. 막히는 기미가 보이면 10분 쉼
-        if (p != null && now > p.getLong("year_pause_until", 0L)) {
+        // 목록은 바로 보여 주고, 아직 모르는 작품의 연도·방영일은 뒤에서 읽어 둠 (다음에 목록을 열 때 붙음)
+        if (p != null && now > p.getLong("year_pause_until", 0L) && !filling.get()) {
             val ids = animes.mapNotNull { idOf(it) }
             // 처음 보는 작품 먼저, 그다음 방영일이 오래된 시리즈 (영화 목록에서는 시리즈를 다시 읽지 않음)
             val unknown = ids.filter { !p.contains("year_$it") }
@@ -356,20 +360,15 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                     p.getString("year_$id", null) == "-" && now - checked > ttl
                 }
             }
-            for (id in (unknown + stale).take(8)) {
-                val ok = runCatching {
-                    client.newCall(GET("$baseUrl/index.php/vod/detail/id/$id.html", h())).execute().use { res ->
-                        val html = res.body.string()
-                        if (res.code != 200 || !html.contains(PAGE_MARKER)) return@use false
-                        saveInfo(id, Jsoup.parse(html))
-                        true
+            val todo = (unknown + stale).distinct().take(8)
+            if (todo.isNotEmpty() && filling.compareAndSet(false, true)) {
+                Thread {
+                    try {
+                        fillInfo(p, todo)
+                    } finally {
+                        filling.set(false)
                     }
-                }.getOrDefault(false)
-                if (!ok) {
-                    p.edit().putLong("year_pause_until", System.currentTimeMillis() + 10 * 60_000L).apply()
-                    break
-                }
-                Thread.sleep(700)
+                }.apply { isDaemon = true }.start()
             }
         }
         val md = java.text.SimpleDateFormat("MM.dd", java.util.Locale.KOREAN)
@@ -391,6 +390,28 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                 // 방영이 끝난 시리즈: 사이트의 연도, 없으면 마지막 방영 연도
                 withYear(a, seriesYear(p, id) ?: yf.format(java.util.Date(latest)))
             }
+        }
+    }
+
+    // 연도·방영일 읽기가 동시에 여러 번 돌지 않게
+    private val filling = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** 작품 상세 페이지를 하나씩, 간격을 두고 읽어 연도·방영일 저장. 막히는 기미가 보이면 10분 쉼 */
+    private fun fillInfo(p: SharedPreferences, ids: List<String>) {
+        for (id in ids) {
+            val ok = runCatching {
+                client.newCall(GET("$baseUrl/index.php/vod/detail/id/$id.html", h())).execute().use { res ->
+                    val html = res.body.string()
+                    if (res.code != 200 || !html.contains(PAGE_MARKER)) return@use false
+                    saveInfo(id, Jsoup.parse(html))
+                    true
+                }
+            }.getOrDefault(false)
+            if (!ok) {
+                p.edit().putLong("year_pause_until", System.currentTimeMillis() + 10 * 60_000L).apply()
+                return
+            }
+            Thread.sleep(700)
         }
     }
 
@@ -457,6 +478,8 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                     ?.takeIf { YEAR_REGEX.matches(it) }
                 title = if (year != null && !name.contains(year)) "$name ($year)" else name
                 status = SAnime.COMPLETED
+                // 영화는 회차가 늘지 않으므로 서재 업데이트 때 다시 확인하지 않음
+                update_strategy = AnimeUpdateStrategy.ONLY_FETCH_ONCE
                 description = plot
             } else {
                 // 드라마·예능: 가장 최근 방영일로 방영 중/종영 판단 (목록 카드와 같은 기준).
@@ -511,13 +534,15 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                 val path = pathOf(a.attr("href"))
                 if (!seen.add(path)) return@forEachIndexed
                 val label = a.text().trim().ifEmpty { "바로보기" }
+                val no = EP_REGEX.find(label)?.groupValues?.get(1)?.toFloatOrNull() ?: (links.size - i).toFloat()
+                val d = DATE_REGEX.find(label)
                 out.add(
                     SEpisode.create().apply {
                         url = path
-                        name = label
+                        // 날짜만 있는 이름("26/10/02")은 "235회 (10.02)" 처럼 회차 번호와 함께 보기 좋게
+                        name = if (d != null) "${no.toInt()}회 (${d.groupValues[2]}.${d.groupValues[3]})" else label
                         scanlator = server
-                        episode_number = EP_REGEX.find(label)?.groupValues?.get(1)?.toFloatOrNull()
-                            ?: (links.size - i).toFloat()
+                        episode_number = no
                         date_upload = dateOf(label)
                     },
                 )
@@ -553,9 +578,15 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
 
         val videos = ArrayList<Video>()
         if (media != null) {
-            // 사이트 플레이어(iframe) 안에서 재생되는 것과 같은 Referer 를 붙임. 안 되면 두 번째 항목으로
-            videos.addAll(HlsQuality.expand(client, media, qualityOf(media), videoHeaders(PLAYER_REFERER)))
-            videos.add(Video(media, qualityOf(media) + " (대체)", media, videoHeaders("$baseUrl/")))
+            // 사이트 플레이어(iframe) 안에서 재생되는 것과 같은 Referer 를 먼저 쓰고, 다른 Referer 를 대체로 둠.
+            // 먼저 실제로 열리는지 확인해서, 첫 번째가 안 되고 대체가 되면 순서를 바꿈 (자동 전환)
+            var main = videoHeaders(PLAYER_REFERER)
+            var alt = videoHeaders("$baseUrl/")
+            if (!HlsQuality.works(client, media, main) && HlsQuality.works(client, media, alt)) {
+                main = alt.also { alt = main }
+            }
+            videos.addAll(HlsQuality.expand(client, media, qualityOf(media), main))
+            videos.add(Video(media, qualityOf(media) + " (대체)", media, alt))
             return HlsQuality.sort(prefs(), videos)
         }
 
