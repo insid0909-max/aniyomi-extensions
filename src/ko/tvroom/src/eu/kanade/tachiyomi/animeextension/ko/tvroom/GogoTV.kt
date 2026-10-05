@@ -294,10 +294,15 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
         return SAnime.create().apply {
             val name = doc.selectFirst(".view-floor2-lf-cont .tit")?.text()?.trim()
                 ?: doc.selectFirst(".view-floor2-tit")?.ownText()?.trim().orEmpty()
-            // 제목에 연도가 없으면(예능 등) 방영 기간의 첫 연도를 붙임 — 애니요미는 서재에 담을 때의 제목을 계속 씀
-            val startYear = doc.select(".view-floor2-lf-cont .list .right")
-                .firstNotNullOfOrNull { PERIOD_YEAR_REGEX.find(it.text())?.groupValues?.get(1) }
-            title = if (startYear != null && !TITLE_YEAR_REGEX.containsMatchIn(name)) "$name ($startYear)" else name
+            // 제목: 방영 중(방영 기간에 "예정")이면 연도 없이, 끝났으면 연도 (사이트 제목에 없으면 방영 시작 연도)
+            // — 애니요미는 서재에 담을 때의 제목을 계속 쓰므로 바뀌는 방영일은 넣지 않음
+            val periodText = doc.select(".view-floor2-lf-cont .list .right").map { it.text() }.firstOrNull { it.contains("~") }
+            val startYear = periodText?.let { PERIOD_YEAR_REGEX.find(it)?.groupValues?.get(1) }
+            title = when {
+                periodText != null && periodText.contains("예정") -> name.replace(TITLE_YEAR_REGEX, "")
+                startYear != null && !TITLE_YEAR_REGEX.containsMatchIn(name) -> "$name ($startYear)"
+                else -> name
+            }
             thumbnail_url = doc.selectFirst(".view-floor2-lf-img img")?.absUrl("src")?.ifEmpty { null }
             val info = doc.select(".view-floor2-lf-cont .list .right").map { it.text().trim() }
                 .filter { it.isNotEmpty() }

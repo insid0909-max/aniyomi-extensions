@@ -459,17 +459,21 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                 status = SAnime.COMPLETED
                 description = plot
             } else {
-                // 드라마·예능: 제목 옆에 연도 (애니요미는 서재에 담을 때의 제목을 계속 쓰므로, 바뀌지 않는 연도만 붙임),
-                // 가장 최근 방영일로 방영 중/종영 판단
+                // 드라마·예능: 가장 최근 방영일로 방영 중/종영 판단.
+                // 제목: 방영 중이면 그대로, 끝났으면 연도 — 애니요미는 서재에 담을 때의 제목을 계속 쓰므로 바뀌는 방영일은 넣지 않음
                 val year = doc.selectFirst(".scroll-content a[href*=/year/]")?.text()?.trim()
                     ?.takeIf { YEAR_REGEX.matches(it) }
-                title = if (year != null && !name.contains(year)) "$name ($year)" else name
                 val latest = labels.map { dateOf(it) }.filter { it > 0 }.maxOrNull()
                 status = when {
                     latest == null -> SAnime.UNKNOWN
                     System.currentTimeMillis() - latest <= ONGOING_DAYS * 86_400_000L -> SAnime.ONGOING
                     else -> SAnime.COMPLETED
                 }
+                val endYear = year ?: latest?.let {
+                    java.text.SimpleDateFormat("yyyy", java.util.Locale.KOREAN)
+                        .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }.format(java.util.Date(it))
+                }
+                title = if (status != SAnime.ONGOING && endYear != null && !name.contains(endYear)) "$name ($endYear)" else name
                 val head = if (latest != null) {
                     val fmt = java.text.SimpleDateFormat("yyyy.MM.dd (E)", java.util.Locale.KOREAN)
                         .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }
