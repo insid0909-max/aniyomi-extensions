@@ -292,8 +292,12 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
     override fun animeDetailsParse(response: Response): SAnime {
         val doc = response.asDoc()
         return SAnime.create().apply {
-            title = doc.selectFirst(".view-floor2-lf-cont .tit")?.text()?.trim()
+            val name = doc.selectFirst(".view-floor2-lf-cont .tit")?.text()?.trim()
                 ?: doc.selectFirst(".view-floor2-tit")?.ownText()?.trim().orEmpty()
+            // 제목에 연도가 없으면(예능 등) 방영 기간의 첫 연도를 붙임 — 애니요미는 서재에 담을 때의 제목을 계속 씀
+            val startYear = doc.select(".view-floor2-lf-cont .list .right")
+                .firstNotNullOfOrNull { PERIOD_YEAR_REGEX.find(it.text())?.groupValues?.get(1) }
+            title = if (startYear != null && !TITLE_YEAR_REGEX.containsMatchIn(name)) "$name ($startYear)" else name
             thumbnail_url = doc.selectFirst(".view-floor2-lf-img img")?.absUrl("src")?.ifEmpty { null }
             val info = doc.select(".view-floor2-lf-cont .list .right").map { it.text().trim() }
                 .filter { it.isNotEmpty() }
@@ -566,6 +570,7 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val ONGOING_DAYS = 21
         private const val RATE_GAP_MS = 350L
         private val ICON_REGEX = Regex("[\\uE000-\\uF8FF]")
+        private val PERIOD_YEAR_REGEX = Regex("""((?:19|20)\d{2})년""")
         private val TITLE_YEAR_REGEX = Regex("""\s*\((?:19|20)\d{2}\)\s*$""")
         private val URL_PLAYER_REGEX = Regex("""^https?://gogotv\d+\.xyz/player/([A-Za-z0-9]+)""")
         private val RULE_SIZES = intArrayOf(CATEGORIES.size, SORTS.size, COUNTRIES.size)
