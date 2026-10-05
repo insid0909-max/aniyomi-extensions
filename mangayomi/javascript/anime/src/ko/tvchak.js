@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.16",
+    "version": "0.1.17",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -595,7 +595,8 @@ class DefaultExtension extends MProvider {
             name = this.titleWithYear(rawName, doc);
             status = 1;
         } else {
-            // 드라마·예능: 제목은 그대로, 가장 최근 방영일로 방영 중/종영 판단
+            // 드라마·예능: 가장 최근 방영일로 방영 중/종영 판단.
+            // 제목: 방영 중이면 "제목 · 10.04", 끝났으면 "제목 (2019)" — 망가요미는 서재 작품 제목도 업데이트 때마다 새로 받으므로 날짜가 따라 바뀜
             const dates = episodes.map((e) => Number(e.dateUpload) || 0).filter((t) => t > 0);
             const latest = dates.length ? Math.max(...dates) : 0;
             let head = `총 ${episodes.length}회`;
@@ -606,6 +607,11 @@ class DefaultExtension extends MProvider {
                 const pad = (n) => String(n).padStart(2, "0");
                 const day = "일월화수목금토"[k.getUTCDay()];
                 head = `${ongoing ? "방영 중" : "종영"} · 최근 방영: ${k.getUTCFullYear()}.${pad(k.getUTCMonth() + 1)}.${pad(k.getUTCDate())} (${day}) · ${head}`;
+                if (ongoing) name = `${rawName} · ${pad(k.getUTCMonth() + 1)}.${pad(k.getUTCDate())}`;
+                else {
+                    name = this.titleWithYear(rawName, doc);
+                    if (name === rawName && !rawName.includes(String(k.getUTCFullYear()))) name = `${rawName} (${k.getUTCFullYear()})`;
+                }
             }
             description = [head, plot].filter((t) => t).join("\n\n");
         }
