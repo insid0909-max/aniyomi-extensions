@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.13",
+    "version": "0.1.14",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -336,6 +336,7 @@ class DefaultExtension extends MProvider {
         const cast = doc.select(".view-floor2-lf-cont .list .blue a").map((e) => e.text.trim()).join(", ");
 
         const links = [];
+        const rawLabels = []; // 원래 회차 이름 (방영 중 판단용)
         const seen = {};
         for (const li of doc.select(".view-floor1-rt-cont li")) {
             const a = li.selectFirst("p.left a[href]") || li.selectFirst("a[href]");
@@ -346,13 +347,20 @@ class DefaultExtension extends MProvider {
             // 아이콘 글꼴 문자·탭 제거
             const label = a.text.replace(/[\ue000-\uf8ff]/g, "").replace(/\s+/g, " ").trim() || "바로보기";
             const at = airAt(label);
-            links.push({ name: label, url: href, dateUpload: at ? String(at) : null });
+            // "제19회 26/10/04 - 최종회" → "19회 (10.04) 최종회" 처럼 보기 좋게 (날짜가 없으면 그대로)
+            const no = /제\s*(\d+)\s*회|E(\d+)/.exec(label);
+            const dm = /(\d{2})\/(\d{2})\/(\d{2})/.exec(label);
+            const note = label.includes(" - ") ? label.split(" - ").slice(1).join(" - ").trim() : "";
+            const shown = no && dm ? `${Number(no[1] || no[2])}회 (${dm[2]}.${dm[3]})${note ? ` ${note}` : ""}` : label;
+            links.push({ name: shown, url: href, dateUpload: at ? String(at) : null });
+            rawLabels.push(label);
         }
 
         // 방영 중/종영 판단은 목록 카드와 같은 기준: 가장 최근 회차가 최종회가 아니고 21일 안이면 방영 중
         const period = info.find((t) => t.includes("~"));
         const latest = Math.max(0, ...links.map((l) => Number(l.dateUpload) || 0));
-        const newest = latest ? links.find((l) => Number(l.dateUpload) === latest) : null;
+        const newestIdx = latest ? links.findIndex((l) => Number(l.dateUpload) === latest) : -1;
+        const newest = newestIdx >= 0 ? { name: rawLabels[newestIdx] } : null;
         const air = newest ? airLabel(newest.name) : "";
         const status = air ? 0 : latest || period ? 1 : 5;
         // 제목도 목록 카드와 똑같이: 방영 중 "제목 · 10.04" (겹치는 연도는 뺌), 끝났으면 "제목 (2026)"
