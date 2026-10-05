@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.10",
+    "version": "0.1.11",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -327,22 +327,25 @@ class DefaultExtension extends MProvider {
             links.push({ name: label, url: href, dateUpload: at ? String(at) : null });
         }
 
-        // 방영 기간 "2026년 7월 25일 ~ 2027년 1월 10일 (예정)" 과 회차 날짜로 방영 중/종영 판단
+        // 방영 중/종영 판단은 목록 카드와 같은 기준: 가장 최근 회차가 최종회가 아니고 21일 안이면 방영 중
         const period = info.find((t) => t.includes("~"));
-        const status = period ? (period.includes("예정") ? 0 : 1) : 5;
         const latest = Math.max(0, ...links.map((l) => Number(l.dateUpload) || 0));
-        // 제목: 방영 중이면 "제목 · 10.04" (겹치는 연도는 뺌), 끝났으면 "제목 (2026)" (없으면 방영 시작 연도)
+        const newest = latest ? links.find((l) => Number(l.dateUpload) === latest) : null;
+        const air = newest ? airLabel(newest.name) : "";
+        const status = air ? 0 : latest || period ? 1 : 5;
+        // 제목도 목록 카드와 똑같이: 방영 중 "제목 · 10.04" (겹치는 연도는 뺌), 끝났으면 "제목 (2026)"
+        // (사이트 제목에 연도가 없으면 방영 시작 연도, 그것도 없으면 마지막 방영 연도)
         // — 망가요미는 서재 작품 제목도 업데이트 때마다 새로 받으므로 날짜가 따라 바뀜
         const rawName = titleNode ? titleNode.text.trim() : "";
         const yearRe = /\s*\((?:19|20)\d{2}\)\s*$/;
         let detailName = rawName;
-        if (status === 0 && latest) {
-            const k = new Date(latest + 9 * 3600000);
-            const pad = (n) => String(n).padStart(2, "0");
-            detailName = `${rawName.replace(yearRe, "")} · ${pad(k.getUTCMonth() + 1)}.${pad(k.getUTCDate())}`;
+        if (air) {
+            detailName = `${rawName.replace(yearRe, "")} · ${air}`;
         } else if (rawName && !yearRe.test(rawName)) {
             const sy = /((?:19|20)\d{2})년/.exec(period || "");
+            const ly = newest ? /(\d{2})\/\d{2}\/\d{2}/.exec(newest.name) : null;
             if (sy) detailName = `${rawName} (${sy[1]})`;
+            else if (ly) detailName = `${rawName} (20${ly[1]})`;
         }
         let head = "";
         if (latest) {
