@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.17",
+    "version": "0.1.18",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -88,6 +88,17 @@ async function siteWait() {
     const wait = lastSiteRequest + 350 - Date.now();
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     lastSiteRequest = Date.now();
+}
+
+// 이 헤더로 영상 주소가 실제로 열리는지 (m3u8 이면 내용까지 확인)
+async function mediaWorks(client, url, headers) {
+    try {
+        const res = await client.get(url, headers);
+        if (Number(res.statusCode) >= 400) return false;
+        return !url.includes(".m3u8") || String(res.body || "").trim().startsWith("#EXTM3U");
+    } catch (e) {
+        return false;
+    }
 }
 
 const QUALITY_CHOICES = ["자동", "1080p", "720p", "480p", "360p"];
@@ -490,9 +501,9 @@ class DefaultExtension extends MProvider {
         let ok = 0;
         let fail = 0;
         // 한꺼번에 많이 읽으면 사이트(CloudFront)가 접속을 잠시 차단하므로
-        // 한 번에 하나씩, 간격을 두고, 목록 한 번에 최대 8개만 읽는다. 막히는 기미가 보이면 즉시 멈춤
+        // 한 번에 하나씩, 간격을 두고, 목록 한 번에 최대 3개만 읽는다(목록이 오래 기다리지 않게). 막히는 기미가 보이면 즉시 멈춤
         const stopUntil = Number(p.getString("year_pause_until", "0")) || 0;
-        const batch = now < stopUntil ? [] : todo.slice(0, 8);
+        const batch = now < stopUntil ? [] : todo.slice(0, 3);
         for (const id of batch) {
             try {
                 const { html, res } = await this.getHtml(`/index.php/vod/detail/id/${id}.html`);
@@ -576,7 +587,8 @@ class DefaultExtension extends MProvider {
                 // 망가요미는 이름 맨 앞 숫자를 회차 번호로 써서 "26/10/02"처럼 연도로 시작하면 같은 해 회차를 중복으로 숨긴다
                 // → 날짜·특집처럼 회차 번호가 없는 이름은 순번을 붙임 (가장 오래된 회차가 1)
                 const hasNo = /\d+\s*(?:화|회)/.test(label) && !d;
-                const name = hasNo ? label : `${links.length - i}회 · ${label}`;
+                // 날짜만 있는 이름은 "235회 (10.02)" 처럼 (애니요미와 같은 모양)
+                const name = hasNo ? label : d ? `${links.length - i}회 (${d[2]}.${d[3]})` : `${links.length - i}회 · ${label}`;
                 episodes.push({
                     name,
                     url: path,
@@ -654,8 +666,12 @@ class DefaultExtension extends MProvider {
         }
         const q = media.includes(".m3u8") ? "티비착 (HLS)" : "티비착";
         const hd = (ref) => ({ "User-Agent": UA, "Referer": ref, "Origin": ref.replace(/\/$/, "") });
-        const list = await hlsExpand(this.client, media, q, hd(PLAYER_REFERER));
-        list.push({ url: media, originalUrl: media, quality: `${q} (대체)`, headers: hd(`${base}/`) });
+        // 먼저 실제로 열리는지 확인해서, 첫 번째 Referer 가 안 되고 대체가 되면 순서를 바꿈 (자동 전환)
+        let main = hd(PLAYER_REFERER);
+        let alt = hd(`${base}/`);
+        if (!(await mediaWorks(this.client, media, main)) && (await mediaWorks(this.client, media, alt))) [main, alt] = [alt, main];
+        const list = await hlsExpand(this.client, media, q, main);
+        list.push({ url: media, originalUrl: media, quality: `${q} (대체)`, headers: alt });
         return qualitySort("tvchak_quality", list);
     }
 
