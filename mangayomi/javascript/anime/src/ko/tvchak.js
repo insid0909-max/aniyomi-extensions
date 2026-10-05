@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.15",
+    "version": "0.1.16",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -37,6 +37,13 @@ const RULE_SIZES = [TYPES.length, SORTS.length];
 // ---------- 목록 카드용 연도/방영일 저장 ----------
 const ONGOING_DAYS = 21;
 const AIR_TTL_MS = 6 * 3600000;
+const ENDED_TTL_MS = 7 * 86400000;
+
+// 저장된 시리즈 연도 (사이트 표기)
+function seriesYear(p, id) {
+    const y = String(p.getString(`air_${id}`, "") || "").split("|")[2] || "";
+    return /^(?:19|20)\d{2}$/.test(y) ? y : "";
+}
 
 // 저장된 최근 방영일 [방영일, 읽은 시각]. 없으면 [0, 0]
 function airOf(p, id) {
@@ -62,15 +69,15 @@ function saveInfo(p, id, doc) {
         seen[h] = true;
         labels.push(a.text.trim());
     }
+    const y = doc.selectFirst(".scroll-content a[href*='/year/']");
+    const year = y ? y.text.trim() : "";
     if (labels.length <= 1) {
-        const y = doc.selectFirst(".scroll-content a[href*='/year/']");
-        const year = y ? y.text.trim() : "";
         p.setString(`year_${id}`, /^(?:19|20)\d{2}$/.test(year) ? year : "-");
     } else {
-        // 시리즈는 "-" 로 표시하고, 최근 방영일은 따로 저장
+        // 시리즈는 "-" 로 표시하고, 최근 방영일·읽은 시각·연도는 따로 저장
         const latest = Math.max(0, ...labels.map(airDate));
         p.setString(`year_${id}`, "-");
-        p.setString(`air_${id}`, `${latest}|${Date.now()}`);
+        p.setString(`air_${id}`, `${latest}|${Date.now()}|${year}`);
     }
 }
 
@@ -458,7 +465,7 @@ class DefaultExtension extends MProvider {
      * 목록 페이지에는 연도가 없어서, 영화 분류 목록일 때 각 작품 상세 페이지에서 연도를 읽어 폰에 저장해 두고
      * (한 번 읽은 작품은 다시 읽지 않음) 모든 목록에서 저장된 연도를 붙인다.
      */
-    // 목록 카드 제목에 정보를 붙임: 영화는 개봉 연도 "(2024)", 방영 중인 드라마·예능은 앞에 최근 방영일 "10.04 · ".
+    // 목록 카드 제목 뒤에 정보를 붙임: 영화와 방영이 끝난 드라마·예능은 연도 "(2024)", 방영 중이면 최근 방영일 " · 10.04".
     // 목록 페이지에는 둘 다 없어서 각 작품 상세 페이지에서 읽어 폰에 저장해 둔다.
     // 영화 연도는 한 번만 읽고, 방영일은 6시간이 지나면 다시 읽는다.
     async withYears(result, movieList) {
@@ -473,7 +480,12 @@ class DefaultExtension extends MProvider {
         const ids = result.list.map(idOf).filter((id) => id);
         // 처음 보는 작품 먼저, 그다음 방영일이 오래된 시리즈 (영화 목록에서는 시리즈를 다시 읽지 않음)
         const unknown = ids.filter((id) => !p.getString(`year_${id}`, ""));
-        const stale = movieList ? [] : ids.filter((id) => p.getString(`year_${id}`, "") === "-" && now - airOf(p, id)[1] > AIR_TTL_MS);
+        // 방영 중인 시리즈는 6시간, 끝난 시리즈는 7일마다 다시 읽음
+        const stale = movieList ? [] : ids.filter((id) => {
+            const [latest, checked] = airOf(p, id);
+            const ttl = now - latest <= ONGOING_DAYS * 86400000 ? AIR_TTL_MS : ENDED_TTL_MS;
+            return p.getString(`year_${id}`, "") === "-" && now - checked > ttl;
+        });
         const todo = unknown.concat(stale);
         let ok = 0;
         let fail = 0;
@@ -509,12 +521,18 @@ class DefaultExtension extends MProvider {
                 years++;
             } else if (y === "-") {
                 const latest = airOf(p, id)[0];
-                if (latest && now - latest <= ONGOING_DAYS * 86400000) {
-                    const k = new Date(latest + 9 * 3600000);
+                if (!latest) continue;
+                const k = new Date(latest + 9 * 3600000);
+                if (now - latest <= ONGOING_DAYS * 86400000) {
+                    // 방영 중: 제목 뒤에 최근 방영일
                     const pad = (n) => String(n).padStart(2, "0");
-                    // 제목이 길어 잘려도 날짜는 보이도록 앞에 붙임
-                    x.name = `${pad(k.getUTCMonth() + 1)}.${pad(k.getUTCDate())} · ${x.name}`;
+                    x.name = `${x.name} · ${pad(k.getUTCMonth() + 1)}.${pad(k.getUTCDate())}`;
                     airs++;
+                } else {
+                    // 방영이 끝남: 제목 뒤에 연도 (사이트 표기, 없으면 마지막 방영 연도)
+                    const sy = seriesYear(p, id) || String(k.getUTCFullYear());
+                    if (!x.name.includes(sy)) x.name = `${x.name} (${sy})`;
+                    years++;
                 }
             }
         }

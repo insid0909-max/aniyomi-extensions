@@ -243,9 +243,14 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
                 title = dl.selectFirst(".tit")?.text()?.trim()?.ifEmpty { null }
                     ?: img?.attr("alt")?.trim().orEmpty()
                 thumbnail_url = img?.absUrl("src")?.ifEmpty { null }
-                // 방영 중이면 앞에 최근 방영일 (제목이 길어 잘려도 보이도록), 겹치는 "(2026)" 연도는 뺌
-                airLabel(dl.selectFirst(".date")?.text().orEmpty())?.let {
-                    if (title.isNotEmpty()) title = "$it · ${title.replace(TITLE_YEAR_REGEX, "")}"
+                // 방영 중이면 제목 뒤에 최근 방영일 (겹치는 "(2026)" 연도는 뺌),
+                // 방영이 끝났으면 제목 뒤에 연도 (사이트 제목에 없으면 마지막 방영 연도)
+                val date = dl.selectFirst(".date")?.text().orEmpty()
+                val air = airLabel(date)
+                if (title.isNotEmpty() && air != null) {
+                    title = "${title.replace(TITLE_YEAR_REGEX, "")} · $air"
+                } else if (title.isNotEmpty() && !TITLE_YEAR_REGEX.containsMatchIn(title)) {
+                    CARD_DATE_REGEX.find(date)?.let { title = "$title (20${it.groupValues[1]})" }
                 }
             }
         }.filter { it.title.isNotEmpty() }
