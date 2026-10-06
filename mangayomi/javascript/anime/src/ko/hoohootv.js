@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.10",
+    "version": "0.1.11",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -238,17 +238,31 @@ class DefaultExtension extends MProvider {
             "if(!u){var m=document.documentElement.outerHTML.match(/https?:[^\"'\\s<>]+\\.m3u8[^\"'\\s<>]*/);if(m)u=m[0];}" +
             "if(u){if(u.indexOf('//')===0)u=location.protocol+u;else if(u.indexOf('http')!==0)u=new URL(u,location.href).href;" +
             "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:u,ref:location.href}));return true;}return false;}" +
-            "if(!f()){var t=setInterval(function(){if(f())clearInterval(t);},400);}})();";
+            "var n0=0;if(!f()){var t=setInterval(function(){n0++;if(f()){clearInterval(t);return;}" +
+            // 15초가 지나도 못 찾으면 웹뷰 안 상태를 알려 줌 (원인 파악용)
+            "if(n0===38){clearInterval(t);var fr=document.querySelectorAll('iframe');var fs=[];for(var k=0;k<fr.length;k++)fs.push((fr[k].src||'').replace(/^https?:\\/\\//,'').substring(0,30));" +
+            "var rs=[];try{rs=performance.getEntriesByType('resource');}catch(e){}" +
+            "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:'',diag:'제목:'+(document.title||'').substring(0,20)+' jw:'+(window.jwplayer?'있음':'없음')+' 프레임:'+fs.join(',')+' 요청수:'+rs.length+' 영상:'+document.querySelectorAll('video').length}));}" +
+            "},400);}})();";
+        if (!this.wvDiag) this.wvDiag = [];
+        const started = Date.now();
         try {
             const timeout = new Promise((res) => setTimeout(() => res(null), 25000));
             const res = await Promise.race([
                 evaluateJavascriptViaWebview(url, { "Referer": referer }, [script]),
                 timeout,
             ]);
-            if (!res) return null;
+            const host = url.replace(/^https?:\/\//, "").split("/")[0];
+            if (!res) {
+                this.wvDiag.push(`${host}: 응답 없음 ${Math.round((Date.now() - started) / 1000)}초`);
+                return null;
+            }
             const o = JSON.parse(String(res));
-            return o && o.u ? { url: o.u, referer: o.ref || url } : null;
+            if (o && o.u) return { url: o.u, referer: o.ref || url };
+            this.wvDiag.push(`${host}: ${(o && o.diag) || String(res).substring(0, 60)}`);
+            return null;
         } catch (e) {
+            this.wvDiag.push(`오류 ${String((e && e.message) || e).substring(0, 50)}`);
             return null;
         }
     }
@@ -449,6 +463,7 @@ class DefaultExtension extends MProvider {
         let target = player;
         let lastUrl = player;
         let lastBody = "";
+        this.wvDiag = [];
         let lastRef = pageUrl;
         for (let depth = 0; depth < 3 && target && !media; depth++) {
             let body = "";
@@ -495,10 +510,10 @@ class DefaultExtension extends MProvider {
             const at = ["setup(", "sources", "file:", "\"file\"", "playlist", "atob(", "fetch("].map((k) => text.indexOf(k)).filter((i) => i >= 0);
             const pos = at.length ? Math.min(...at) : -1;
             const snippet = pos >= 0 ? text.substring(Math.max(0, pos - 80), pos + 220) : text.replace(/<[^>]+>/g, " ").substring(0, 200);
-            const wv = typeof evaluateJavascriptViaWebview === "function" ? "웹뷰 결과 없음" : "웹뷰 미지원";
+            const wv = typeof evaluateJavascriptViaWebview === "function" ? `웹뷰 ${(this.wvDiag || []).join(" / ") || "결과 없음"}` : "웹뷰 미지원";
             // 재생 오류 화면은 앞부분만 보이므로 진단 내용을 먼저 짧게
             const clean = snippet.replace(/https?:\/\/\S{20,}/g, "(주소)").substring(0, 160);
-            throw new Error(`[단서 ${hints.join(",") || "없음"} · 크기 ${lastBody.length} · ${wv}] 내용: ${clean} … 영상 주소를 찾지 못했습니다`);
+            throw new Error(`[${wv}] [단서 ${hints.join(",") || "없음"} · 크기 ${lastBody.length}] 내용: ${clean} … 영상 주소를 찾지 못했습니다`);
         }
         const origin = (/^(https?:\/\/[^/]+)/.exec(referer) || [null, ""])[1];
         const headers = { "User-Agent": UA, "Referer": referer };
