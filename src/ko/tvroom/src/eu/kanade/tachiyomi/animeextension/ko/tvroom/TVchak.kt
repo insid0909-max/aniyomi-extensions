@@ -77,6 +77,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS))
         .addInterceptor { chain -> domainIntercept(chain) }
         .addInterceptor { chain -> challengeIntercept(chain) }
+        .addInterceptor(RetryOnce(HOST_REGEX))
         .build()
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
@@ -568,13 +569,11 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     override fun videoListParse(response: Response): List<Video> {
         val pageUrl = response.request.url.toString()
         val html = response.body.string()
+        // 같은 회차의 다른 서버 영상 (플레이어에서 바로 바꿀 수 있게 목록 뒤에 붙임)
+        val others = runCatching { otherServerVideos(Jsoup.parse(html, pageUrl), response.request.url.encodedPath) }
+            .getOrDefault(emptyList())
 
-        val media = PLAYER_REGEX.find(html)?.groupValues?.get(1)?.let { json ->
-            runCatching {
-                val o = JSONObject(json)
-                decodeUrl(o.optString("url"), o.optInt("encrypt"))
-            }.getOrNull()
-        }?.takeIf { MEDIA_REGEX.containsMatchIn(it) }
+        val media = mediaOf(html)
 
         val videos = ArrayList<Video>()
         if (media != null) {
@@ -587,13 +586,53 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
             }
             videos.addAll(HlsQuality.expand(client, media, qualityOf(media), main))
             videos.add(Video(media, qualityOf(media) + " (대체)", media, alt))
-            return HlsQuality.sort(prefs(), videos)
+            return HlsQuality.sort(prefs(), videos) + others
         }
 
         // 영상 주소가 바로 없으면 숨은 화면(WebView)으로 열어 영상 요청을 가로챈다
-        val (sniffed, referer) = sniffWithWebView(pageUrl)
-            ?: throw Exception("영상 주소를 찾지 못했습니다: $pageUrl")
-        return HlsQuality.sort(prefs(), HlsQuality.expand(client, sniffed, qualityOf(sniffed), videoHeaders(referer)))
+        val sniffed = sniffWithWebView(pageUrl)
+        if (sniffed == null) {
+            // 이 서버가 안 되면 다른 서버 영상이라도
+            if (others.isNotEmpty()) return others
+            throw Exception("영상 주소를 찾지 못했습니다: $pageUrl")
+        }
+        val (url, referer) = sniffed
+        return HlsQuality.sort(prefs(), HlsQuality.expand(client, url, qualityOf(url), videoHeaders(referer))) + others
+    }
+
+    /** 재생 페이지의 player_aaaa 에서 영상 주소 */
+    private fun mediaOf(html: String): String? = PLAYER_REGEX.find(html)?.groupValues?.get(1)?.let { json ->
+        runCatching {
+            val o = JSONObject(json)
+            decodeUrl(o.optString("url"), o.optInt("encrypt"))
+        }.getOrNull()
+    }?.takeIf { MEDIA_REGEX.containsMatchIn(it) }
+
+    /**
+     * 재생 페이지에 서버가 여러 개 있으면, 같은 회차(같은 이름)의 다른 서버 재생 페이지에서 영상 주소를 받아
+     * 실제로 열리는 것만 "티비착 (HLS) [서버 이름]" 으로 돌려준다. 최대 2개.
+     */
+    private fun otherServerVideos(doc: Document, currentPath: String): List<Video> {
+        val boxes = doc.select("#tagContent .play_list_box").ifEmpty { doc.select(".content_playlist") }
+        if (boxes.size < 2) return emptyList()
+        val tabs = doc.select("#tag .swiper-slide, #tag a").map { it.text().trim() }
+        val links = boxes.mapIndexed { bi, box ->
+            val server = tabs.getOrNull(bi)?.ifEmpty { null } ?: "서버 ${bi + 1}"
+            box.select("a[href*=/vod/play/]").map { Triple(server, it.text().trim(), pathOf(it.attr("href"))) }
+        }.flatten()
+        val label = links.firstOrNull { it.third == currentPath }?.second ?: return emptyList()
+        return links.filter { it.second == label && it.third != currentPath }
+            .distinctBy { it.first }
+            .take(2)
+            .mapNotNull { (server, _, path) ->
+                runCatching {
+                    val html = client.newCall(GET(baseUrl + path, h())).execute().use { it.body.string() }
+                    val media = mediaOf(html) ?: return@runCatching null
+                    val headers = listOf(videoHeaders(PLAYER_REFERER), videoHeaders("$baseUrl/"))
+                        .firstOrNull { HlsQuality.works(client, media, it) } ?: return@runCatching null
+                    Video(media, "${qualityOf(media)} [$server]", media, headers)
+                }.getOrNull()
+            }
     }
 
     private fun decodeUrl(raw: String, encrypt: Int): String = when (encrypt) {

@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.18",
+    "version": "0.1.19",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -257,12 +257,17 @@ class DefaultExtension extends MProvider {
         const base = this.getBaseUrl();
         const url = path.startsWith("http") ? path : base + path;
         let res = null;
-        await siteWait();
-        try {
-            res = await this.client.get(url, this.headers());
-            if (res.statusCode < 500 && String(res.body || "").length > 0) return { html: res.body, base, res };
-        } catch (e) {
-            res = null;
+        // 연결 끊김·시간 초과면 잠깐 쉬고 한 번 더 시도한 뒤에 주소 찾기로 넘어감
+        for (let attempt = 0; attempt < 2; attempt++) {
+            await siteWait();
+            try {
+                res = await this.client.get(url, this.headers());
+                if (res.statusCode < 500 && String(res.body || "").length > 0) return { html: res.body, base, res };
+                break;
+            } catch (e) {
+                res = null;
+                if (attempt === 0) await new Promise((r) => setTimeout(r, 700));
+            }
         }
         const found = this.autoOn() ? await this.discover(base) : null;
         if (!found) {
@@ -648,7 +653,37 @@ class DefaultExtension extends MProvider {
 
     // ================= 재생 =================
     async getVideoList(url) {
-        const { html, base } = await this.getPage(this.toPath(url));
+        const path = this.toPath(url);
+        const { html, base } = await this.getPage(path);
+        // 같은 회차의 다른 서버 영상 (플레이어에서 바로 바꿀 수 있게 목록 뒤에 붙임)
+        let others = [];
+        try {
+            others = await this.otherServerVideos(html, path, base);
+        } catch (e) {
+            others = [];
+        }
+        const media = this.mediaOf(html);
+        if (!media) {
+            // 이 서버가 안 되면 다른 서버 영상이라도
+            if (others.length) return others;
+            throw new Error(`영상 주소를 찾지 못했습니다: ${base}${path}`);
+        }
+        const q = media.includes(".m3u8") ? "티비착 (HLS)" : "티비착";
+        // 먼저 실제로 열리는지 확인해서, 첫 번째 Referer 가 안 되고 대체가 되면 순서를 바꿈 (자동 전환)
+        let main = this.videoHeaders(PLAYER_REFERER);
+        let alt = this.videoHeaders(`${base}/`);
+        if (!(await mediaWorks(this.client, media, main)) && (await mediaWorks(this.client, media, alt))) [main, alt] = [alt, main];
+        const list = await hlsExpand(this.client, media, q, main);
+        list.push({ url: media, originalUrl: media, quality: `${q} (대체)`, headers: alt });
+        return qualitySort("tvchak_quality", list).concat(others);
+    }
+
+    videoHeaders(ref) {
+        return { "User-Agent": UA, "Referer": ref, "Origin": ref.replace(/\/$/, "") };
+    }
+
+    // 재생 페이지의 player_aaaa 에서 영상 주소 (없으면 글자 안의 영상 주소)
+    mediaOf(html) {
         const m = /var\s+player_\w+\s*=\s*(\{[\s\S]*?\})\s*<\/script>/.exec(html);
         let media = null;
         if (m) {
@@ -659,20 +694,48 @@ class DefaultExtension extends MProvider {
                 media = null;
             }
         }
-        if (!media || !MEDIA_RE.test(media)) {
-            const any = MEDIA_RE.exec(String(html).replace(/\\\//g, "/"));
-            if (!any) throw new Error(`영상 주소를 찾지 못했습니다: ${base}${this.toPath(url)}`);
-            media = any[0];
+        if (media && MEDIA_RE.test(media)) return media;
+        const any = MEDIA_RE.exec(String(html).replace(/\\\//g, "/"));
+        return any ? any[0] : null;
+    }
+
+    // 재생 페이지에 서버가 여러 개면, 같은 회차(같은 이름)의 다른 서버에서 실제로 열리는 영상을 최대 2개
+    async otherServerVideos(html, currentPath, base) {
+        const doc = new Document(html);
+        const boxes = doc.select("#tagContent .play_list_box");
+        const lists = boxes.length ? boxes : doc.select(".content_playlist");
+        if (lists.length < 2) return [];
+        const tabs = doc.select("#tag .swiper-slide, #tag a").map((e) => e.text.trim());
+        const links = [];
+        lists.forEach((box, bi) => {
+            const server = tabs[bi] || `서버 ${bi + 1}`;
+            box.select("a[href*='/vod/play/']").forEach((a) => {
+                links.push({ server, label: a.text.trim(), path: this.toPath(a.attr("href")) });
+            });
+        });
+        const cur = links.find((l) => l.path === currentPath);
+        if (!cur) return [];
+        const seenServer = {};
+        const targets = links.filter((l) => l.label === cur.label && l.server !== cur.server && !seenServer[l.server] && (seenServer[l.server] = true))
+            .slice(0, 2);
+        const out = [];
+        for (const t of targets) {
+            try {
+                const r = await this.getHtml(t.path);
+                const media = this.mediaOf(String(r.html || ""));
+                if (!media) continue;
+                for (const h of [this.videoHeaders(PLAYER_REFERER), this.videoHeaders(`${base}/`)]) {
+                    if (await mediaWorks(this.client, media, h)) {
+                        const q = media.includes(".m3u8") ? "티비착 (HLS)" : "티비착";
+                        out.push({ url: media, originalUrl: media, quality: `${q} [${t.server}]`, headers: h });
+                        break;
+                    }
+                }
+            } catch (e) {
+                // 다음 서버
+            }
         }
-        const q = media.includes(".m3u8") ? "티비착 (HLS)" : "티비착";
-        const hd = (ref) => ({ "User-Agent": UA, "Referer": ref, "Origin": ref.replace(/\/$/, "") });
-        // 먼저 실제로 열리는지 확인해서, 첫 번째 Referer 가 안 되고 대체가 되면 순서를 바꿈 (자동 전환)
-        let main = hd(PLAYER_REFERER);
-        let alt = hd(`${base}/`);
-        if (!(await mediaWorks(this.client, media, main)) && (await mediaWorks(this.client, media, alt))) [main, alt] = [alt, main];
-        const list = await hlsExpand(this.client, media, q, main);
-        list.push({ url: media, originalUrl: media, quality: `${q} (대체)`, headers: alt });
-        return qualitySort("tvchak_quality", list);
+        return out;
     }
 
     decodeUrl(raw, encrypt) {

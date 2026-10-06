@@ -85,6 +85,7 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         .addInterceptor(PageCache(Regex("^/player/")))
         .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS))
         .addInterceptor { chain -> domainIntercept(chain) }
+        .addInterceptor(RetryOnce(HOST_REGEX))
         .build()
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
@@ -406,34 +407,46 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         val pageUrl = response.request.url.toString()
         val html = response.body.string()
 
-        // 1) 페이지나 그 안 iframe 에 영상 주소가 그대로 들어 있는 경우
-        val direct = findMedia(html) ?: Jsoup.parse(html, pageUrl).select("iframe[src]")
-            .map { it.absUrl("src") }.filter { it.startsWith("http") }
-            .firstNotNullOfOrNull { src ->
-                runCatching {
-                    client.newCall(GET(src, headersBuilder().set("Referer", pageUrl).build())).execute()
-                        .use { findMedia(it.body.string()) }
-                }.getOrNull()
-            }
+        // 1) 페이지와 그 안 iframe 들에 들어 있는 영상 주소 후보를 모두 모음 (최대 4개)
+        val pageHeaders = headersBuilder().set("Referer", pageUrl).build()
+        val candidates = (
+            findAllMedia(html) + Jsoup.parse(html, pageUrl).select("iframe[src]")
+                .map { it.absUrl("src") }.filter { it.startsWith("http") }.take(3)
+                .flatMap { src ->
+                    runCatching {
+                        client.newCall(GET(src, pageHeaders)).execute().use { findAllMedia(it.body.string()) }
+                    }.getOrDefault(emptyList())
+                }
+            ).distinct().take(4)
 
-        // 2) 없거나, 찾았는데 실제로 열리지 않으면 숨은 화면(WebView)으로 열어 영상 요청을 가로챈다 (자동 전환)
-        val directOk = direct?.takeIf { HlsQuality.works(client, it, headersBuilder().set("Referer", pageUrl).build()) }
-        val (media, referer) = directOk?.let { it to pageUrl } ?: sniffWithWebView(pageUrl)
-            ?: direct?.let { it to pageUrl }
+        // 2) 실제로 열리는 후보만. 하나도 없으면 숨은 화면(WebView)으로 열어 영상 요청을 가로챈다 (자동 전환)
+        val working = candidates.filter { HlsQuality.works(client, it, pageHeaders) }
+        val (media, referer) = working.firstOrNull()?.let { it to pageUrl } ?: sniffWithWebView(pageUrl)
+            ?: candidates.firstOrNull()?.let { it to pageUrl }
             ?: throw Exception("영상 주소를 찾지 못했습니다: $pageUrl")
 
+        val vh = videoHeaders(referer)
+        val quality = qualityOf(media)
+        // 열리는 다른 후보는 "(대체 N)" 으로 뒤에 붙여 플레이어에서 바로 바꿀 수 있게
+        val extras = working.filter { it != media }.mapIndexed { i, u ->
+            Video(u, "${qualityOf(u)} (대체 ${i + 1})", u, videoHeaders(pageUrl))
+        }
+        return HlsQuality.sort(prefs(), HlsQuality.expand(client, media, quality, vh)) + extras
+    }
+
+    private fun qualityOf(url: String) = if (url.contains(".m3u8")) "고고티비 (HLS)" else "고고티비"
+
+    private fun videoHeaders(referer: String): Headers {
         val origin = referer.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" }
-        val vh = Headers.Builder()
+        return Headers.Builder()
             .set("User-Agent", USER_AGENT)
             .set("Referer", referer)
             .apply { if (origin != null) set("Origin", origin) }
             .build()
-        val quality = if (media.contains(".m3u8")) "고고티비 (HLS)" else "고고티비"
-        return HlsQuality.sort(prefs(), HlsQuality.expand(client, media, quality, vh))
     }
 
-    private fun findMedia(text: String): String? =
-        MEDIA_REGEX.find(text.replace("\\/", "/"))?.value
+    private fun findAllMedia(text: String): List<String> =
+        MEDIA_REGEX.findAll(text.replace("\\/", "/")).map { it.value }.distinct().toList()
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun sniffWithWebView(url: String): Pair<String, String>? {
