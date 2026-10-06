@@ -32,6 +32,14 @@ class TVroomFactory : AnimeSourceFactory {
         } catch (e: Throwable) {
             list.add(ErrorSource("후후티비 오류", e))
         }
+        // 후후티비 영화 · 드라마 전용 소스
+        for (kind in listOf(HoohooTV.KIND_MOVIE, HoohooTV.KIND_DRAMA)) {
+            try {
+                list.add(HoohooTV(kind))
+            } catch (e: Throwable) {
+                list.add(ErrorSource("후후티비 분류 오류", e))
+            }
+        }
         return list
     }
 }
