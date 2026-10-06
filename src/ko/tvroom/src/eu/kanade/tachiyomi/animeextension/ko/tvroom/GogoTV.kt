@@ -38,10 +38,13 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-/** 고고티비 (gogotv숫자.xyz) */
-class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
+/**
+ * 고고티비 (gogotv숫자.xyz).
+ * fixedCat 을 주면 그 분류만 보는 소스("고고티비 드라마" 등)가 된다. 주소·도메인 자동 찾기 설정은 기본 고고티비 소스와 함께 쓴다.
+ */
+class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAnimeSource {
 
-    override val name = "고고티비"
+    override val name = if (fixedCat < 0) "고고티비" else "고고티비 ${CATEGORY_NAMES[fixedCat]}"
     override val lang = "ko"
     override val supportsLatest = true
 
@@ -53,16 +56,28 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
         app?.getSharedPreferences("source_$id", 0)
     }.getOrNull()
 
+    // 주소·도메인 자동 찾기는 분류별 소스도 기본 고고티비 소스의 설정을 같이 씀
+    private fun sitePrefs(): SharedPreferences? = if (fixedCat < 0) {
+        prefs()
+    } else {
+        runCatching {
+            val app = Class.forName("android.app.ActivityThread")
+                .getMethod("currentApplication")
+                .invoke(null) as? Application
+            app?.getSharedPreferences("source_${generateId("고고티비", lang, versionId)}", 0)
+        }.getOrNull()
+    }
+
     override val baseUrl: String
         get() {
-            val custom = prefs()?.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/').orEmpty()
+            val custom = sitePrefs()?.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/').orEmpty()
             return if (DOMAIN_REGEX.matches(custom)) custom else DEFAULT_BASE_URL
         }
 
-    private fun autoDomain(): Boolean = prefs()?.getBoolean(PREF_AUTO_DOMAIN, true) ?: true
+    private fun autoDomain(): Boolean = sitePrefs()?.getBoolean(PREF_AUTO_DOMAIN, true) ?: true
 
     private fun saveDomain(url: String) {
-        prefs()?.edit()?.putString(PREF_DOMAIN_KEY, url)?.apply()
+        sitePrefs()?.edit()?.putString(PREF_DOMAIN_KEY, url)?.apply()
     }
 
     // 주소 번호가 바뀌어 접속이 안 되면 gogotv 번호 주소를 찾아 자동 연결
@@ -168,13 +183,13 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
     // 인기/최신 탭: 필터에서 저장한 조건이 있으면 그 조건으로, 없으면 기본 목록
     override fun popularAnimeRequest(page: Int): Request =
         TabRule.read(prefs(), true, RULE_SIZES)?.let { filterRequest(page, it) }
-            ?: GET(listUrl("list-drama", "2", "", page), h())
+            ?: filterRequest(page, intArrayOf(maxOf(fixedCat, 0), 1, 0))
 
     override fun popularAnimeParse(response: Response): AnimesPage = parseList(response.asDoc())
 
     override fun latestUpdatesRequest(page: Int): Request =
         TabRule.read(prefs(), false, RULE_SIZES)?.let { filterRequest(page, it) }
-            ?: GET(listUrl("list-drama", "1", "", page), h())
+            ?: filterRequest(page, intArrayOf(maxOf(fixedCat, 0), 0, 0))
 
     override fun latestUpdatesParse(response: Response): AnimesPage = parseList(response.asDoc())
 
@@ -206,9 +221,11 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
         return filterRequest(page, idx)
     }
 
-    /** idx = [분류, 정렬, 지역] 선택 번호 */
-    private fun filterRequest(page: Int, idx: IntArray): Request =
-        GET(listUrl(CATEGORIES[idx[0]].second, SORTS[idx[1]].second, COUNTRIES[idx[2]].second, page), h())
+    /** idx = [분류, 정렬, 지역] 선택 번호 (분류별 소스는 분류가 고정) */
+    private fun filterRequest(page: Int, idx: IntArray): Request {
+        val cat = if (fixedCat >= 0) fixedCat else idx[0]
+        return GET(listUrl(CATEGORIES[cat].second, SORTS[idx[1]].second, COUNTRIES[idx[2]].second, page), h())
+    }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
         val url = response.request.url
@@ -478,15 +495,19 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
         baseUrl,
         autoDomain(),
         AnimeFilterList(
-            AnimeFilter.Header("검색어가 없을 때만 적용"),
-            CategoryFilter(),
-            SortFilter(),
-            CountryFilter(),
-            *TabRule.filters(prefs(), RULE_SIZES, "드라마 · 주간인기순" to "드라마 · 업데이트순") {
-                "${CATEGORIES[it[0]].first} · ${SORTS[it[1]].first} · ${COUNTRIES[it[2]].first}"
-            }.toTypedArray(),
+            listOfNotNull(
+                AnimeFilter.Header("검색어가 없을 때만 적용"),
+                CategoryFilter().takeIf { fixedCat < 0 },
+                SortFilter(),
+                CountryFilter(),
+            ) + TabRule.filters(prefs(), RULE_SIZES, "${catName()} · 주간인기순" to "${catName()} · 업데이트순") {
+                (if (fixedCat < 0) "${CATEGORIES[it[0]].first} · " else "") +
+                    "${SORTS[it[1]].first} · ${COUNTRIES[it[2]].first}"
+            },
         ),
     )
+
+    private fun catName(): String = CATEGORY_NAMES[maxOf(fixedCat, 0)]
 
     class CategoryFilter : AnimeFilter.Select<String>("분류", CATEGORIES.map { it.first }.toTypedArray())
     class SortFilter : AnimeFilter.Select<String>("정렬", SORTS.map { it.first }.toTypedArray())
@@ -495,6 +516,16 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
     // ================= 설정 화면 =================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val ctx = screen.context
+        if (fixedCat >= 0) {
+            // 분류별 소스: 주소 설정은 기본 "고고티비" 소스 설정에서 (같이 적용됨)
+            androidx.preference.Preference(ctx).apply {
+                title = "사이트 주소 · 도메인 자동 찾기"
+                summary = "기본 \"고고티비\" 소스의 설정을 같이 씁니다.\n현재 주소: $baseUrl"
+                isSelectable = false
+            }.also(screen::addPreference)
+            HlsQuality.addPreference(screen)
+            return
+        }
         fun summaryOf(current: String) = "빈 값이면 기본 주소($DEFAULT_BASE_URL)를 사용합니다.\n현재 주소: $current"
 
         EditTextPreference(ctx).apply {
@@ -570,6 +601,9 @@ class GogoTV : AnimeHttpSource(), ConfigurableAnimeSource {
             "51.la",
             "cloudflareinsights.com",
         )
+
+        /** 분류별 소스 이름 (CATEGORIES 와 같은 순서). TV프로 = 시사·교양 */
+        internal val CATEGORY_NAMES = listOf("드라마", "영화", "예능", "시사", "음악프로", "애니")
 
         private val CATEGORIES = listOf(
             "드라마" to "list-drama",
