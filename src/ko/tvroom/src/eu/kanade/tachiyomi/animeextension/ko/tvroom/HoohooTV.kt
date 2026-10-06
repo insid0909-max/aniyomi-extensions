@@ -260,11 +260,16 @@ class HoohooTV : AnimeHttpSource(), ConfigurableAnimeSource {
             ?: throw Exception("플레이어를 찾지 못했습니다 (로그인이 필요하거나 영상이 없는 회차일 수 있습니다)")
 
         // 1) 플레이어 페이지 글자 안에 영상 주소가 있으면 바로, 2) 없으면 숨은 화면으로 열어 영상 요청을 가로챈다
-        val direct = runCatching {
-            client.newCall(GET(player, headersBuilder().set("Referer", pageUrl).build())).execute().use { res ->
-                MEDIA_REGEX.find(res.body.string().replace("\\/", "/"))?.value?.let { it to res.request.url.toString() }
-            }
-        }.getOrNull()
+        // jwpcdn 플레이어는 보안 확인(Cloudflare)이 걸려 글자 읽기로는 못 찾으므로 바로 숨은 화면으로 (시간 절약)
+        val direct = if (player.contains("jwpcdn")) {
+            null
+        } else {
+            runCatching {
+                client.newCall(GET(player, headersBuilder().set("Referer", pageUrl).build())).execute().use { res ->
+                    MEDIA_REGEX.find(res.body.string().replace("\\/", "/"))?.value?.let { it to res.request.url.toString() }
+                }
+            }.getOrNull()
+        }
         val directOk = direct?.takeIf { HlsQuality.works(client, it.first, videoHeaders(it.second)) }
         val (media, referer) = directOk ?: sniffWithWebView(player, pageUrl) ?: direct
             ?: throw Exception("영상 주소를 찾지 못했습니다: $player")
@@ -299,6 +304,8 @@ class HoohooTV : AnimeHttpSource(), ConfigurableAnimeSource {
                 webView.settings.domStorageEnabled = true
                 webView.settings.mediaPlaybackRequiresUserGesture = false
                 webView.settings.userAgentString = USER_AGENT
+                // 그림은 받지 않아 영상 주소를 더 빨리 찾음
+                webView.settings.blockNetworkImage = true
                 webView.webViewClient = object : WebViewClient() {
                     override fun onPageStarted(view: WebView, pageUrl: String, favicon: android.graphics.Bitmap?) {
                         lastPage = pageUrl
