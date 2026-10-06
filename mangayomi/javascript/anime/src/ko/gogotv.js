@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.20",
+    "version": "0.1.21",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -68,6 +68,8 @@ const QUALITY_CHOICES = ["자동", "1080p", "720p", "480p", "360p"];
 // HLS 마스터 목록에 화질이 여러 개면 각각 따로 고를 수 있게 나눔. 하나뿐이거나 읽지 못하면 그대로
 // 이 헤더로 영상 주소가 실제로 열리는지 (m3u8 이면 내용까지 확인)
 async function mediaWorks(client, url, headers) {
+    // mp4 같은 영상 파일은 확인하려면 파일 전체를 받아야 해서(망가요미는 본문을 끝까지 받음) 확인하지 않음
+    if (!url.includes(".m3u8")) return true;
     try {
         const res = await client.get(url, headers);
         if (Number(res.statusCode) >= 400) return false;
