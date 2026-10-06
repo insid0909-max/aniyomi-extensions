@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.9",
+    "version": "0.1.10",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -230,14 +230,17 @@ class DefaultExtension extends MProvider {
         const script = "(function(){function f(){var u='';" +
             "try{if(window.jwplayer){var p=jwplayer();var it=p&&p.getPlaylistItem&&p.getPlaylistItem();" +
             "if(it){u=it.file||(it.sources&&it.sources[0]&&it.sources[0].file)||'';}}}catch(e){}" +
-            "if(!u){try{var r=performance.getEntriesByType('resource');for(var i=0;i<r.length;i++){" +
-            "if(/\\.(m3u8|mp4)(\\?|$)/i.test(r[i].name)){u=r[i].name;break;}}}catch(e){}}" +
+            "if(!u){try{var r=performance.getEntriesByType('resource');for(var i=0;i<r.length;i++){var n=r[i].name;" +
+            "if(/\\.(m3u8|mp4)(\\?|$)/i.test(n)){u=n;break;}" +
+            // jwplayer 통계 요청(ping.gif)의 mu= 값에 재생 중인 영상 주소가 들어 있음
+            "var mm=/[?&]mu=([^&]+)/.exec(n);if(mm&&n.indexOf('jwpltx')>=0){u=decodeURIComponent(mm[1]);break;}}}catch(e){}}" +
+            "if(!u){try{var vs=document.querySelectorAll('video');for(var j=0;j<vs.length;j++){var s=vs[j].currentSrc||vs[j].src;if(s&&s.indexOf('blob:')!==0){u=s;break;}}}catch(e){}}" +
             "if(!u){var m=document.documentElement.outerHTML.match(/https?:[^\"'\\s<>]+\\.m3u8[^\"'\\s<>]*/);if(m)u=m[0];}" +
             "if(u){if(u.indexOf('//')===0)u=location.protocol+u;else if(u.indexOf('http')!==0)u=new URL(u,location.href).href;" +
             "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:u,ref:location.href}));return true;}return false;}" +
             "if(!f()){var t=setInterval(function(){if(f())clearInterval(t);},400);}})();";
         try {
-            const timeout = new Promise((res) => setTimeout(() => res(null), 30000));
+            const timeout = new Promise((res) => setTimeout(() => res(null), 25000));
             const res = await Promise.race([
                 evaluateJavascriptViaWebview(url, { "Referer": referer }, [script]),
                 timeout,
@@ -475,9 +478,10 @@ class DefaultExtension extends MProvider {
         }
         if (!media) {
             // 플레이어가 보안 확인(Cloudflare)을 거치거나 스크립트로 영상을 불러오는 경우: 숨은 웹뷰로 열어 읽음
-            // 플레이어는 마지막 페이지(보통 creatorofvideo) 안에 있으므로 그 페이지를 직접 연다
-            let w = await this.playerViaWebview(lastUrl, lastRef);
-            if (!w && lastUrl !== player) w = await this.playerViaWebview(player, pageUrl);
+            // jwplayer 는 jwpcdn 페이지에서 돌고, creatorofvideo 페이지는 그 안에서 신호를 받아 움직이므로
+            // jwpcdn 페이지(바깥)를 먼저 열고, 안 되면 마지막 페이지를 직접 열어 본다
+            let w = await this.playerViaWebview(player, pageUrl);
+            if (!w && lastUrl !== player) w = await this.playerViaWebview(lastUrl, lastRef);
             if (w) {
                 media = w.url;
                 referer = w.referer;
