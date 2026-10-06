@@ -6,7 +6,6 @@ import androidx.preference.PreferenceScreen
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.network.GET
 import okhttp3.Headers
-import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 
 /**
@@ -29,39 +28,20 @@ internal object HlsQuality {
         return if (r != null && !label.contains("${r}p")) "$label ${r}p" else label
     }
 
-    /** 열어 본 결과: m3u8 이면 내용과 (넘겨진 뒤) 최종 주소, mp4 등은 내용 없음 */
-    class Probe(val body: String?, val base: HttpUrl?)
-
-    /**
-     * 이 헤더로 영상 주소가 실제로 열리는지 확인하고, 열리면 받은 내용을 돌려줌 (안 열리면 null).
-     * 받은 m3u8 내용은 expand 에 그대로 넘겨 같은 파일을 두 번 받지 않게 한다.
-     */
-    fun probe(client: OkHttpClient, url: String, headers: Headers): Probe? = runCatching {
-        val isHls = url.contains(".m3u8")
-        // mp4 는 응답 머리만 보고 바로 닫음 (큰 파일 본문은 받지 않음)
-        client.newCall(GET(url, headers)).execute().use { res ->
-            if (!res.isSuccessful) return@use null
-            if (!isHls) return@use Probe(null, null)
-            val body = res.body.string()
-            if (!body.trimStart().startsWith("#EXTM3U")) return@use null
-            Probe(body, res.request.url)
-        }
-    }.getOrNull()
-
-    /** label 예: "티비착 (HLS)" → "티비착 (HLS) 자동", "티비착 (HLS) 1080p" … (probe 결과가 있으면 다시 받지 않음) */
-    fun expand(client: OkHttpClient, url: String, label: String, headers: Headers, probed: Probe? = null): List<Video> {
+    /** label 예: "티비착 (HLS)" → "티비착 (HLS) 자동", "티비착 (HLS) 1080p" … */
+    fun expand(client: OkHttpClient, url: String, label: String, headers: Headers): List<Video> {
         if (!url.contains(".m3u8")) return listOf(Video(url, withRes(label, url), url, headers))
         val variants = runCatching {
-            val p = probed?.takeIf { it.body != null } ?: client.newCall(GET(url, headers)).execute().use { res ->
-                if (!res.isSuccessful) null else Probe(res.body.string(), res.request.url)
-            } ?: return@runCatching emptyList()
-            val body = p.body!!.replace("\r", "")
-            val base = p.base ?: return@runCatching emptyList()
-            STREAM_REGEX.findAll(body).mapNotNull { m ->
-                val height = HEIGHT_REGEX.find(m.groupValues[1])?.groupValues?.get(1) ?: return@mapNotNull null
-                val u = base.resolve(m.groupValues[2].trim())?.toString() ?: return@mapNotNull null
-                height.toInt() to u
-            }.distinctBy { it.first }.sortedByDescending { it.first }.toList()
+            client.newCall(GET(url, headers)).execute().use { res ->
+                if (!res.isSuccessful) return@use emptyList()
+                val body = res.body.string().replace("\r", "")
+                val base = res.request.url
+                STREAM_REGEX.findAll(body).mapNotNull { m ->
+                    val height = HEIGHT_REGEX.find(m.groupValues[1])?.groupValues?.get(1) ?: return@mapNotNull null
+                    val u = base.resolve(m.groupValues[2].trim())?.toString() ?: return@mapNotNull null
+                    height.toInt() to u
+                }.distinctBy { it.first }.sortedByDescending { it.first }.toList()
+            }
         }.getOrDefault(emptyList())
         // 화질이 하나뿐이면 그 화질을 이름에 붙여 지금 화질을 알 수 있게
         if (variants.size == 1) return listOf(Video(url, "$label ${variants[0].first}p", url, headers))
@@ -72,7 +52,13 @@ internal object HlsQuality {
     }
 
     /** 이 헤더로 영상 주소가 실제로 열리는지 (m3u8 이면 내용까지 확인) */
-    fun works(client: OkHttpClient, url: String, headers: Headers): Boolean = probe(client, url, headers) != null
+    fun works(client: OkHttpClient, url: String, headers: Headers): Boolean = runCatching {
+        client.newCall(GET(url, headers)).execute().use { res ->
+            if (!res.isSuccessful) return@use false
+            if (!url.contains(".m3u8")) return@use true
+            res.body.source().peek().readUtf8(16).trimStart().startsWith("#EXTM3U")
+        }
+    }.getOrDefault(false)
 
     /** 선호 화질을 맨 앞으로 (같은 화질 안에서는 원래 순서 유지) */
     fun sort(p: SharedPreferences?, videos: List<Video>): List<Video> {

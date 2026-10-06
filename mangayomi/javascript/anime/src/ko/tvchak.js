@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.21",
+    "version": "0.1.22",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -669,13 +669,16 @@ class DefaultExtension extends MProvider {
     async getVideoList(url) {
         const path = this.toPath(url);
         const { html, base } = await this.getPage(path);
-        // 같은 회차의 다른 서버 영상 (플레이어에서 바로 바꿀 수 있게 목록 뒤에 붙임).
-        // 이 서버 영상을 확인하는 동안 동시에 받고, 끝난 뒤에는 조금만 더 기다림 (재생 시작을 늦추지 않게)
-        const othersP = this.otherServerVideos(html, path, base).catch(() => []);
+        // 같은 회차의 다른 서버 영상 (플레이어에서 바로 바꿀 수 있게 목록 뒤에 붙임)
+        let others = [];
+        try {
+            others = await this.otherServerVideos(html, path, base);
+        } catch (e) {
+            others = [];
+        }
         const media = this.mediaOf(html);
         if (!media) {
             // 이 서버가 안 되면 다른 서버 영상이라도
-            const others = await othersP;
             if (others.length) return others;
             throw new Error(`영상 주소를 찾지 못했습니다: ${base}${path}`);
         }
@@ -683,12 +686,9 @@ class DefaultExtension extends MProvider {
         // 먼저 실제로 열리는지 확인해서, 첫 번째 Referer 가 안 되고 대체가 되면 순서를 바꿈 (자동 전환)
         let main = this.videoHeaders(PLAYER_REFERER);
         let alt = this.videoHeaders(`${base}/`);
-        // 두 가지를 동시에 확인
-        const [okMain, okAlt] = await Promise.all([mediaWorks(this.client, media, main), mediaWorks(this.client, media, alt)]);
-        if (!okMain && okAlt) [main, alt] = [alt, main];
+        if (!(await mediaWorks(this.client, media, main)) && (await mediaWorks(this.client, media, alt))) [main, alt] = [alt, main];
         const list = await hlsExpand(this.client, media, q, main);
-        list.push({ url: media, originalUrl: media, quality: `${withRes(q, media)} (대체)`, headers: alt });
-        const others = await Promise.race([othersP, new Promise((r) => setTimeout(() => r([]), 1500))]);
+        list.push({ url: media, originalUrl: media, quality: `${q} (대체)`, headers: alt });
         return qualitySort("tvchak_quality", list).concat(others);
     }
 
@@ -732,24 +732,24 @@ class DefaultExtension extends MProvider {
         const seenServer = {};
         const targets = links.filter((l) => l.label === cur.label && l.server !== cur.server && !seenServer[l.server] && (seenServer[l.server] = true))
             .slice(0, 2);
-        // 서버들을 동시에 확인
-        const results = await Promise.all(targets.map(async (t) => {
+        const out = [];
+        for (const t of targets) {
             try {
                 const r = await this.getHtml(t.path);
                 const media = this.mediaOf(String(r.html || ""));
-                if (!media) return null;
+                if (!media) continue;
                 for (const h of [this.videoHeaders(PLAYER_REFERER), this.videoHeaders(`${base}/`)]) {
                     if (await mediaWorks(this.client, media, h)) {
                         const q = media.includes(".m3u8") ? "티비착 (HLS)" : "티비착";
-                        return { url: media, originalUrl: media, quality: `${withRes(q, media)} [${t.server}]`, headers: h };
+                        out.push({ url: media, originalUrl: media, quality: `${q} [${t.server}]`, headers: h });
+                        break;
                     }
                 }
             } catch (e) {
                 // 다음 서버
             }
-            return null;
-        }));
-        return results.filter((x) => x);
+        }
+        return out;
     }
 
     decodeUrl(raw, encrypt) {

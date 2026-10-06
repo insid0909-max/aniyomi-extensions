@@ -13,7 +13,6 @@ import android.widget.Toast
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
-import eu.kanade.tachiyomi.animeextension.ko.tvroom.Parallel.getOr
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
@@ -570,46 +569,35 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     override fun videoListParse(response: Response): List<Video> {
         val pageUrl = response.request.url.toString()
         val html = response.body.string()
-        // 같은 회차의 다른 서버 영상 (플레이어에서 바로 바꿀 수 있게 목록 뒤에 붙임).
-        // 이 서버 영상을 확인하는 동안 동시에 받아 두고, 끝난 뒤 조금만 더 기다림 (재생 시작을 늦추지 않게)
-        val othersJob = Parallel.start {
-            runCatching { otherServerVideos(Jsoup.parse(html, pageUrl), response.request.url.encodedPath) }
-                .getOrDefault(emptyList())
-        }
-        fun others(waitMs: Long) = othersJob.getOr(waitMs, emptyList())
+        // 같은 회차의 다른 서버 영상 (플레이어에서 바로 바꿀 수 있게 목록 뒤에 붙임)
+        val others = runCatching { otherServerVideos(Jsoup.parse(html, pageUrl), response.request.url.encodedPath) }
+            .getOrDefault(emptyList())
 
         val media = mediaOf(html)
 
         val videos = ArrayList<Video>()
         if (media != null) {
             // 사이트 플레이어(iframe) 안에서 재생되는 것과 같은 Referer 를 먼저 쓰고, 다른 Referer 를 대체로 둠.
-            // 두 가지를 동시에 확인해서, 첫 번째가 안 되고 대체가 되면 순서를 바꿈 (자동 전환)
+            // 먼저 실제로 열리는지 확인해서, 첫 번째가 안 되고 대체가 되면 순서를 바꿈 (자동 전환)
             var main = videoHeaders(PLAYER_REFERER)
             var alt = videoHeaders("$baseUrl/")
-            val altCheck = Parallel.start { HlsQuality.probe(client, media, alt) }
-            var probed = HlsQuality.probe(client, media, main)
-            if (probed == null) {
-                altCheck.getOr(8_000L, null)?.let {
-                    main = alt.also { alt = main }
-                    probed = it
-                }
+            if (!HlsQuality.works(client, media, main) && HlsQuality.works(client, media, alt)) {
+                main = alt.also { alt = main }
             }
-            videos.addAll(HlsQuality.expand(client, media, qualityOf(media), main, probed))
+            videos.addAll(HlsQuality.expand(client, media, qualityOf(media), main))
             videos.add(Video(media, HlsQuality.withRes(qualityOf(media), media) + " (대체)", media, alt))
-            return HlsQuality.sort(prefs(), videos) + others(OTHERS_WAIT_MS)
+            return HlsQuality.sort(prefs(), videos) + others
         }
 
         // 영상 주소가 바로 없으면 숨은 화면(WebView)으로 열어 영상 요청을 가로챈다
         val sniffed = sniffWithWebView(pageUrl)
         if (sniffed == null) {
             // 이 서버가 안 되면 다른 서버 영상이라도
-            val others = others(10_000L)
             if (others.isNotEmpty()) return others
             throw Exception("영상 주소를 찾지 못했습니다: $pageUrl")
         }
         val (url, referer) = sniffed
-        return HlsQuality.sort(prefs(), HlsQuality.expand(client, url, qualityOf(url), videoHeaders(referer))) +
-            others(OTHERS_WAIT_MS)
+        return HlsQuality.sort(prefs(), HlsQuality.expand(client, url, qualityOf(url), videoHeaders(referer))) + others
     }
 
     /** 재생 페이지의 player_aaaa 에서 영상 주소 */
@@ -636,16 +624,14 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         return links.filter { it.second == label && it.third != currentPath }
             .distinctBy { it.first }
             .take(2)
-            .let { list ->
-                Parallel.mapNotNull(list) { (server, _, path) ->
-                    runCatching {
-                        val html = client.newCall(GET(baseUrl + path, h())).execute().use { it.body.string() }
-                        val media = mediaOf(html) ?: return@runCatching null
-                        val headers = listOf(videoHeaders(PLAYER_REFERER), videoHeaders("$baseUrl/"))
-                            .firstOrNull { HlsQuality.works(client, media, it) } ?: return@runCatching null
-                        Video(media, "${HlsQuality.withRes(qualityOf(media), media)} [$server]", media, headers)
-                    }.getOrNull()
-                }
+            .mapNotNull { (server, _, path) ->
+                runCatching {
+                    val html = client.newCall(GET(baseUrl + path, h())).execute().use { it.body.string() }
+                    val media = mediaOf(html) ?: return@runCatching null
+                    val headers = listOf(videoHeaders(PLAYER_REFERER), videoHeaders("$baseUrl/"))
+                        .firstOrNull { HlsQuality.works(client, media, it) } ?: return@runCatching null
+                    Video(media, "${HlsQuality.withRes(qualityOf(media), media)} [$server]", media, headers)
+                }.getOrNull()
             }
     }
 
@@ -687,8 +673,6 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                 webView.settings.domStorageEnabled = true
                 webView.settings.mediaPlaybackRequiresUserGesture = false
                 webView.settings.userAgentString = USER_AGENT
-                // 그림은 받지 않아 영상 주소를 더 빨리 찾음
-                webView.settings.blockNetworkImage = true
                 webView.webViewClient = object : WebViewClient() {
                     override fun onPageStarted(view: WebView, pageUrl: String, favicon: android.graphics.Bitmap?) {
                         lastPage = pageUrl
@@ -704,7 +688,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                             found = reqUrl to ref
                             latch.countDown()
                         }
-                        if (BLOCKED_HOSTS.any { request.url.host?.endsWith(it) == true } || SniffBlock.blocked(request.url)) {
+                        if (BLOCKED_HOSTS.any { request.url.host?.endsWith(it) == true }) {
                             return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                         }
                         return super.shouldInterceptRequest(view, request)
@@ -823,9 +807,6 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
             """https?://[^"'\s<>\\]+\.(?:m3u8|mp4)(?:\?[^"'\s<>\\]*)?""",
             RegexOption.IGNORE_CASE,
         )
-
-        /** 이 서버 영상이 준비된 뒤 다른 서버 영상을 더 기다리는 최대 시간 */
-        private const val OTHERS_WAIT_MS = 1_500L
 
         private val BLOCKED_HOSTS = listOf(
             "googletagmanager.com",

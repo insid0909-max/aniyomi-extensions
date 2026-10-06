@@ -457,8 +457,8 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         // 같은 회차를 다시 열면(이어보기·재시도) 기억해 둔 영상 주소로 바로 재생
         val cacheKey = response.request.url.encodedPath + "?" + (response.request.url.encodedQuery ?: "")
         MEDIA_CACHE[cacheKey]?.let { (media, referer, at) ->
-            if (System.currentTimeMillis() - at < MEDIA_CACHE_MS) {
-                HlsQuality.probe(client, media, videoHeaders(referer))?.let { return toVideos(media, referer, it) }
+            if (System.currentTimeMillis() - at < MEDIA_CACHE_MS && HlsQuality.works(client, media, videoHeaders(referer))) {
+                return toVideos(media, referer)
             }
             MEDIA_CACHE.remove(cacheKey)
         }
@@ -479,20 +479,19 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                 }
             }.getOrNull()
         }
-        val directProbe = direct?.let { HlsQuality.probe(client, it.first, videoHeaders(it.second)) }
-        val directOk = direct?.takeIf { directProbe != null }
+        val directOk = direct?.takeIf { HlsQuality.works(client, it.first, videoHeaders(it.second)) }
         val (media, referer) = directOk ?: sniffWithWebView(player, pageUrl) ?: direct
             ?: throw Exception("영상 주소를 찾지 못했습니다: $player")
         synchronized(MEDIA_CACHE) {
             if (MEDIA_CACHE.size >= MEDIA_CACHE_MAX) MEDIA_CACHE.keys.firstOrNull()?.let { MEDIA_CACHE.remove(it) }
             MEDIA_CACHE[cacheKey] = Triple(media, referer, System.currentTimeMillis())
         }
-        return toVideos(media, referer, directProbe?.takeIf { directOk?.first == media })
+        return toVideos(media, referer)
     }
 
-    private fun toVideos(media: String, referer: String, probed: HlsQuality.Probe? = null): List<Video> {
+    private fun toVideos(media: String, referer: String): List<Video> {
         val quality = if (media.contains(".m3u8")) "후후티비 (HLS)" else "후후티비"
-        return HlsQuality.sort(prefs(), HlsQuality.expand(client, media, quality, videoHeaders(referer), probed))
+        return HlsQuality.sort(prefs(), HlsQuality.expand(client, media, quality, videoHeaders(referer)))
     }
 
     private fun videoHeaders(referer: String): Headers {
