@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.22",
+    "version": "0.1.23",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -92,6 +92,8 @@ async function siteWait() {
 
 // 이 헤더로 영상 주소가 실제로 열리는지 (m3u8 이면 내용까지 확인)
 async function mediaWorks(client, url, headers) {
+    // mp4 같은 영상 파일은 확인하려면 파일 전체를 받아야 해서(망가요미는 본문을 끝까지 받음) 확인하지 않음
+    if (!url.includes(".m3u8")) return true;
     try {
         const res = await client.get(url, headers);
         if (Number(res.statusCode) >= 400) return false;
@@ -688,7 +690,7 @@ class DefaultExtension extends MProvider {
         let alt = this.videoHeaders(`${base}/`);
         if (!(await mediaWorks(this.client, media, main)) && (await mediaWorks(this.client, media, alt))) [main, alt] = [alt, main];
         const list = await hlsExpand(this.client, media, q, main);
-        list.push({ url: media, originalUrl: media, quality: `${q} (대체)`, headers: alt });
+        list.push({ url: media, originalUrl: media, quality: `${withRes(q, media)} (대체)`, headers: alt });
         return qualitySort("tvchak_quality", list).concat(others);
     }
 
@@ -741,7 +743,7 @@ class DefaultExtension extends MProvider {
                 for (const h of [this.videoHeaders(PLAYER_REFERER), this.videoHeaders(`${base}/`)]) {
                     if (await mediaWorks(this.client, media, h)) {
                         const q = media.includes(".m3u8") ? "티비착 (HLS)" : "티비착";
-                        out.push({ url: media, originalUrl: media, quality: `${q} [${t.server}]`, headers: h });
+                        out.push({ url: media, originalUrl: media, quality: `${withRes(q, media)} [${t.server}]`, headers: h });
                         break;
                     }
                 }
