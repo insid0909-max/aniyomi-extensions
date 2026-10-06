@@ -42,18 +42,23 @@ import java.util.concurrent.TimeUnit
  * 목록: /tv/분류, /movie/분류 (?page=N), 작품: /detail/ID/ (회차는 ?season=S&episode=E),
  * 회차 목록은 작품 페이지의 episodes-data(JSON), 영상은 플레이어(iframe) 안에서 찾고 없으면 숨은 화면(WebView)으로 찾는다.
  */
-class HoohooTV : AnimeHttpSource(), ConfigurableAnimeSource {
+class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), ConfigurableAnimeSource {
 
-    override val name = "후후티비"
+    override val name = when (kind) {
+        KIND_MOVIE -> "후후티비 영화"
+        KIND_DRAMA -> "후후티비 드라마"
+        else -> "후후티비"
+    }
     override val lang = "ko"
-    override val supportsLatest = true
+    override val supportsLatest = kind == KIND_ALL
 
     // ================= 주소와 설정 =================
+    // 영화·드라마 소스도 주소·설정·작품 정보 저장을 기본 "후후티비" 소스와 같이 씀
     private fun prefs(): SharedPreferences? = runCatching {
         val app = Class.forName("android.app.ActivityThread")
             .getMethod("currentApplication")
             .invoke(null) as? Application
-        app?.getSharedPreferences("source_$id", 0)
+        app?.getSharedPreferences("source_${generateId("후후티비", lang, versionId)}", 0)
     }.getOrNull()
 
     override val baseUrl: String
@@ -163,8 +168,12 @@ class HoohooTV : AnimeHttpSource(), ConfigurableAnimeSource {
         return b.build().toString()
     }
 
-    // 인기 = 사이트 "인기" 메뉴, 최신 = TV 프로그램 전체(최근 올라온 순)
-    override fun popularAnimeRequest(page: Int): Request = GET(listUrl("/popular", page), h())
+    // 인기 = 사이트 "인기" 메뉴, 최신 = TV 프로그램 전체(최근 올라온 순). 영화·드라마 소스는 그 목록
+    override fun popularAnimeRequest(page: Int): Request = when (kind) {
+        KIND_MOVIE -> GET(listUrl("/movie/all", page), h())
+        KIND_DRAMA -> GET(listUrl(DRAMA_PATH, page), h())
+        else -> GET(listUrl("/popular", page), h())
+    }
 
     override fun popularAnimeParse(response: Response): AnimesPage = parseList(response.asDoc())
 
@@ -184,7 +193,7 @@ class HoohooTV : AnimeHttpSource(), ConfigurableAnimeSource {
             return GET(url.toString(), h())
         }
         val cat = filters.filterIsInstance<CategoryFilter>().firstOrNull()?.state ?: 0
-        return GET(listUrl(CATEGORIES[cat].second, page), h())
+        return GET(listUrl(categories().getOrElse(cat) { categories()[0] }.second, page), h())
     }
 
     /** 검색 주소의 검색어 이름 (처음 한 번 맞는 것을 찾아 기억) */
@@ -230,6 +239,7 @@ class HoohooTV : AnimeHttpSource(), ConfigurableAnimeSource {
                 thumbnail_url = img?.let { it.absUrl("data-src").ifEmpty { it.absUrl("src") } }?.ifEmpty { null }
             }
         }.filter { it.title.isNotEmpty() }
+        addAirInfo(animes, doc.location().contains("/movie/"))
         val hasNext = doc.select(".pagination a[href*=page=]").any { it.text().contains("»") } ||
             doc.selectFirst(".pagination .current-page")?.let { cur ->
                 val n = cur.text().trim().toIntOrNull() ?: 0
@@ -238,20 +248,109 @@ class HoohooTV : AnimeHttpSource(), ConfigurableAnimeSource {
         return AnimesPage(animes, hasNext)
     }
 
+    // ================= 목록 카드 방영일·연도 =================
+    /**
+     * 티비착·고고티비와 같은 방식: 방영 중인 시리즈는 제목 뒤에 최근 방영일 " · 09.29",
+     * 방영이 끝난 시리즈는 마지막 방영 연도 " (2026)".
+     * 목록 페이지에는 날짜가 없어서 작품 페이지(회차 날짜)를 뒤에서 하나씩 읽어 폰에 저장해 두고 다음 목록부터 붙인다.
+     * 방영 중이면 6시간, 끝났으면 7일이 지나면 다시 읽는다. 영화 목록은 회차 날짜가 없어 읽지 않음.
+     */
+    private fun addAirInfo(animes: List<SAnime>, movieList: Boolean) {
+        val p = prefs() ?: return
+        val now = System.currentTimeMillis()
+        if (!movieList && now > p.getLong("air_pause_until", 0L) && !filling.get()) {
+            val todo = animes.mapNotNull { idOf(it.url) }.filter { id ->
+                val (latest, checked) = airOf(p, id)
+                if (checked == 0L) return@filter true
+                val ttl = if (latest > 0 && now - latest <= ONGOING_DAYS * DAY_MS) AIR_TTL_MS else ENDED_TTL_MS
+                now - checked > ttl
+            }.take(8)
+            if (todo.isNotEmpty() && filling.compareAndSet(false, true)) {
+                Thread {
+                    try {
+                        fillAirInfo(p, todo)
+                    } finally {
+                        filling.set(false)
+                    }
+                }.apply { isDaemon = true }.start()
+            }
+        }
+        animes.forEach { a ->
+            val id = idOf(a.url) ?: return@forEach
+            a.title = titleWithAir(a.title, airOf(p, id).first)
+        }
+    }
+
+    private val filling = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private fun fillAirInfo(p: SharedPreferences, ids: List<String>) {
+        for (id in ids) {
+            val ok = runCatching {
+                client.newCall(GET("$baseUrl/detail/$id/", h())).execute().use { res ->
+                    val html = res.body.string()
+                    if (res.code != 200 || !html.contains(SITE_MARKER)) return@use false
+                    saveAir(id, Jsoup.parse(html, res.request.url.toString()))
+                    true
+                }
+            }.getOrDefault(false)
+            if (!ok) {
+                // 막히는 기미가 보이면 10분 쉼
+                p.edit().putLong("air_pause_until", System.currentTimeMillis() + 10 * 60_000L).apply()
+                return
+            }
+            Thread.sleep(700)
+        }
+    }
+
+    private fun idOf(url: String): String? = DETAIL_REGEX.find(url)?.groupValues?.get(1)
+
+    /** 저장된 (최근 방영일, 읽은 시각). 없으면 (0, 0) */
+    private fun airOf(p: SharedPreferences, id: String): Pair<Long, Long> {
+        val v = p.getString("air_$id", null)?.split("|") ?: return 0L to 0L
+        return (v.getOrNull(0)?.toLongOrNull() ?: 0L) to (v.getOrNull(1)?.toLongOrNull() ?: 0L)
+    }
+
+    /** 작품 페이지의 회차 날짜 중 가장 최근 날짜를 저장 (날짜가 없으면 0) */
+    private fun saveAir(id: String, doc: Document): Long {
+        val latest = episodesData(doc).maxOfOrNull { epDate(it) } ?: 0L
+        prefs()?.edit()?.putString("air_$id", "$latest|${System.currentTimeMillis()}")?.apply()
+        return latest
+    }
+
+    private fun titleWithAir(title: String, latest: Long): String {
+        if (latest <= 0 || title.isEmpty()) return title
+        val tz = TimeZone.getTimeZone("Asia/Seoul")
+        return if (System.currentTimeMillis() - latest <= ONGOING_DAYS * DAY_MS) {
+            val md = java.text.SimpleDateFormat("MM.dd", java.util.Locale.KOREAN).apply { timeZone = tz }
+            "${title.replace(TITLE_YEAR_REGEX, "")} · ${md.format(java.util.Date(latest))}"
+        } else {
+            val y = java.text.SimpleDateFormat("yyyy", java.util.Locale.KOREAN).apply { timeZone = tz }
+                .format(java.util.Date(latest))
+            if (TITLE_YEAR_REGEX.containsMatchIn(title)) title else "$title ($y)"
+        }
+    }
+
+    private fun epDate(e: EpisodeInfo): Long = dateOf(e.date).takeIf { it > 0 } ?: dateOf(e.label)
+
     // ================= 작품 정보 =================
     override fun animeDetailsParse(response: Response): SAnime {
         val doc = response.asDoc()
         val episodes = episodesData(doc)
+        val latest = idOf(response.request.url.encodedPath)?.let { saveAir(it, doc) } ?: 0L
         return SAnime.create().apply {
-            title = doc.selectFirst("meta[property=og:title]")?.attr("content")
+            val rawTitle = doc.selectFirst("meta[property=og:title]")?.attr("content")
                 ?.substringBeforeLast(" - 후후티비")?.trim()?.ifEmpty { null }
                 ?: doc.selectFirst(".share-title h1")?.text()?.substringBefore(" - ")?.trim().orEmpty()
+            // 목록 카드와 같은 모양 (방영 중 "제목 · 09.29", 끝났으면 "제목 (2026)")
+            title = titleWithAir(rawTitle, latest)
             genre = doc.select(".share-title .datetime-hit a").joinToString(", ") { it.text().trim() }.ifEmpty { null }
             description = doc.selectFirst(".overview")?.text()?.trim()
             if (episodes.isEmpty()) {
                 // 영화(회차 없음): 다시 확인할 필요 없음
                 status = SAnime.COMPLETED
                 update_strategy = AnimeUpdateStrategy.ONLY_FETCH_ONCE
+            } else if (latest > 0) {
+                status = if (System.currentTimeMillis() - latest <= ONGOING_DAYS * DAY_MS) SAnime.ONGOING else SAnime.COMPLETED
             } else {
                 status = SAnime.UNKNOWN
             }
@@ -303,22 +402,36 @@ class HoohooTV : AnimeHttpSource(), ConfigurableAnimeSource {
         return sorted.mapIndexed { i, e ->
             SEpisode.create().apply {
                 url = "$path?season=${e.season}&episode=${e.episode}"
-                name = if (multiSeason) "시즌${e.season} ${e.label}" else e.label
+                // "12화 (26.09.29)" → "12화 (09.29)" (티비착·고고티비와 같은 모양), 날짜가 따로 있으면 붙임
+                val d = epDate(e)
+                val base = e.label.replace(LABEL_DATE_REGEX, "").trim()
+                val label = if (d > 0) "$base (${mmdd(d)})" else e.label
+                name = if (multiSeason) "시즌${e.season} $label" else label
                 episode_number = (i + 1).toFloat()
-                date_upload = dateOf(e.date)
+                date_upload = d
             }
         }.reversed()
     }
 
+    /** "2026-09-29" 또는 "26.09.29" → 한국시간 그날 0시 (없으면 0) */
     private fun dateOf(text: String): Long {
-        val m = DATE_REGEX.find(text) ?: return 0L
+        val m = DATE_REGEX.find(text)
+        val (y, mo, d) = when {
+            m != null -> Triple(m.groupValues[1].toInt(), m.groupValues[2].toInt(), m.groupValues[3].toInt())
+            else -> SHORT_DATE_REGEX.find(text)?.let {
+                Triple(2000 + it.groupValues[1].toInt(), it.groupValues[2].toInt(), it.groupValues[3].toInt())
+            } ?: return 0L
+        }
         return runCatching {
             Calendar.getInstance(TimeZone.getTimeZone("Asia/Seoul")).apply {
                 clear()
-                set(m.groupValues[1].toInt(), m.groupValues[2].toInt() - 1, m.groupValues[3].toInt())
+                set(y, mo - 1, d)
             }.timeInMillis
         }.getOrDefault(0L)
     }
+
+    private fun mmdd(t: Long): String = java.text.SimpleDateFormat("MM.dd", java.util.Locale.KOREAN)
+        .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }.format(java.util.Date(t))
 
     // ================= 영상 =================
     override fun videoListRequest(episode: SEpisode): Request = GET(baseUrl + episode.url, h())
@@ -414,15 +527,27 @@ class HoohooTV : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     // ================= 필터 =================
-    override fun getFilterList(): AnimeFilterList = AnimeFilterList(
-        AnimeFilter.Header("검색어가 없을 때만 적용"),
-        CategoryFilter(),
-    )
+    private fun categories(): List<Pair<String, String>> = when (kind) {
+        KIND_MOVIE -> MOVIE_CATEGORIES
+        KIND_DRAMA -> listOf("드라마" to DRAMA_PATH)
+        else -> CATEGORIES
+    }
 
-    class CategoryFilter : AnimeFilter.Select<String>("분류", CATEGORIES.map { it.first }.toTypedArray())
+    override fun getFilterList(): AnimeFilterList = if (kind == KIND_DRAMA) {
+        AnimeFilterList(AnimeFilter.Header("드라마 목록입니다 (분류 선택 없음)"))
+    } else {
+        AnimeFilterList(
+            AnimeFilter.Header("검색어가 없을 때만 적용"),
+            CategoryFilter(categories().map { it.first }.toTypedArray()),
+        )
+    }
+
+    class CategoryFilter(names: Array<String>) : AnimeFilter.Select<String>("분류", names)
 
     // ================= 설정 화면 =================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        // 영화·드라마 소스는 기본 "후후티비" 소스의 설정(주소·자동 찾기·화질)을 같이 씀
+        if (kind != KIND_ALL) return
         val ctx = screen.context
         EditTextPreference(ctx).apply {
             key = PREF_DOMAIN_KEY
@@ -480,41 +605,41 @@ class HoohooTV : AnimeHttpSource(), ConfigurableAnimeSource {
         )
         private val SEARCH_PARAMS = listOf("q", "query", "keyword", "search", "s")
 
+        const val KIND_ALL = 0
+        const val KIND_MOVIE = 1
+        const val KIND_DRAMA = 2
+        private const val DRAMA_PATH = "/tv/%EB%93%9C%EB%9D%BC%EB%A7%88"
+        private const val ONGOING_DAYS = 21
+        private const val DAY_MS = 86_400_000L
+        private const val AIR_TTL_MS = 6 * 3_600_000L
+        private const val ENDED_TTL_MS = 7 * DAY_MS
+        private val SHORT_DATE_REGEX = Regex("""(\d{2})[./](\d{2})[./](\d{2})""")
+        private val LABEL_DATE_REGEX = Regex("""\s*\(\d{2,4}[./-]\d{1,2}[./-]\d{1,2}\)""")
+        private val TITLE_YEAR_REGEX = Regex("""\s*\((?:19|20)\d{2}\)\s*$""")
+
         private val CATEGORIES = listOf(
             "TV 전체" to "/tv/all",
-            "TV - 드라마" to "/tv/%EB%93%9C%EB%9D%BC%EB%A7%88",
-            "TV - 예능" to "/tv/Reality",
-            "TV - 코미디" to "/tv/%EC%BD%94%EB%AF%B8%EB%94%94",
-            "TV - 액션" to "/tv/Action%20%26%20Adventure",
-            "TV - 판타지" to "/tv/Sci-Fi%20%26%20Fantasy",
-            "TV - 범죄" to "/tv/%EB%B2%94%EC%A3%84",
-            "TV - 미스터리" to "/tv/%EB%AF%B8%EC%8A%A4%ED%84%B0%EB%A6%AC",
-            "TV - 애니메이션" to "/tv/%EC%95%A0%EB%8B%88%EB%A9%94%EC%9D%B4%EC%85%98",
-            "TV - 다큐멘터리" to "/tv/%EB%8B%A4%ED%81%90%EB%A9%98%ED%84%B0%EB%A6%AC",
-            "TV - 가족" to "/tv/%EA%B0%80%EC%A1%B1",
-            "TV - 토크쇼" to "/tv/Talk",
-            "TV - 전쟁과 정치" to "/tv/War%20%26%20Politics",
-            "TV - 키즈" to "/tv/Kids",
-            "TV - 서부" to "/tv/%EC%84%9C%EB%B6%80",
+            "드라마" to DRAMA_PATH,
+            "예능" to "/tv/Reality",
+            "토크쇼" to "/tv/Talk",
+            "TV 코미디" to "/tv/%EC%BD%94%EB%AF%B8%EB%94%94",
+            "TV 애니메이션" to "/tv/%EC%95%A0%EB%8B%88%EB%A9%94%EC%9D%B4%EC%85%98",
+            "TV 다큐멘터리" to "/tv/%EB%8B%A4%ED%81%90%EB%A9%98%ED%84%B0%EB%A6%AC",
+            "키즈" to "/tv/Kids",
             "영화 전체" to "/movie/all",
             "영화 - 액션" to "/movie/%EC%95%A1%EC%85%98",
             "영화 - 코미디" to "/movie/%EC%BD%94%EB%AF%B8%EB%94%94",
-            "영화 - SF" to "/movie/SF",
             "영화 - 스릴러" to "/movie/%EC%8A%A4%EB%A6%B4%EB%9F%AC",
             "영화 - 로맨스" to "/movie/%EB%A1%9C%EB%A7%A8%EC%8A%A4",
             "영화 - 공포" to "/movie/%EA%B3%B5%ED%8F%AC",
             "영화 - 범죄" to "/movie/%EB%B2%94%EC%A3%84",
-            "영화 - 모험" to "/movie/%EB%AA%A8%ED%97%98",
-            "영화 - 판타지" to "/movie/%ED%8C%90%ED%83%80%EC%A7%80",
-            "영화 - 미스터리" to "/movie/%EB%AF%B8%EC%8A%A4%ED%84%B0%EB%A6%AC",
             "영화 - 애니메이션" to "/movie/%EC%95%A0%EB%8B%88%EB%A9%94%EC%9D%B4%EC%85%98",
-            "영화 - 가족" to "/movie/%EA%B0%80%EC%A1%B1",
-            "영화 - 음악" to "/movie/%EC%9D%8C%EC%95%85",
-            "영화 - 역사" to "/movie/%EC%97%AD%EC%82%AC",
             "영화 - 다큐멘터리" to "/movie/%EB%8B%A4%ED%81%90%EB%A9%98%ED%84%B0%EB%A6%AC",
-            "영화 - 전쟁" to "/movie/%EC%A0%84%EC%9F%81",
-            "영화 - 서부" to "/movie/%EC%84%9C%EB%B6%80",
         )
+
+        /** "후후티비 영화" 소스의 분류 */
+        private val MOVIE_CATEGORIES = CATEGORIES.filter { it.second.startsWith("/movie/") }
+            .map { (n, v) -> n.removePrefix("영화 - ") to v }
 
         private val BLOCKED_HOSTS = listOf(
             "googletagmanager.com",
