@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.19",
+    "version": "0.1.20",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -104,8 +104,20 @@ async function mediaWorks(client, url, headers) {
 const QUALITY_CHOICES = ["자동", "1080p", "720p", "480p", "360p"];
 
 // HLS 마스터 목록에 화질이 여러 개면 각각 따로 고를 수 있게 나눔. 하나뿐이거나 읽지 못하면 그대로
+// 주소에 "1080p" 같은 화질이 적혀 있으면 이름 뒤에 붙임 (mp4·단일 화질 영상도 지금 화질을 알 수 있게)
+function withRes(label, url) {
+    let path = String(url || "").split("?")[0];
+    try {
+        path = decodeURIComponent(path);
+    } catch (e) {
+        // 그대로 사용
+    }
+    const m = /(?:^|[^0-9])(2160|1440|1080|720|576|480|360|240)[pP](?![0-9a-zA-Z])/.exec(path);
+    return m && !label.includes(`${m[1]}p`) ? `${label} ${m[1]}p` : label;
+}
+
 async function hlsExpand(client, url, label, headers) {
-    const one = [{ url, originalUrl: url, quality: label, headers }];
+    const one = [{ url, originalUrl: url, quality: withRes(label, url), headers }];
     if (!url.includes(".m3u8")) return one;
     let body = "";
     try {
@@ -129,9 +141,10 @@ async function hlsExpand(client, url, label, headers) {
         }
         variants.push({ h: Number(h[1]), u });
     }
+    if (variants.length === 1) return [{ url, originalUrl: url, quality: `${label} ${variants[0].h}p`, headers }];
     if (variants.length < 2) return one;
     variants.sort((a, b) => b.h - a.h);
-    return [{ url, originalUrl: url, quality: `${label} 자동`, headers }]
+    return [{ url, originalUrl: url, quality: `${label} 자동 (최대 ${variants[0].h}p)`, headers }]
         .concat(variants.map((v) => ({ url: v.u, originalUrl: v.u, quality: `${label} ${v.h}p`, headers })));
 }
 
@@ -144,7 +157,8 @@ function qualitySort(prefKey, list) {
     } catch (e) {
         want = "자동";
     }
-    return list.filter((x) => x.quality.endsWith(` ${want}`)).concat(list.filter((x) => !x.quality.endsWith(` ${want}`)));
+    const hit = (x) => x.quality.endsWith(` ${want}`) || x.quality.includes(` ${want} `);
+    return list.filter(hit).concat(list.filter((x) => !hit(x)));
 }
 
 function qualityPreference(key) {

@@ -585,7 +585,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                 main = alt.also { alt = main }
             }
             videos.addAll(HlsQuality.expand(client, media, qualityOf(media), main))
-            videos.add(Video(media, qualityOf(media) + " (대체)", media, alt))
+            videos.add(Video(media, HlsQuality.withRes(qualityOf(media), media) + " (대체)", media, alt))
             return HlsQuality.sort(prefs(), videos) + others
         }
 
@@ -630,7 +630,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                     val media = mediaOf(html) ?: return@runCatching null
                     val headers = listOf(videoHeaders(PLAYER_REFERER), videoHeaders("$baseUrl/"))
                         .firstOrNull { HlsQuality.works(client, media, it) } ?: return@runCatching null
-                    Video(media, "${qualityOf(media)} [$server]", media, headers)
+                    Video(media, "${HlsQuality.withRes(qualityOf(media), media)} [$server]", media, headers)
                 }.getOrNull()
             }
     }

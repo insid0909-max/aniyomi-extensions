@@ -20,9 +20,17 @@ internal object HlsQuality {
     private val STREAM_REGEX = Regex("""#EXT-X-STREAM-INF:([^\n]*)\n\s*([^\s#][^\n]*)""")
     private val HEIGHT_REGEX = Regex("""RESOLUTION=\d+x(\d+)""")
 
+    private val URL_RES_REGEX = Regex("""(?<![0-9])(2160|1440|1080|720|576|480|360|240)[pP](?![0-9a-zA-Z])""")
+
+    /** 주소에 "1080p" 같은 화질이 적혀 있으면 이름 뒤에 붙임 (mp4·단일 화질 영상도 지금 화질을 알 수 있게) */
+    fun withRes(label: String, url: String): String {
+        val r = URL_RES_REGEX.find(java.net.URLDecoder.decode(url.substringBefore('?'), "UTF-8"))?.groupValues?.get(1)
+        return if (r != null && !label.contains("${r}p")) "$label ${r}p" else label
+    }
+
     /** label 예: "티비착 (HLS)" → "티비착 (HLS) 자동", "티비착 (HLS) 1080p" … */
     fun expand(client: OkHttpClient, url: String, label: String, headers: Headers): List<Video> {
-        if (!url.contains(".m3u8")) return listOf(Video(url, label, url, headers))
+        if (!url.contains(".m3u8")) return listOf(Video(url, withRes(label, url), url, headers))
         val variants = runCatching {
             client.newCall(GET(url, headers)).execute().use { res ->
                 if (!res.isSuccessful) return@use emptyList()
@@ -37,7 +45,7 @@ internal object HlsQuality {
         }.getOrDefault(emptyList())
         // 화질이 하나뿐이면 그 화질을 이름에 붙여 지금 화질을 알 수 있게
         if (variants.size == 1) return listOf(Video(url, "$label ${variants[0].first}p", url, headers))
-        if (variants.isEmpty()) return listOf(Video(url, label, url, headers))
+        if (variants.isEmpty()) return listOf(Video(url, withRes(label, url), url, headers))
         // "자동"에는 최고 화질을 함께 표시 (자동은 인터넷 속도에 따라 그 아래로 바뀔 수 있음)
         val autoTop = Video(url, "$label $AUTO (최대 ${variants[0].first}p)", url, headers)
         return listOf(autoTop) + variants.map { (h, u) -> Video(u, "$label ${h}p", u, headers) }
