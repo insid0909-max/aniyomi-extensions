@@ -17,7 +17,7 @@ class El {
 }
 global.Document = class extends El { constructor(h) { super(parseHTML(h).document); } };
 global.MProvider = class { get source() { return {}; } };
-global.SharedPreferences = class { get() { return ""; } setString() {} };
+global.SharedPreferences = class { get() { return ""; } getString(k, d) { return d; } setString() {} };
 global.unpackJs = (s) => s;
 
 async function request(method, url, headers, body) {
