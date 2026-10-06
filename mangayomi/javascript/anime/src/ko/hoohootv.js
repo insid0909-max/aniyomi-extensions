@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -141,16 +141,18 @@ class DefaultExtension extends MProvider {
         const base = this.getBaseUrl();
         const url = path.startsWith("http") ? path : base + path;
         let res = null;
-        // 연결 끊김·시간 초과면 잠깐 쉬고 한 번 더
-        for (let attempt = 0; attempt < 2 && !res; attempt++) {
+        const errs = [];
+        // 연결 끊김·시간 초과면 잠깐 쉬고 다시, 마지막에는 헤더 없이 한 번 더
+        for (let attempt = 0; attempt < 3 && !res; attempt++) {
             await siteWait();
             try {
-                res = await this.client.get(url, this.headers());
+                res = attempt < 2 ? await this.client.get(url, this.headers()) : await new Client().get(url, {});
             } catch (e) {
+                errs.push(String((e && e.message) || e).substring(0, 80));
                 if (attempt === 0) await new Promise((r) => setTimeout(r, 700));
             }
         }
-        if (!res) throw new Error(`접속 실패: ${url}`);
+        if (!res) throw new Error(`접속 실패: ${url} [${errs.join(" | ")}]`);
         if (Number(res.statusCode) === 403 || Number(res.statusCode) === 503) {
             throw new Error("사이트 보안 확인이 필요합니다. 오른쪽 위 지구본(WebView) 버튼으로 한 번 열었다 닫은 뒤 다시 불러오세요.");
         }
