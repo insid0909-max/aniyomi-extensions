@@ -409,29 +409,33 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
 
         // 1) 페이지와 그 안 iframe 들에 들어 있는 영상 주소 후보를 모두 모음 (최대 4개)
         val pageHeaders = headersBuilder().set("Referer", pageUrl).build()
+        // iframe 들은 동시에 받음
+        val iframes = Jsoup.parse(html, pageUrl).select("iframe[src]")
+            .map { it.absUrl("src") }.filter { it.startsWith("http") }.take(3)
         val candidates = (
-            findAllMedia(html) + Jsoup.parse(html, pageUrl).select("iframe[src]")
-                .map { it.absUrl("src") }.filter { it.startsWith("http") }.take(3)
-                .flatMap { src ->
-                    runCatching {
-                        client.newCall(GET(src, pageHeaders)).execute().use { findAllMedia(it.body.string()) }
-                    }.getOrDefault(emptyList())
-                }
+            findAllMedia(html) + Parallel.mapNotNull(iframes) { src ->
+                runCatching {
+                    client.newCall(GET(src, pageHeaders)).execute().use { findAllMedia(it.body.string()) }
+                }.getOrNull()
+            }.flatten()
             ).distinct().take(4)
 
-        // 2) 실제로 열리는 후보만. 하나도 없으면 숨은 화면(WebView)으로 열어 영상 요청을 가로챈다 (자동 전환)
-        val working = candidates.filter { HlsQuality.works(client, it, pageHeaders) }
-        val (media, referer) = working.firstOrNull()?.let { it to pageUrl } ?: sniffWithWebView(pageUrl)
+        // 2) 실제로 열리는 후보만 (동시에 확인, 받은 내용은 화질 나누기에 다시 씀).
+        //    하나도 없으면 숨은 화면(WebView)으로 열어 영상 요청을 가로챈다 (자동 전환)
+        val working = Parallel.mapNotNull(candidates) { u -> HlsQuality.probe(client, u, pageHeaders)?.let { u to it } }
+        val first = working.firstOrNull()
+        val (media, referer) = first?.let { it.first to pageUrl } ?: sniffWithWebView(pageUrl)
             ?: candidates.firstOrNull()?.let { it to pageUrl }
             ?: throw Exception("영상 주소를 찾지 못했습니다: $pageUrl")
 
         val vh = videoHeaders(referer)
         val quality = qualityOf(media)
         // 열리는 다른 후보는 "(대체 N)" 으로 뒤에 붙여 플레이어에서 바로 바꿀 수 있게
-        val extras = working.filter { it != media }.mapIndexed { i, u ->
+        val extras = working.map { it.first }.filter { it != media }.mapIndexed { i, u ->
             Video(u, "${HlsQuality.withRes(qualityOf(u), u)} (대체 ${i + 1})", u, videoHeaders(pageUrl))
         }
-        return HlsQuality.sort(prefs(), HlsQuality.expand(client, media, quality, vh)) + extras
+        val probed = first?.takeIf { it.first == media }?.second
+        return HlsQuality.sort(prefs(), HlsQuality.expand(client, media, quality, vh, probed)) + extras
     }
 
     private fun qualityOf(url: String) = if (url.contains(".m3u8")) "고고티비 (HLS)" else "고고티비"
@@ -466,6 +470,8 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
                 webView.settings.domStorageEnabled = true
                 webView.settings.mediaPlaybackRequiresUserGesture = false
                 webView.settings.userAgentString = USER_AGENT
+                // 그림은 받지 않아 영상 주소를 더 빨리 찾음
+                webView.settings.blockNetworkImage = true
                 webView.webViewClient = object : WebViewClient() {
                     override fun onPageStarted(view: WebView, pageUrl: String, favicon: android.graphics.Bitmap?) {
                         lastPage = pageUrl
@@ -482,7 +488,7 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
                             latch.countDown()
                         }
                         // 광고/분석 스크립트는 빈 응답으로 막아 로딩을 줄임
-                        if (BLOCKED_HOSTS.any { request.url.host?.endsWith(it) == true }) {
+                        if (BLOCKED_HOSTS.any { request.url.host?.endsWith(it) == true } || SniffBlock.blocked(request.url)) {
                             return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                         }
                         return super.shouldInterceptRequest(view, request)

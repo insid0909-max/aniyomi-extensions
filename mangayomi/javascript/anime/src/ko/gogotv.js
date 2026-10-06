@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.18",
+    "version": "0.1.19",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -508,8 +508,9 @@ class DefaultExtension extends MProvider {
         const qOf = (u) => (u.includes(".m3u8") ? "고고티비 (HLS)" : "고고티비");
         // 같은 페이지에 영상 주소가 여러 개면 실제로 열리는 것을 먼저 쓰고, 나머지는 "(대체 N)" 으로 뒤에 붙임
         const candidates = (found.all || [found.url]).slice(0, 4);
-        const working = [];
-        for (const u of candidates) if (await mediaWorks(this.client, u, headers)) working.push(u);
+        // 후보들을 동시에 확인
+        const oks = await Promise.all(candidates.map((u) => mediaWorks(this.client, u, headers)));
+        const working = candidates.filter((u, i) => oks[i]);
         const main = working[0] || found.url;
         const extras = working.filter((u) => u !== main)
             .map((u, i) => ({ url: u, originalUrl: u, quality: `${qOf(u)} (대체 ${i + 1})`, headers }));
