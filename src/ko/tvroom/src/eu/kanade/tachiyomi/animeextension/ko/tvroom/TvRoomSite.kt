@@ -360,6 +360,7 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
         return Headers.Builder()
             .set("User-Agent", USER_AGENT)
             .set("Referer", referer)
+            .set("Accept", "*/*")
             .apply { if (origin != null) set("Origin", origin) }
             .build()
     }
@@ -395,13 +396,21 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
                         lastPage = pageUrl
                     }
 
+                    override fun onLoadResource(view: WebView, pageUrl: String) {
+                        // iframe 내부 리다이렉트로 URL이 변경되었을 경우 추적
+                        view.url?.let { if (it.startsWith("http")) lastPage = it }
+                    }
+
                     override fun shouldInterceptRequest(
                         view: WebView,
                         request: WebResourceRequest,
                     ): WebResourceResponse? {
                         val path = request.url.path?.lowercase().orEmpty()
                         if (found == null && isMedia(path)) {
-                            found = request.url.toString() to (request.requestHeaders["Referer"] ?: lastPage)
+                            // WebView에서 requestHeaders["Referer"]는 비어있는 경우가 많으므로
+                            // 실제 플레이어가 로드된 주소(lastPage)를 Referer로 확정
+                            val actualReferer = request.requestHeaders["Referer"]?.ifEmpty { null } ?: lastPage
+                            found = request.url.toString() to actualReferer
                             latch.countDown()
                         }
                         // 광고·통계 요청은 빈 응답으로 막아 로딩을 줄임
