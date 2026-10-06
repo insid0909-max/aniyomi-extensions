@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.3",
+    "version": "0.1.4",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -158,7 +158,8 @@ class DefaultExtension extends MProvider {
             // 앱의 접속 방식으로는 주소 넘김이 꼬이는 페이지: 숨은 웹뷰(쿠키·넘김을 브라우저처럼 처리)로 받아 옴
             const html = await this.viaWebview(url, "HOOHOO TV");
             if (html) return html;
-            throw new Error(`접속 실패: ${url} [${errs.join(" | ")}]`);
+            const where = url.replace(/^https?:\/\/[^/]+/, "");
+            throw new Error(`사이트가 주소를 계속 넘겨 페이지를 못 받았습니다. 오른쪽 위 지구본(웹뷰) 버튼으로 이 작품을 한 번 열었다 닫은 뒤 다시 불러오세요. (경로 ${where}) [${errs.join(" | ").replace(/https?:\/\/\S+/g, "")}]`);
         }
         if (Number(res.statusCode) === 403 || Number(res.statusCode) === 503) {
             throw new Error("사이트 보안 확인이 필요합니다. 오른쪽 위 지구본(WebView) 버튼으로 한 번 열었다 닫은 뒤 다시 불러오세요.");
