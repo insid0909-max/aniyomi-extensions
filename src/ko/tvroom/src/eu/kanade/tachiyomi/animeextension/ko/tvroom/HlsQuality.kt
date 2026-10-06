@@ -22,7 +22,6 @@ internal object HlsQuality {
 
     /** label 예: "티비착 (HLS)" → "티비착 (HLS) 자동", "티비착 (HLS) 1080p" … */
     fun expand(client: OkHttpClient, url: String, label: String, headers: Headers): List<Video> {
-        val auto = Video(url, "$label $AUTO", url, headers)
         if (!url.contains(".m3u8")) return listOf(Video(url, label, url, headers))
         val variants = runCatching {
             client.newCall(GET(url, headers)).execute().use { res ->
@@ -36,8 +35,12 @@ internal object HlsQuality {
                 }.distinctBy { it.first }.sortedByDescending { it.first }.toList()
             }
         }.getOrDefault(emptyList())
-        if (variants.size < 2) return listOf(Video(url, label, url, headers))
-        return listOf(auto) + variants.map { (h, u) -> Video(u, "$label ${h}p", u, headers) }
+        // 화질이 하나뿐이면 그 화질을 이름에 붙여 지금 화질을 알 수 있게
+        if (variants.size == 1) return listOf(Video(url, "$label ${variants[0].first}p", url, headers))
+        if (variants.isEmpty()) return listOf(Video(url, label, url, headers))
+        // "자동"에는 최고 화질을 함께 표시 (자동은 인터넷 속도에 따라 그 아래로 바뀔 수 있음)
+        val autoTop = Video(url, "$label $AUTO (최대 ${variants[0].first}p)", url, headers)
+        return listOf(autoTop) + variants.map { (h, u) -> Video(u, "$label ${h}p", u, headers) }
     }
 
     /** 이 헤더로 영상 주소가 실제로 열리는지 (m3u8 이면 내용까지 확인) */
@@ -52,7 +55,7 @@ internal object HlsQuality {
     /** 선호 화질을 맨 앞으로 (같은 화질 안에서는 원래 순서 유지) */
     fun sort(p: SharedPreferences?, videos: List<Video>): List<Video> {
         val want = p?.getString(PREF_KEY, AUTO) ?: AUTO
-        return videos.sortedByDescending { it.quality.endsWith(" $want") }
+        return videos.sortedByDescending { it.quality.endsWith(" $want") || it.quality.contains(" $want ") }
     }
 
     fun addPreference(screen: PreferenceScreen) {
