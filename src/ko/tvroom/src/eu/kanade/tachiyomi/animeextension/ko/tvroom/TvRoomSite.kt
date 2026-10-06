@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
+import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -350,18 +351,23 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
             f.absUrl("src").ifEmpty { f.absUrl("data-src") }
         }?.takeIf { it.startsWith("http") }
             ?: throw Exception("플레이어를 찾지 못했습니다 (영상이 없는 회차일 수 있습니다)")
-        val (media, referer) = sniffWithWebView(player, pageUrl)
+
+        val (media, referer, cookie) = sniffWithWebView(player, pageUrl)
             ?: throw Exception("영상 주소를 찾지 못했습니다: $player")
-        return HlsQuality.sort(prefs(), HlsQuality.expand(client, media, "티비룸 (HLS)", videoHeaders(referer)))
+
+        return HlsQuality.sort(prefs(), HlsQuality.expand(client, media, "티비룸 (HLS)", videoHeaders(referer, cookie)))
     }
 
-    private fun videoHeaders(referer: String): Headers {
+    private fun videoHeaders(referer: String, cookie: String? = null): Headers {
         val origin = referer.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" }
         return Headers.Builder()
             .set("User-Agent", USER_AGENT)
             .set("Referer", referer)
             .set("Accept", "*/*")
-            .apply { if (origin != null) set("Origin", origin) }
+            .apply {
+                if (origin != null) set("Origin", origin)
+                if (!cookie.isNullOrEmpty()) set("Cookie", cookie)
+            }
             .build()
     }
 
@@ -369,9 +375,9 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
     private fun isMedia(path: String): Boolean = path.endsWith(".m3u8") || path.contains("/m3u8/") || path.endsWith(".mp4")
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun sniffWithWebView(url: String, referer: String): Pair<String, String>? {
+    private fun sniffWithWebView(url: String, referer: String): Triple<String, String, String>? {
         val latch = CountDownLatch(1)
-        var found: Pair<String, String>? = null
+        var found: Triple<String, String, String>? = null
         var lastPage = url
         val handler = Handler(Looper.getMainLooper())
         var webViewRef: WebView? = null
@@ -384,20 +390,21 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
                 webViewRef = webView
                 webView.settings.javaScriptEnabled = true
                 webView.settings.domStorageEnabled = true
-                // 먼저 자동 재생을 막은 채로 열어 영상 주소만 찾음 (숨은 화면에서 소리가 나 음량 막대가 뜨지 않게).
-                // 못 찾으면 아래에서 자동 재생을 켜고 다시 연다
+                webView.settings.databaseEnabled = true
                 webView.settings.mediaPlaybackRequiresUserGesture = true
-                // 앱 플레이어와 같은 브라우저 정보를 써야 영상 주소가 그대로 열림
                 webView.settings.userAgentString = USER_AGENT
-                // 그림은 받지 않아 영상 주소를 더 빨리 찾음
                 webView.settings.blockNetworkImage = true
+
+                val cookieManager = CookieManager.getInstance()
+                cookieManager.setAcceptCookie(true)
+                cookieManager.setAcceptThirdPartyCookies(webView, true)
+
                 webView.webViewClient = object : WebViewClient() {
                     override fun onPageStarted(view: WebView, pageUrl: String, favicon: android.graphics.Bitmap?) {
                         lastPage = pageUrl
                     }
 
                     override fun onLoadResource(view: WebView, pageUrl: String) {
-                        // iframe 내부 리다이렉트로 URL이 변경되었을 경우 추적
                         view.url?.let { if (it.startsWith("http")) lastPage = it }
                     }
 
@@ -407,13 +414,14 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
                     ): WebResourceResponse? {
                         val path = request.url.path?.lowercase().orEmpty()
                         if (found == null && isMedia(path)) {
-                            // WebView에서 requestHeaders["Referer"]는 비어있는 경우가 많으므로
-                            // 실제 플레이어가 로드된 주소(lastPage)를 Referer로 확정
+                            val reqUrl = request.url.toString()
                             val actualReferer = request.requestHeaders["Referer"]?.ifEmpty { null } ?: lastPage
-                            found = request.url.toString() to actualReferer
+                            val cookies = cookieManager.getCookie(reqUrl)
+                                ?: cookieManager.getCookie(actualReferer).orEmpty()
+
+                            found = Triple(reqUrl, actualReferer, cookies)
                             latch.countDown()
                         }
-                        // 광고·통계 요청은 빈 응답으로 막아 로딩을 줄임
                         if (BLOCKED_HOSTS.any { request.url.host?.endsWith(it) == true }) {
                             return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                         }
@@ -427,7 +435,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
         }
 
         if (!latch.await(12, TimeUnit.SECONDS)) {
-            // 재생을 눌러야만 영상 주소를 받는 플레이어: 자동 재생을 켜고 다시 열어 봄
             handler.post {
                 runCatching {
                     webViewRef?.settings?.mediaPlaybackRequiresUserGesture = false
