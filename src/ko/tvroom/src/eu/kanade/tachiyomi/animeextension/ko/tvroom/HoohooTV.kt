@@ -169,7 +169,20 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
     }
 
     // 인기 = 사이트 "인기" 메뉴, 최신 = TV 프로그램 전체(최근 올라온 순). 영화·드라마 소스는 그 목록
-    override fun popularAnimeRequest(page: Int): Request = when (kind) {
+    // 인기/최신 탭 규칙(필터 조건 저장)은 소스마다 따로 (분류 목록이 소스마다 다르므로)
+    private fun ownPrefs(): SharedPreferences? = runCatching {
+        val app = Class.forName("android.app.ActivityThread")
+            .getMethod("currentApplication")
+            .invoke(null) as? Application
+        app?.getSharedPreferences("source_$id", 0)
+    }.getOrNull()
+
+    private fun ruleSizes() = intArrayOf(categories().size)
+
+    private fun savedRule(popular: Boolean, page: Int): Request? =
+        if (kind == KIND_DRAMA) null else TabRule.read(ownPrefs(), popular, ruleSizes())?.let { GET(listUrl(categories()[it[0]].second, page), h()) }
+
+    override fun popularAnimeRequest(page: Int): Request = savedRule(true, page) ?: when (kind) {
         KIND_MOVIE -> GET(listUrl("/movie/all", page), h())
         KIND_DRAMA -> GET(listUrl(DRAMA_PATH, page), h())
         else -> GET(listUrl("/popular", page), h())
@@ -177,7 +190,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
 
     override fun popularAnimeParse(response: Response): AnimesPage = parseList(response.asDoc())
 
-    override fun latestUpdatesRequest(page: Int): Request = GET(listUrl("/tv/all", page), h())
+    override fun latestUpdatesRequest(page: Int): Request = savedRule(false, page) ?: GET(listUrl("/tv/all", page), h())
 
     override fun latestUpdatesParse(response: Response): AnimesPage = parseList(response.asDoc())
 
@@ -193,6 +206,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             return GET(url.toString(), h())
         }
         val cat = filters.filterIsInstance<CategoryFilter>().firstOrNull()?.state ?: 0
+        filters.filterIsInstance<TabRule.RuleFilter>().firstOrNull()?.let { TabRule.apply(ownPrefs(), it.state, intArrayOf(cat)) }
         return GET(listUrl(categories().getOrElse(cat) { categories()[0] }.second, page), h())
     }
 
@@ -547,9 +561,13 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
     override fun getFilterList(): AnimeFilterList = if (kind == KIND_DRAMA) {
         AnimeFilterList(AnimeFilter.Header("드라마 목록입니다 (분류 선택 없음)"))
     } else {
+        val names = categories().map { it.first }
+        val defaults = if (kind == KIND_MOVIE) "영화 전체" to "영화 전체" else "인기" to "TV 전체"
         AnimeFilterList(
-            AnimeFilter.Header("검색어가 없을 때만 적용"),
-            CategoryFilter(categories().map { it.first }.toTypedArray()),
+            listOf(
+                AnimeFilter.Header("검색어가 없을 때만 적용"),
+                CategoryFilter(names.toTypedArray()),
+            ) + TabRule.filters(ownPrefs(), ruleSizes(), defaults) { names[it[0]] },
         )
     }
 
