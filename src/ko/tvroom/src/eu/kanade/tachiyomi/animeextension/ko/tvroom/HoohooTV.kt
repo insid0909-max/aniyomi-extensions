@@ -75,8 +75,80 @@ class HoohooTV : AnimeHttpSource(), ConfigurableAnimeSource {
             }
             res
         }
+        .addInterceptor { chain -> domainIntercept(chain) }
         .addInterceptor(RetryOnce(HOST_REGEX))
         .build()
+
+    // ================= 도메인 자동 찾기 =================
+    // 주소가 fo.hoohootv459.xyz → fp → fq 처럼 앞 글자가 바뀌거나 숫자가 바뀜.
+    // 접속이 안 되거나 막히면 다음 글자·숫자 주소를 차례로 열어 보고, 진짜 후후티비인 주소를 저장해 다시 요청한다.
+    private fun autoDomain(): Boolean = prefs()?.getBoolean(PREF_AUTO_DOMAIN, true) ?: true
+
+    private fun domainIntercept(chain: okhttp3.Interceptor.Chain): Response {
+        val req = chain.request()
+        val baseHost = baseUrl.toHttpUrlOrNull()?.host
+        if (baseHost == null || req.url.host != baseHost || !autoDomain()) return chain.proceed(req)
+
+        fun retryOn(found: String): Response {
+            prefs()?.edit()?.putString(PREF_DOMAIN_KEY, "https://$found")?.apply()
+            return chain.proceed(req.newBuilder().url(req.url.newBuilder().host(found).build()).build())
+        }
+
+        val res = try {
+            chain.proceed(req)
+        } catch (e: java.io.IOException) {
+            val found = discoverDomain(baseHost) ?: throw e
+            return retryOn(found)
+        }
+        val dead = !HOST_REGEX.matches(res.request.url.host) || res.code == 403 || res.code == 451 || res.code >= 500
+        if (req.method == "GET" && dead) {
+            val found = discoverDomain(baseHost) ?: return res
+            res.close()
+            return retryOn(found)
+        }
+        return res
+    }
+
+    @Volatile private var lastDiscover = 0L
+
+    private fun discoverDomain(currentHost: String): String? = synchronized(DISCOVER_LOCK) {
+        val now = System.currentTimeMillis()
+        if (now - lastDiscover < 60_000) return null
+        lastDiscover = now
+        val m = SUBDOMAIN_REGEX.matchEntire(currentHost) ?: return null
+        val (first, second, num, tld) = m.destructured
+        val n = num.toIntOrNull() ?: return null
+        val abc = "abcdefghijklmnopqrstuvwxyz"
+        val start = abc.indexOf(second[0])
+        // 같은 숫자에서 다음 글자들 → 숫자 +1 ~ +3 에서 같은 글자·다음 글자
+        val candidates = (1 until 26).map { "$first${abc[(start + it) % 26]}.hoohootv$n.$tld" } +
+            (1..3).flatMap { d -> (0..2).map { "$first${abc[(start + it) % 26]}.hoohootv${n + d}.$tld" } }
+        val plain = OkHttpClient.Builder()
+            .connectTimeout(4, TimeUnit.SECONDS)
+            .readTimeout(6, TimeUnit.SECONDS)
+            .callTimeout(8, TimeUnit.SECONDS)
+            .build()
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
+        try {
+            val futures = candidates.map { host ->
+                pool.submit<String?> {
+                    runCatching {
+                        val r = Request.Builder().url("https://$host/home").header("User-Agent", USER_AGENT).build()
+                        plain.newCall(r).execute().use { res ->
+                            val fh = res.request.url.host
+                            val ok = HOST_REGEX.matches(fh) && res.code == 200 &&
+                                res.peekBody(300_000).string().contains(SITE_MARKER)
+                            if (ok) fh else null
+                        }
+                    }.getOrNull()
+                }
+            }
+            // 후보 순서대로 (가까운 다음 주소 우선)
+            futures.firstNotNullOfOrNull { runCatching { it.get() }.getOrNull() }?.takeIf { it != currentHost }
+        } finally {
+            pool.shutdown()
+        }
+    }
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .set("User-Agent", USER_AGENT)
@@ -362,6 +434,7 @@ class HoohooTV : AnimeHttpSource(), ConfigurableAnimeSource {
             setOnPreferenceChangeListener { _, newValue ->
                 val input = (newValue as String).trim().trimEnd('/')
                 if (input.isEmpty() || DOMAIN_REGEX.matches(input)) {
+                    summary = "현재 주소: ${input.ifEmpty { DEFAULT_BASE_URL }}"
                     prefs()?.edit()?.remove(PREF_SEARCH_PARAM)?.apply()
                     true
                 } else {
@@ -369,6 +442,13 @@ class HoohooTV : AnimeHttpSource(), ConfigurableAnimeSource {
                     false
                 }
             }
+        }.also(screen::addPreference)
+
+        androidx.preference.SwitchPreferenceCompat(ctx).apply {
+            key = PREF_AUTO_DOMAIN
+            title = "도메인 자동 찾기"
+            summary = "접속이 안 되거나 막히면 다음 후후티비 주소(예: fp → fq → fr…, 숫자가 바뀐 주소)를 찾아 자동 변경합니다."
+            setDefaultValue(true)
         }.also(screen::addPreference)
 
         HlsQuality.addPreference(screen)
@@ -379,6 +459,10 @@ class HoohooTV : AnimeHttpSource(), ConfigurableAnimeSource {
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
         private const val PREF_SEARCH_PARAM = "pref_search_param"
+        private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
+        private const val SITE_MARKER = "HOOHOO TV"
+        private val DISCOVER_LOCK = Any()
+        private val SUBDOMAIN_REGEX = Regex("""^([a-z])([a-z])\.hoohootv(\d+)\.([a-z]{2,6})$""")
         private const val DEFAULT_BASE_URL = "https://fp.hoohootv459.xyz"
         private const val RATE_GAP_MS = 350L
         private const val USER_AGENT =
@@ -398,22 +482,38 @@ class HoohooTV : AnimeHttpSource(), ConfigurableAnimeSource {
 
         private val CATEGORIES = listOf(
             "TV 전체" to "/tv/all",
-            "드라마" to "/tv/%EB%93%9C%EB%9D%BC%EB%A7%88",
-            "예능" to "/tv/Reality",
-            "토크쇼" to "/tv/Talk",
-            "TV 코미디" to "/tv/%EC%BD%94%EB%AF%B8%EB%94%94",
-            "TV 애니메이션" to "/tv/%EC%95%A0%EB%8B%88%EB%A9%94%EC%9D%B4%EC%85%98",
-            "TV 다큐멘터리" to "/tv/%EB%8B%A4%ED%81%90%EB%A9%98%ED%84%B0%EB%A6%AC",
-            "키즈" to "/tv/Kids",
+            "TV - 드라마" to "/tv/%EB%93%9C%EB%9D%BC%EB%A7%88",
+            "TV - 예능" to "/tv/Reality",
+            "TV - 코미디" to "/tv/%EC%BD%94%EB%AF%B8%EB%94%94",
+            "TV - 액션" to "/tv/Action%20%26%20Adventure",
+            "TV - 판타지" to "/tv/Sci-Fi%20%26%20Fantasy",
+            "TV - 범죄" to "/tv/%EB%B2%94%EC%A3%84",
+            "TV - 미스터리" to "/tv/%EB%AF%B8%EC%8A%A4%ED%84%B0%EB%A6%AC",
+            "TV - 애니메이션" to "/tv/%EC%95%A0%EB%8B%88%EB%A9%94%EC%9D%B4%EC%85%98",
+            "TV - 다큐멘터리" to "/tv/%EB%8B%A4%ED%81%90%EB%A9%98%ED%84%B0%EB%A6%AC",
+            "TV - 가족" to "/tv/%EA%B0%80%EC%A1%B1",
+            "TV - 토크쇼" to "/tv/Talk",
+            "TV - 전쟁과 정치" to "/tv/War%20%26%20Politics",
+            "TV - 키즈" to "/tv/Kids",
+            "TV - 서부" to "/tv/%EC%84%9C%EB%B6%80",
             "영화 전체" to "/movie/all",
             "영화 - 액션" to "/movie/%EC%95%A1%EC%85%98",
             "영화 - 코미디" to "/movie/%EC%BD%94%EB%AF%B8%EB%94%94",
+            "영화 - SF" to "/movie/SF",
             "영화 - 스릴러" to "/movie/%EC%8A%A4%EB%A6%B4%EB%9F%AC",
             "영화 - 로맨스" to "/movie/%EB%A1%9C%EB%A7%A8%EC%8A%A4",
             "영화 - 공포" to "/movie/%EA%B3%B5%ED%8F%AC",
             "영화 - 범죄" to "/movie/%EB%B2%94%EC%A3%84",
+            "영화 - 모험" to "/movie/%EB%AA%A8%ED%97%98",
+            "영화 - 판타지" to "/movie/%ED%8C%90%ED%83%80%EC%A7%80",
+            "영화 - 미스터리" to "/movie/%EB%AF%B8%EC%8A%A4%ED%84%B0%EB%A6%AC",
             "영화 - 애니메이션" to "/movie/%EC%95%A0%EB%8B%88%EB%A9%94%EC%9D%B4%EC%85%98",
+            "영화 - 가족" to "/movie/%EA%B0%80%EC%A1%B1",
+            "영화 - 음악" to "/movie/%EC%9D%8C%EC%95%85",
+            "영화 - 역사" to "/movie/%EC%97%AD%EC%82%AC",
             "영화 - 다큐멘터리" to "/movie/%EB%8B%A4%ED%81%90%EB%A9%98%ED%84%B0%EB%A6%AC",
+            "영화 - 전쟁" to "/movie/%EC%A0%84%EC%9F%81",
+            "영화 - 서부" to "/movie/%EC%84%9C%EB%B6%80",
         )
 
         private val BLOCKED_HOSTS = listOf(
