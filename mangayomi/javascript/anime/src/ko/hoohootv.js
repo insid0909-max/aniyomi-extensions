@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -142,14 +142,16 @@ class DefaultExtension extends MProvider {
         const url = path.startsWith("http") ? path : base + path;
         let res = null;
         const errs = [];
-        // 연결 끊김·시간 초과면 잠깐 쉬고 다시, 마지막에는 헤더 없이 한 번 더
+        // 연결 끊김·시간 초과면 잠깐 쉬고 다시. 주소 넘김(리다이렉트)이 꼬이면 직접 따라가 본다
         for (let attempt = 0; attempt < 3 && !res; attempt++) {
             await siteWait();
             try {
-                res = attempt < 2 ? await this.client.get(url, this.headers()) : await new Client().get(url, {});
+                res = attempt < 2 ? await this.client.get(url, this.headers()) : await this.followManually(url);
             } catch (e) {
-                errs.push(String((e && e.message) || e).substring(0, 80));
-                if (attempt === 0) await new Promise((r) => setTimeout(r, 700));
+                const msg = String((e && e.message) || e);
+                errs.push(msg.substring(0, 80));
+                if (attempt === 0 && /redirect/i.test(msg)) attempt = 1; // 넘김 오류는 같은 요청을 반복해도 소용없음
+                else if (attempt === 0) await new Promise((r) => setTimeout(r, 700));
             }
         }
         if (!res) throw new Error(`접속 실패: ${url} [${errs.join(" | ")}]`);
@@ -157,6 +159,49 @@ class DefaultExtension extends MProvider {
             throw new Error("사이트 보안 확인이 필요합니다. 오른쪽 위 지구본(WebView) 버튼으로 한 번 열었다 닫은 뒤 다시 불러오세요.");
         }
         return String(res.body || "");
+    }
+
+    // 자동 넘김을 끄고 Location 을 직접 따라감 (넘김 중에 받은 쿠키도 다음 요청에 실어 보냄)
+    async followManually(startUrl) {
+        const raw = new Client({ followRedirects: false });
+        const cookies = {};
+        let url = startUrl;
+        const trail = [];
+        for (let hop = 0; hop < 8; hop++) {
+            const h = this.headers();
+            delete h["User-Agent"];
+            const jar = Object.keys(cookies).map((k) => `${k}=${cookies[k]}`).join("; ");
+            if (jar) h["Cookie"] = jar;
+            const r = await raw.get(url, h);
+            const code = Number(r.statusCode);
+            const headers = r.headers || {};
+            let loc = "";
+            for (const k in headers) {
+                const lk = k.toLowerCase();
+                if (lk === "location") loc = String(headers[k]);
+                if (lk === "set-cookie") {
+                    for (const part of String(headers[k]).split(/,(?=\s*[^;=\s]+=)/)) {
+                        const kv = /^\s*([^=;\s]+)=([^;]*)/.exec(part);
+                        if (kv) cookies[kv[1]] = kv[2];
+                    }
+                }
+            }
+            if (code < 300 || code >= 400 || !loc) return r;
+            const next = this.resolveUrl(url, loc);
+            trail.push(`${code}→${next.replace(/^https?:\/\//, "").substring(0, 40)}`);
+            if (next === url && hop > 2) break;
+            url = next;
+        }
+        throw new Error(`넘김 반복: ${trail.join(" ")}`);
+    }
+
+    resolveUrl(base, target) {
+        const t = String(target || "").trim();
+        if (/^https?:\/\//.test(t)) return t;
+        if (t.startsWith("//")) return `https:${t}`;
+        const origin = (/^(https?:\/\/[^/]+)/.exec(base) || [null, ""])[1];
+        if (t.startsWith("/")) return origin + t;
+        return base.replace(/[?#].*$/, "").replace(/[^/]*$/, "") + t;
     }
 
     // 목록·검색·홈 공통: 작품 링크(/detail/)가 있는 카드
