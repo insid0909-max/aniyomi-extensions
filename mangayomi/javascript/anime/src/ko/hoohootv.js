@@ -1,14 +1,14 @@
 const mangayomiSources = [{
     "name": "후후티비",
     "lang": "ko",
-    "baseUrl": "https://fo.hoohootv459.xyz",
+    "baseUrl": "https://fp.hoohootv459.xyz",
     "apiUrl": "",
     "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
     "typeSource": "single",
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.4",
+    "version": "0.1.5",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -17,7 +17,7 @@ const mangayomiSources = [{
 // Aniyomi HoohooTV.kt(후후티비)를 망가요미용으로 옮긴 소스.
 // 목록: /tv/분류, /movie/분류 (?page=N), 작품: /detail/ID/ (회차는 ?season=S&episode=E),
 // 회차 목록은 작품 페이지의 episodes-data(JSON), 영상은 플레이어(iframe) 페이지 글자 안에서 찾는다.
-const DEFAULT_BASE_URL = "https://fo.hoohootv459.xyz";
+const DEFAULT_BASE_URL = "https://fp.hoohootv459.xyz";
 const DOMAIN_RE = /^https:\/\/(?:[a-z0-9-]+\.)*hoohootv\d*\.[a-z]{2,6}$/;
 const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
     "Chrome/124.0.0.0 Mobile Safari/537.36";
@@ -154,8 +154,13 @@ class DefaultExtension extends MProvider {
                 else if (attempt === 0) await new Promise((r) => setTimeout(r, 700));
             }
         }
+        if (!res && url.startsWith(base)) {
+            // 주소 넘김 오류 = 사이트 주소(앞 두 글자)가 바뀐 경우가 많음 → 새 주소를 찾아 저장하고 다시 받음
+            const found = await this.discover(base, url.substring(base.length));
+            if (found) return found;
+        }
         if (!res) {
-            // 앱의 접속 방식으로는 주소 넘김이 꼬이는 페이지: 숨은 웹뷰(쿠키·넘김을 브라우저처럼 처리)로 받아 옴
+            // 그래도 안 되면 숨은 웹뷰(쿠키·넘김을 브라우저처럼 처리)로 받아 봄
             const html = await this.viaWebview(url, "HOOHOO TV");
             if (html) return html;
             const where = url.replace(/^https?:\/\/[^/]+/, "");
@@ -165,6 +170,43 @@ class DefaultExtension extends MProvider {
             throw new Error("사이트 보안 확인이 필요합니다. 오른쪽 위 지구본(WebView) 버튼으로 한 번 열었다 닫은 뒤 다시 불러오세요.");
         }
         return String(res.body || "");
+    }
+
+    // fo.hoohootv459.xyz → fp.hoohootv459.xyz 처럼 앞 글자가 바뀌는 주소를 찾아 봄 (다음 글자부터 차례로)
+    async discover(base, path) {
+        const m = /^https:\/\/([a-z])([a-z])\.(hoohootv\d*\.[a-z]+)$/.exec(base);
+        if (!m) return null;
+        let last = 0;
+        try {
+            last = Number(new SharedPreferences().getString("hhtv_discover_at", "0")) || 0;
+            if (Date.now() - last < 60000) return null;
+            new SharedPreferences().setString("hhtv_discover_at", String(Date.now()));
+        } catch (e) {
+            // 저장 실패는 무시
+        }
+        const abc = "abcdefghijklmnopqrstuvwxyz";
+        const start = abc.indexOf(m[2]);
+        const order = [];
+        for (let i = 1; i < 26; i++) order.push(abc[(start + i) % 26]);
+        for (const c of order) {
+            const cand = `https://${m[1]}${c}.${m[3]}`;
+            try {
+                await siteWait();
+                const r = await this.client.get(cand + path, this.headers(`${cand}/`));
+                const body = String(r.body || "");
+                if (Number(r.statusCode) === 200 && body.includes("HOOHOO TV")) {
+                    try {
+                        new SharedPreferences().setString("hhtv_auto_domain", cand);
+                    } catch (e) {
+                        // 저장 실패는 무시
+                    }
+                    return body;
+                }
+            } catch (e) {
+                // 다음 후보
+            }
+        }
+        return null;
     }
 
     // 숨은 웹뷰로 페이지를 열어, marker 글자가 나타나면 HTML 을 돌려줌 (앱이 지원하지 않거나 30초 안에 못 받으면 null)
@@ -451,7 +493,7 @@ class DefaultExtension extends MProvider {
             key: "hhtv_domain",
             editTextPreference: {
                 title: "후후티비 주소 직접 지정 (선택)",
-                summary: "비워 두면 기본 주소(https://fo.hoohootv459.xyz)를 사용합니다.",
+                summary: "비워 두면 기본 주소(https://fp.hoohootv459.xyz)를 사용합니다.",
                 value: "",
                 dialogTitle: "후후티비 주소",
                 dialogMessage: "https:// 로 시작하는 후후티비 주소 (예: https://hoohootv1.com)",
