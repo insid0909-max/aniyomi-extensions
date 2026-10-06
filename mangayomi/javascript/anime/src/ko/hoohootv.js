@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -445,6 +445,7 @@ class DefaultExtension extends MProvider {
         let referer = pageUrl;
         let target = player;
         let lastUrl = player;
+        let lastBody = "";
         let lastRef = pageUrl;
         for (let depth = 0; depth < 3 && target && !media; depth++) {
             let body = "";
@@ -454,6 +455,7 @@ class DefaultExtension extends MProvider {
                 tried.push(`${target.substring(0, 50)}(${r.statusCode})`);
                 lastUrl = target;
                 lastRef = referer;
+                lastBody = body;
             } catch (e) {
                 tried.push(`${target.substring(0, 50)}(오류)`);
                 break;
@@ -478,7 +480,17 @@ class DefaultExtension extends MProvider {
                 referer = w.referer;
             }
         }
-        if (!media) throw new Error(`영상 주소를 찾지 못했습니다. 지나간 페이지: ${tried.join(" → ")}`);
+        if (!media) {
+            // 원인 파악용: 마지막 페이지에서 영상 설정이 있을 법한 부분을 조금 보여 줌
+            const text = lastBody.replace(/\s+/g, " ");
+            const hints = ["setup(", "sources", "file", "playlist", "atob(", "eval(function", "fetch(", "/api/", "hls", "m3u8"]
+                .filter((k) => text.includes(k));
+            const at = ["setup(", "sources", "file:", "\"file\"", "playlist", "atob(", "fetch("].map((k) => text.indexOf(k)).filter((i) => i >= 0);
+            const pos = at.length ? Math.min(...at) : -1;
+            const snippet = pos >= 0 ? text.substring(Math.max(0, pos - 80), pos + 220) : text.replace(/<[^>]+>/g, " ").substring(0, 200);
+            const wv = typeof evaluateJavascriptViaWebview === "function" ? "웹뷰 결과 없음" : "웹뷰 미지원";
+            throw new Error(`영상 주소를 찾지 못했습니다. 지나간 페이지: ${tried.join(" → ")} [${wv} · 크기 ${lastBody.length} · 단서 ${hints.join(",") || "없음"}] 내용: ${snippet}`);
+        }
         const origin = (/^(https?:\/\/[^/]+)/.exec(referer) || [null, ""])[1];
         const headers = { "User-Agent": UA, "Referer": referer };
         if (origin) headers["Origin"] = origin;
