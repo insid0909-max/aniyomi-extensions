@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.8",
+    "version": "0.1.9",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -492,7 +492,9 @@ class DefaultExtension extends MProvider {
             const pos = at.length ? Math.min(...at) : -1;
             const snippet = pos >= 0 ? text.substring(Math.max(0, pos - 80), pos + 220) : text.replace(/<[^>]+>/g, " ").substring(0, 200);
             const wv = typeof evaluateJavascriptViaWebview === "function" ? "웹뷰 결과 없음" : "웹뷰 미지원";
-            throw new Error(`영상 주소를 찾지 못했습니다. 지나간 페이지: ${tried.join(" → ")} [${wv} · 크기 ${lastBody.length} · 단서 ${hints.join(",") || "없음"}] 내용: ${snippet}`);
+            // 재생 오류 화면은 앞부분만 보이므로 진단 내용을 먼저 짧게
+            const clean = snippet.replace(/https?:\/\/\S{20,}/g, "(주소)").substring(0, 160);
+            throw new Error(`[단서 ${hints.join(",") || "없음"} · 크기 ${lastBody.length} · ${wv}] 내용: ${clean} … 영상 주소를 찾지 못했습니다`);
         }
         const origin = (/^(https?:\/\/[^/]+)/.exec(referer) || [null, ""])[1];
         const headers = { "User-Agent": UA, "Referer": referer };
