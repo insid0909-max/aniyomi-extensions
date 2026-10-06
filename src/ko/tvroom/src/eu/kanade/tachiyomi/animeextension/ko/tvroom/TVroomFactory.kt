@@ -40,6 +40,11 @@ class TVroomFactory : AnimeSourceFactory {
                 list.add(ErrorSource("후후티비 분류 오류", e))
             }
         }
+        try {
+            list.add(MimiTV()) // 미미티비
+        } catch (e: Throwable) {
+            list.add(ErrorSource("미미티비 오류", e))
+        }
         return list
     }
 }

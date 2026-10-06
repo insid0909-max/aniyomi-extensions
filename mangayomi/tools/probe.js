@@ -37,9 +37,13 @@ global.Client = class {
 
 // fetch 모드: node probe.js fetch "주소1 주소2 ..." → 각 주소의 본문을 문자셋(euc-kr 등)에 맞춰 저장
 async function fetchMode(urls) {
-    for (const url of urls.split(/\s+/).filter((u) => u)) {
+    for (const item of urls.split(/\s+/).filter((u) => u)) {
+        // "주소|Referer" 로 쓰면 Referer 를 붙여 요청
+        const [url, referer] = item.split("|");
         try {
-            const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36" }, redirect: "follow" });
+            const headers = { "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36" };
+            if (referer) headers.Referer = referer;
+            const res = await fetch(url, { headers, redirect: "follow" });
             const buf = Buffer.from(await res.arrayBuffer());
             const head = buf.toString("latin1");
             const cs = (/charset=["']?([\w-]+)/i.exec(res.headers.get("content-type") || "") || /<meta[^>]+charset=["']?([\w-]+)/i.exec(head) || [null, "utf-8"])[1];
