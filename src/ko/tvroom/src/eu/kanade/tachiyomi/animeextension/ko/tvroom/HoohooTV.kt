@@ -487,7 +487,9 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                 webViewRef = webView
                 webView.settings.javaScriptEnabled = true
                 webView.settings.domStorageEnabled = true
-                webView.settings.mediaPlaybackRequiresUserGesture = false
+                // 먼저 자동 재생을 막은 채로 열어 영상 주소만 찾음 (숨은 화면에서 소리가 나면
+                // 앱 플레이어가 음량 변화로 보고 음량 막대를 띄우므로). 못 찾으면 아래에서 자동 재생을 켜고 다시 연다
+                webView.settings.mediaPlaybackRequiresUserGesture = true
                 webView.settings.userAgentString = USER_AGENT
                 // 그림은 받지 않아 영상 주소를 더 빨리 찾음
                 webView.settings.blockNetworkImage = true
@@ -518,7 +520,16 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             }
         }
 
-        latch.await(25, TimeUnit.SECONDS)
+        if (!latch.await(12, TimeUnit.SECONDS)) {
+            // 재생을 눌러야만 영상 주소를 받는 플레이어: 자동 재생을 켜고 다시 열어 봄
+            handler.post {
+                runCatching {
+                    webViewRef?.settings?.mediaPlaybackRequiresUserGesture = false
+                    webViewRef?.loadUrl(url, mapOf("Referer" to referer))
+                }
+            }
+            latch.await(15, TimeUnit.SECONDS)
+        }
         handler.post {
             webViewRef?.stopLoading()
             webViewRef?.destroy()
