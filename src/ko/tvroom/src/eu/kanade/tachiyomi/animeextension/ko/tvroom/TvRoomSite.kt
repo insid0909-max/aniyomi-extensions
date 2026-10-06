@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
+import android.util.Base64
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -41,7 +42,8 @@ import java.util.concurrent.TimeUnit
 
 /**
  * 티비룸 (tvroomNN.org).
- * 웹뷰 식별자를 제거한 순수 Chrome User-Agent와 세션 쿠키를 전달하여 CDN 차단을 방지합니다.
+ * - 웹뷰 자동 재생을 즉시 활성화하여 15초 대기 지연을 해소합니다.
+ * - m3u8에 #EXT-X-ENDLIST 태그를 보장하여 라이브 오인식 및 재생바 튕김 버그를 해결합니다.
  */
 class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
 
@@ -49,7 +51,7 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
     override val lang = "ko"
     override val supportsLatest = true
 
-    // ================= 기기 브라우저 User-Agent (웹뷰 식별자 제거) =================
+    // ================= 기기 브라우저 User-Agent =================
     private val systemUserAgent: String by lazy {
         runCatching {
             val app = Class.forName("android.app.ActivityThread")
@@ -352,9 +354,46 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
             ?: throw Exception("영상 주소를 찾지 못했습니다: $player")
 
         val headers = videoHeaders(referer, cookie)
+
+        // #EXT-X-ENDLIST 태그를 보장하여 VOD 모드로 강제 (재생바 뒤로 당김 가능 및 처음부터 재생)
+        val playableUrl = fixVodPlaylist(media, headers)
+
         return listOf(
-            Video(media, "티비룸 (HLS)", media, headers)
+            Video(playableUrl, "티비룸 (HLS)", playableUrl, headers)
         )
+    }
+
+    /**
+     * m3u8 플레이리스트의 상대 경로를 절대 경로로 바꾸고, 맨 끝에 #EXT-X-ENDLIST를 추가하여
+     * MPV 플레이어가 실시간 라이브로 오인해 끝으로 점프하는 현상을 원천 방지합니다.
+     */
+    private fun fixVodPlaylist(m3u8Url: String, headers: Headers): String {
+        return runCatching {
+            client.newCall(GET(m3u8Url, headers)).execute().use { res ->
+                if (!res.isSuccessful) return@use m3u8Url
+                val body = res.body.string()
+                if (!body.contains("#EXTM3U")) return@use m3u8Url
+
+                val base = res.request.url
+                val modifiedLines = body.lines().map { line ->
+                    val trimmed = line.trim()
+                    if (trimmed.isNotEmpty() && !trimmed.startsWith("#")) {
+                        base.resolve(trimmed)?.toString() ?: trimmed
+                    } else {
+                        line
+                    }
+                }.toMutableList()
+
+                // 라이브 스트림으로 오인되지 않도록 VOD 종료 태그 보장
+                if (!body.contains("#EXT-X-ENDLIST")) {
+                    modifiedLines.add("#EXT-X-ENDLIST")
+                }
+
+                val fixedM3u8 = modifiedLines.joinToString("\n")
+                val b64 = Base64.encodeToString(fixedM3u8.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+                "data:application/vnd.apple.mpegurl;base64,$b64"
+            }
+        }.getOrDefault(m3u8Url)
     }
 
     private fun videoHeaders(referer: String, cookie: String? = null): Headers {
@@ -390,7 +429,8 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
                 webView.settings.javaScriptEnabled = true
                 webView.settings.domStorageEnabled = true
                 webView.settings.databaseEnabled = true
-                webView.settings.mediaPlaybackRequiresUserGesture = true
+                // 즉시 자동 재생을 허용하여 12~15초 타임아웃 대기 시간을 제거
+                webView.settings.mediaPlaybackRequiresUserGesture = false
                 webView.settings.userAgentString = systemUserAgent
                 webView.settings.blockNetworkImage = true
 
@@ -433,15 +473,9 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
             }
         }
 
-        if (!latch.await(12, TimeUnit.SECONDS)) {
-            handler.post {
-                runCatching {
-                    webViewRef?.settings?.mediaPlaybackRequiresUserGesture = false
-                    webViewRef?.loadUrl(url, mapOf("Referer" to referer))
-                }
-            }
-            latch.await(15, TimeUnit.SECONDS)
-        }
+        // 즉시 자동 재생이므로 6~7초 이내에 스트림 주소가 수집됩니다.
+        latch.await(8, TimeUnit.SECONDS)
+
         handler.post {
             webViewRef?.stopLoading()
             webViewRef?.destroy()
