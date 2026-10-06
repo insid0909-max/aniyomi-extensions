@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -154,11 +154,57 @@ class DefaultExtension extends MProvider {
                 else if (attempt === 0) await new Promise((r) => setTimeout(r, 700));
             }
         }
-        if (!res) throw new Error(`접속 실패: ${url} [${errs.join(" | ")}]`);
+        if (!res) {
+            // 앱의 접속 방식으로는 주소 넘김이 꼬이는 페이지: 숨은 웹뷰(쿠키·넘김을 브라우저처럼 처리)로 받아 옴
+            const html = await this.viaWebview(url, "HOOHOO TV");
+            if (html) return html;
+            throw new Error(`접속 실패: ${url} [${errs.join(" | ")}]`);
+        }
         if (Number(res.statusCode) === 403 || Number(res.statusCode) === 503) {
             throw new Error("사이트 보안 확인이 필요합니다. 오른쪽 위 지구본(WebView) 버튼으로 한 번 열었다 닫은 뒤 다시 불러오세요.");
         }
         return String(res.body || "");
+    }
+
+    // 숨은 웹뷰로 페이지를 열어, marker 글자가 나타나면 HTML 을 돌려줌 (앱이 지원하지 않거나 30초 안에 못 받으면 null)
+    async viaWebview(url, marker, headers) {
+        if (typeof evaluateJavascriptViaWebview !== "function") return null;
+        const script = "(function(){function f(){var h=document.documentElement.outerHTML;" +
+            `if(h.indexOf(${JSON.stringify(marker)})>=0){window.flutter_inappwebview.callHandler('setResponse',h);return true;}return false;}` +
+            "if(!f()){var t=setInterval(function(){if(f())clearInterval(t);},300);}})();";
+        try {
+            const timeout = new Promise((res) => setTimeout(() => res(null), 30000));
+            const res = await Promise.race([evaluateJavascriptViaWebview(url, headers || {}, [script]), timeout]);
+            return res ? String(res) : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // 플레이어(jwplayer)를 숨은 웹뷰로 열어, 플레이어가 받은 영상 주소를 읽어 옴
+    async playerViaWebview(url, referer) {
+        if (typeof evaluateJavascriptViaWebview !== "function") return null;
+        const script = "(function(){function f(){var u='';" +
+            "try{if(window.jwplayer){var p=jwplayer();var it=p&&p.getPlaylistItem&&p.getPlaylistItem();" +
+            "if(it){u=it.file||(it.sources&&it.sources[0]&&it.sources[0].file)||'';}}}catch(e){}" +
+            "if(!u){try{var r=performance.getEntriesByType('resource');for(var i=0;i<r.length;i++){" +
+            "if(/\\.(m3u8|mp4)(\\?|$)/i.test(r[i].name)){u=r[i].name;break;}}}catch(e){}}" +
+            "if(!u){var m=document.documentElement.outerHTML.match(/https?:[^\"'\\s<>]+\\.m3u8[^\"'\\s<>]*/);if(m)u=m[0];}" +
+            "if(u){if(u.indexOf('//')===0)u=location.protocol+u;else if(u.indexOf('http')!==0)u=new URL(u,location.href).href;" +
+            "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:u,ref:location.href}));return true;}return false;}" +
+            "if(!f()){var t=setInterval(function(){if(f())clearInterval(t);},400);}})();";
+        try {
+            const timeout = new Promise((res) => setTimeout(() => res(null), 30000));
+            const res = await Promise.race([
+                evaluateJavascriptViaWebview(url, { "Referer": referer }, [script]),
+                timeout,
+            ]);
+            if (!res) return null;
+            const o = JSON.parse(String(res));
+            return o && o.u ? { url: o.u, referer: o.ref || url } : null;
+        } catch (e) {
+            return null;
+        }
     }
 
     // 자동 넘김을 끄고 Location 을 직접 따라감 (넘김 중에 받은 쿠키도 다음 요청에 실어 보냄)
@@ -372,7 +418,15 @@ class DefaultExtension extends MProvider {
             referer = target;
             target = next ? next[1].replace(/&amp;/g, "&") : null;
         }
-        if (!media) throw new Error(`영상 주소를 찾지 못했습니다 (망가요미에서는 이 플레이어를 열 수 없을 수 있습니다). 지나간 페이지: ${tried.join(" → ")}`);
+        if (!media) {
+            // 플레이어가 보안 확인(Cloudflare)을 거치거나 스크립트로 영상을 불러오는 경우: 숨은 웹뷰로 열어 읽음
+            const w = await this.playerViaWebview(player, pageUrl);
+            if (w) {
+                media = w.url;
+                referer = w.referer;
+            }
+        }
+        if (!media) throw new Error(`영상 주소를 찾지 못했습니다. 지나간 페이지: ${tried.join(" → ")}`);
         const origin = (/^(https?:\/\/[^/]+)/.exec(referer) || [null, ""])[1];
         const headers = { "User-Agent": UA, "Referer": referer };
         if (origin) headers["Origin"] = origin;
