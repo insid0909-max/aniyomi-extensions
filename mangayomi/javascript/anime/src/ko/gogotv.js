@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.15",
+    "version": "0.1.16",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -33,6 +33,9 @@ const COUNTRIES = [
 ];
 
 const RULE_SIZES = [CATEGORIES.length, SORTS.length, COUNTRIES.length];
+
+// 분류별 소스 ("고고티비 드라마" 등) 이름 → CATEGORIES 번호. 시사 = 사이트의 TV프로
+const CATEGORY_SOURCES = { "드라마": 0, "영화": 1, "예능": 2, "시사": 3, "음악프로": 4 };
 
 // 카드의 "제19회 26/10/04" · "E344 26/10/04" 에서 최근 방영일을 "10.04" 로.
 // 최종회이거나 마지막 방영이 오래된(종영으로 보이는) 작품은 붙이지 않음
@@ -270,11 +273,17 @@ class DefaultExtension extends MProvider {
         return `/${cat}${params.length ? "?" + params.join("&") : ""}`;
     }
 
+    // 분류별 소스면 그 분류 번호, 기본 고고티비 소스면 -1
+    fixedCat() {
+        const m = /^고고티비\s+(\S+)$/.exec(String((this.source && this.source.name) || ""));
+        return m && CATEGORY_SOURCES[m[1]] !== undefined ? CATEGORY_SOURCES[m[1]] : -1;
+    }
+
     // ================= 목록 =================
     async popularBase(page) {
         const saved = ruleRead("gogotv", true, RULE_SIZES);
         if (saved) return this.filterPage(page, saved);
-        return this.parseList(await this.getDoc(this.listPath("list-drama", "2", "", page)));
+        return this.filterPage(page, [Math.max(this.fixedCat(), 0), 1, 0]);
     }
 
     get supportsLatest() {
@@ -284,7 +293,7 @@ class DefaultExtension extends MProvider {
     async getLatestUpdates(page) {
         const saved = ruleRead("gogotv", false, RULE_SIZES);
         if (saved) return this.filterPage(page, saved);
-        return this.parseList(await this.getDoc(this.listPath("list-drama", "1", "", page)));
+        return this.filterPage(page, [Math.max(this.fixedCat(), 0), 0, 0]);
     }
 
     async searchBase(query, page, filters) {
@@ -304,16 +313,20 @@ class DefaultExtension extends MProvider {
             const f = filters && filters[i];
             return (f && f.state) || 0;
         };
-        const idx = [st(0), st(1), st(2)];
+        // 분류별 소스는 분류 선택이 없어서 정렬·지역이 0, 1번
+        const fixed = this.fixedCat();
+        const idx = fixed >= 0 ? [fixed, st(0), st(1)] : [st(0), st(1), st(2)];
         const ruleF = (filters || []).find((f) => f && f.name === RULE_NAME);
         ruleApply("gogotv", (ruleF && ruleF.state) || 0, idx);
         return this.filterPage(page, idx);
     }
 
-    // idx = [분류, 정렬, 지역] 선택 번호
+    // idx = [분류, 정렬, 지역] 선택 번호 (분류별 소스는 분류가 고정)
     async filterPage(page, idx) {
+        const fixed = this.fixedCat();
+        const cat = fixed >= 0 ? fixed : idx[0];
         return this.parseList(await this.getDoc(
-            this.listPath(CATEGORIES[idx[0]][1], SORTS[idx[1]][1], COUNTRIES[idx[2]][1], page)));
+            this.listPath(CATEGORIES[cat][1], SORTS[idx[1]][1], COUNTRIES[idx[2]][1], page)));
     }
 
     // 검색 결과: li > .search-page(포스터·링크) + .view-floor2-lf-cont .tit(제목, 검색어 강조 표시 포함)
@@ -612,13 +625,14 @@ class DefaultExtension extends MProvider {
             state: 0,
             values: items.map(([label, value]) => ({ type_name: "SelectOption", name: label, value: value })),
         });
-        // 검색어가 없을 때만 적용 (search()에서 0, 1, 2번 순서로 읽음)
-        return [
-            select("분류", CATEGORIES),
+        // 검색어가 없을 때만 적용 (search()에서 순서대로 읽음. 분류별 소스는 분류 선택 없음)
+        const fixed = this.fixedCat();
+        const catName = fixed >= 0 ? CATEGORIES[fixed][0].replace("TV프로", "시사") : "드라마";
+        return (fixed >= 0 ? [] : [select("분류", CATEGORIES)]).concat([
             select("정렬", SORTS),
             select("지역", COUNTRIES),
-        ].concat(ruleFilters("gogotv", RULE_SIZES, ["드라마 · 주간인기순", "드라마 · 업데이트순"],
-            (i) => `${CATEGORIES[i[0]][0]} · ${SORTS[i[1]][0]} · ${COUNTRIES[i[2]][0]}`));
+        ]).concat(ruleFilters("gogotv", RULE_SIZES, [`${catName} · 주간인기순`, `${catName} · 업데이트순`],
+            (i) => (fixed >= 0 ? "" : `${CATEGORIES[i[0]][0]} · `) + `${SORTS[i[1]][0]} · ${COUNTRIES[i[2]][0]}`));
     }
 
     // ---------- 상태 표시 ----------
