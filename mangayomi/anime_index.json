@@ -210,7 +210,7 @@
     "hasCloudflare": true,
     "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/mangayomi/javascript/anime/src/ko/hoohootv.js",
     "apiUrl": "",
-    "version": "0.1.9",
+    "version": "0.1.10",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
