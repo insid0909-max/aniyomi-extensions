@@ -517,12 +517,7 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
         val ctx = screen.context
         if (fixedCat >= 0) {
-            // 분류별 소스: 주소 설정은 기본 "고고티비" 소스 설정에서 (같이 적용됨)
-            androidx.preference.Preference(ctx).apply {
-                title = "사이트 주소 · 도메인 자동 찾기"
-                summary = "기본 \"고고티비\" 소스의 설정을 같이 씁니다.\n현재 주소: $baseUrl"
-                isSelectable = false
-            }.also(screen::addPreference)
+            // 분류별 소스: 주소·도메인 자동 찾기는 기본 "고고티비" 소스 설정에서 (같이 적용됨)
             HlsQuality.addPreference(screen)
             return
         }
