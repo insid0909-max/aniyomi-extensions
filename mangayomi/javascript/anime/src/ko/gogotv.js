@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.16",
+    "version": "0.1.17",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -66,6 +66,17 @@ async function siteWait() {
 const QUALITY_CHOICES = ["자동", "1080p", "720p", "480p", "360p"];
 
 // HLS 마스터 목록에 화질이 여러 개면 각각 따로 고를 수 있게 나눔. 하나뿐이거나 읽지 못하면 그대로
+// 이 헤더로 영상 주소가 실제로 열리는지 (m3u8 이면 내용까지 확인)
+async function mediaWorks(client, url, headers) {
+    try {
+        const res = await client.get(url, headers);
+        if (Number(res.statusCode) >= 400) return false;
+        return !url.includes(".m3u8") || String(res.body || "").trim().startsWith("#EXTM3U");
+    } catch (e) {
+        return false;
+    }
+}
+
 async function hlsExpand(client, url, label, headers) {
     const one = [{ url, originalUrl: url, quality: label, headers }];
     if (!url.includes(".m3u8")) return one;
@@ -479,29 +490,50 @@ class DefaultExtension extends MProvider {
             throw new Error(`영상 주소를 찾지 못했습니다. 지나간 페이지: ${trail.join(" → ") || url}`);
         }
 
-        const origin = (/^(https?:\/\/[^/]+)/.exec(found.referer) || [null, ""])[1];
-        const headers = { "User-Agent": UA, "Referer": found.referer };
+        const headers = this.videoHeaders(found.referer);
+        const qOf = (u) => (u.includes(".m3u8") ? "고고티비 (HLS)" : "고고티비");
+        // 같은 페이지에 영상 주소가 여러 개면 실제로 열리는 것을 먼저 쓰고, 나머지는 "(대체 N)" 으로 뒤에 붙임
+        const candidates = (found.all || [found.url]).slice(0, 4);
+        const working = [];
+        for (const u of candidates) if (await mediaWorks(this.client, u, headers)) working.push(u);
+        const main = working[0] || found.url;
+        const extras = working.filter((u) => u !== main)
+            .map((u, i) => ({ url: u, originalUrl: u, quality: `${qOf(u)} (대체 ${i + 1})`, headers }));
+        return qualitySort("gogotv_quality", await hlsExpand(this.client, main, qOf(main), headers)).concat(extras);
+    }
+
+    videoHeaders(referer) {
+        const origin = (/^(https?:\/\/[^/]+)/.exec(referer) || [null, ""])[1];
+        const headers = { "User-Agent": UA, "Referer": referer };
         if (origin) headers["Origin"] = origin;
-        const quality = found.url.includes(".m3u8") ? "고고티비 (HLS)" : "고고티비";
-        return qualitySort("gogotv_quality", await hlsExpand(this.client, found.url, quality, headers));
+        return headers;
     }
 
     async crawl(url, referer, depth, visited, trail) {
         if (depth > 3 || visited[url] || Object.keys(visited).length >= 12) return null;
         visited[url] = true;
 
-        let body;
-        try {
-            const res = await this.client.get(url, this.headers(referer));
-            body = String(res.body || "");
-            trail.push(`${this.shortUrl(url)}(${res.statusCode})`);
-        } catch (e) {
-            trail.push(`${this.shortUrl(url)}(오류)`);
-            return null;
+        let body = null;
+        // 연결 끊김·시간 초과면 잠깐 쉬고 한 번 더
+        for (let attempt = 0; attempt < 2 && body === null; attempt++) {
+            try {
+                const res = await this.client.get(url, this.headers(referer));
+                body = String(res.body || "");
+                trail.push(`${this.shortUrl(url)}(${res.statusCode})`);
+            } catch (e) {
+                trail.push(`${this.shortUrl(url)}(오류)`);
+                if (attempt === 0) await new Promise((r) => setTimeout(r, 700));
+            }
         }
+        if (body === null) return null;
 
         const media = this.findMedia(body);
-        if (media) return { url: media, referer: url };
+        if (media) {
+            const text = body.replace(/\\\//g, "/");
+            const all = [media].concat(text.match(new RegExp(MEDIA_RE.source, "gi")) || [])
+                .filter((u, i, a) => a.indexOf(u) === i);
+            return { url: media, all, referer: url };
+        }
 
         for (const next of this.nextTargets(body, url)) {
             const found = await this.crawl(next, url, depth + 1, visited, trail);
