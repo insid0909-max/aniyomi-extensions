@@ -41,7 +41,8 @@ import java.util.concurrent.TimeUnit
 
 /**
  * 티비룸 (tvroomNN.org).
- * 브라우저 환경과 동일한 User-Agent 및 Fetch 헤더를 모방하여 CDN 차단을 방지합니다.
+ * 브라우저 환경과 동일한 User-Agent 및 필수 헤더를 전달하며, 
+ * 1회성 토큰 소진을 방지하기 위해 MPV 플레이어로 직접 스트림을 연결합니다.
  */
 class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
 
@@ -349,7 +350,11 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
         val (media, referer, cookie) = sniffWithWebView(player, pageUrl)
             ?: throw Exception("영상 주소를 찾지 못했습니다: $player")
 
-        return HlsQuality.sort(prefs(), HlsQuality.expand(client, media, "티비룸 (HLS)", videoHeaders(referer, cookie)))
+        // 1회성 토큰 소진 방지를 위해 중간 파싱(expand) 없이 원본 헤더와 함께 MPV에 직접 전달
+        val headers = videoHeaders(referer, cookie)
+        return listOf(
+            Video(media, "티비룸 (HLS)", media, headers)
+        )
     }
 
     private fun videoHeaders(referer: String, cookie: String? = null): Headers {
@@ -359,10 +364,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
             .set("User-Agent", systemUserAgent)
             .set("Referer", referer)
             .set("Accept", "*/*")
-            .set("Accept-Language", "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7")
-            .set("Sec-Fetch-Dest", "empty")
-            .set("Sec-Fetch-Mode", "cors")
-            .set("Sec-Fetch-Site", "cross-site")
             .apply {
                 if (origin != null) set("Origin", origin)
                 if (!cookie.isNullOrEmpty()) set("Cookie", cookie)
@@ -390,7 +391,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
                 webView.settings.domStorageEnabled = true
                 webView.settings.databaseEnabled = true
                 webView.settings.mediaPlaybackRequiresUserGesture = true
-                // 브라우저와 동일한 User-Agent 사용
                 webView.settings.userAgentString = systemUserAgent
                 webView.settings.blockNetworkImage = true
 
@@ -494,8 +494,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
             summary = "접속이 안 되거나 막히면 다음 티비룸 주소(tvroom36 → tvroom37 …)를 찾아 자동 변경합니다."
             setDefaultValue(true)
         }.also(screen::addPreference)
-
-        HlsQuality.addPreference(screen)
     }
 
     private fun Response.asDoc(): Document = Jsoup.parse(body.string(), request.url.toString())
