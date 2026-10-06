@@ -429,7 +429,7 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         val quality = qualityOf(media)
         // 열리는 다른 후보는 "(대체 N)" 으로 뒤에 붙여 플레이어에서 바로 바꿀 수 있게
         val extras = working.filter { it != media }.mapIndexed { i, u ->
-            Video(u, "${qualityOf(u)} (대체 ${i + 1})", u, videoHeaders(pageUrl))
+            Video(u, "${HlsQuality.withRes(qualityOf(u), u)} (대체 ${i + 1})", u, videoHeaders(pageUrl))
         }
         return HlsQuality.sort(prefs(), HlsQuality.expand(client, media, quality, vh)) + extras
     }
