@@ -379,7 +379,7 @@ class HoohooTV : AnimeHttpSource(), ConfigurableAnimeSource {
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
         private const val PREF_SEARCH_PARAM = "pref_search_param"
-        private const val DEFAULT_BASE_URL = "https://fo.hoohootv459.xyz"
+        private const val DEFAULT_BASE_URL = "https://fp.hoohootv459.xyz"
         private const val RATE_GAP_MS = 350L
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
