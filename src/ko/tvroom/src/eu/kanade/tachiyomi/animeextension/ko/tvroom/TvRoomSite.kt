@@ -41,8 +41,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * 티비룸 (tvroomNN.org).
- * 브라우저 환경과 동일한 User-Agent 및 필수 헤더를 전달하며, 
- * 1회성 토큰 소진을 방지하기 위해 MPV 플레이어로 직접 스트림을 연결합니다.
+ * 웹뷰 식별자를 제거한 순수 Chrome User-Agent와 세션 쿠키를 전달하여 CDN 차단을 방지합니다.
  */
 class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
 
@@ -50,12 +49,14 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
     override val lang = "ko"
     override val supportsLatest = true
 
-    // ================= 기기 브라우저 User-Agent =================
+    // ================= 기기 브라우저 User-Agent (웹뷰 식별자 제거) =================
     private val systemUserAgent: String by lazy {
         runCatching {
             val app = Class.forName("android.app.ActivityThread")
                 .getMethod("currentApplication").invoke(null) as Application
             WebSettings.getDefaultUserAgent(app)
+                .replace(Regex("""Version/\d+\.\d+\s*"""), "")
+                .replace("; wv", "")
         }.getOrDefault(DEFAULT_UA)
     }
 
@@ -350,7 +351,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
         val (media, referer, cookie) = sniffWithWebView(player, pageUrl)
             ?: throw Exception("영상 주소를 찾지 못했습니다: $player")
 
-        // 1회성 토큰 소진 방지를 위해 중간 파싱(expand) 없이 원본 헤더와 함께 MPV에 직접 전달
         val headers = videoHeaders(referer, cookie)
         return listOf(
             Video(media, "티비룸 (HLS)", media, headers)
