@@ -8,6 +8,7 @@ import android.os.Looper
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -40,15 +41,22 @@ import java.util.concurrent.TimeUnit
 
 /**
  * 티비룸 (tvroomNN.org).
- * 목록: /video/분류/지역/정렬?page=N, 검색: /search/검색어, 작품: /video/작품, 회차: /video/작품/회차.
- * 사이트에 Cloudflare 확인 화면이 있어 애니요미 기본 기능(cloudflareClient)으로 휴대폰에서 통과한다.
- * 영상은 플레이어(iframe)가 실행되며 정하는 주소라 숨은 화면(WebView)으로 플레이어를 열어 영상 요청을 받는다.
+ * 브라우저 환경과 동일한 User-Agent 및 Fetch 헤더를 모방하여 CDN 차단을 방지합니다.
  */
 class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
 
     override val name = "티비룸"
     override val lang = "ko"
     override val supportsLatest = true
+
+    // ================= 기기 브라우저 User-Agent =================
+    private val systemUserAgent: String by lazy {
+        runCatching {
+            val app = Class.forName("android.app.ActivityThread")
+                .getMethod("currentApplication").invoke(null) as Application
+            WebSettings.getDefaultUserAgent(app)
+        }.getOrDefault(DEFAULT_UA)
+    }
 
     // ================= 주소와 설정 =================
     private fun prefs(): SharedPreferences? = runCatching {
@@ -68,7 +76,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
         .addInterceptor(PageCache(Regex("^/video/[^/]+")))
         .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS))
         .addInterceptor { chain ->
-            // 사이트가 새 주소로 넘겨 주면 그 주소를 저장 (다음부터 바로 새 주소로)
             val res = chain.proceed(chain.request())
             val from = chain.request().url.host
             val to = res.request.url.host
@@ -82,10 +89,8 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
         .build()
 
     // ================= 도메인 자동 찾기 =================
-    // 주소가 tvroom36.org → tvroom37.org 처럼 숫자가 바뀜. 접속이 안 되거나 막히면 다음 숫자 주소를 열어 보고 저장한다.
     private fun autoDomain(): Boolean = prefs()?.getBoolean(PREF_AUTO_DOMAIN, true) ?: true
 
-    /** Cloudflare 확인 화면(휴대폰에서 통과하면 되는 것)은 사이트가 살아 있는 것으로 봄 */
     private fun isCfChallenge(res: Response) = res.header("cf-mitigated") != null
 
     private fun domainIntercept(chain: okhttp3.Interceptor.Chain): Response {
@@ -135,7 +140,7 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
             val futures = candidates.map { host ->
                 pool.submit<String?> {
                     runCatching {
-                        val r = Request.Builder().url("https://$host/").header("User-Agent", USER_AGENT).build()
+                        val r = Request.Builder().url("https://$host/").header("User-Agent", systemUserAgent).build()
                         plain.newCall(r).execute().use { res ->
                             val fh = res.request.url.host
                             val ok = HOST_REGEX.matches(fh) &&
@@ -155,7 +160,7 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
-        .set("User-Agent", USER_AGENT)
+        .set("User-Agent", systemUserAgent)
         .set("Referer", "$baseUrl/")
 
     private fun h(): Headers = headersBuilder().build()
@@ -175,7 +180,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
     private fun savedRule(popular: Boolean, page: Int): Request? =
         TabRule.read(prefs(), popular, ruleSizes())?.let { GET(listUrl(it[0], it[1], it[2], page), h()) }
 
-    // 기본: 인기 = 드라마 인기순, 최신 = 드라마 시간순 (필터의 "인기/최신 탭 규칙"으로 바꿀 수 있음)
     override fun popularAnimeRequest(page: Int): Request = savedRule(true, page) ?: GET(listUrl(DEFAULT_CAT, 0, 1, page), h())
 
     override fun popularAnimeParse(response: Response): AnimesPage = parseList(response.asDoc())
@@ -185,7 +189,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
     override fun latestUpdatesParse(response: Response): AnimesPage = parseList(response.asDoc())
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
-        // 작품·회차 주소를 붙여 넣으면 그 작품을 바로 열기
         animePathOf(query.trim())?.let { return GET(baseUrl + it, h()) }
         if (query.isNotBlank()) {
             val url = "$baseUrl/search".toHttpUrl().newBuilder()
@@ -203,7 +206,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
         return GET(listUrl(cat, region, sort, page), h())
     }
 
-    /** "https://tvroom36.org/video/군체-2026/본-편" → "/video/군체-2026" (주소가 아니면 null) */
     private fun animePathOf(text: String): String? {
         val url = text.toHttpUrlOrNull() ?: return null
         if (!HOST_REGEX.matches(url.host)) return null
@@ -222,11 +224,9 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
         return parseList(response.asDoc())
     }
 
-    /** 목록 카드(.module-item)와 검색 결과(.search-result-item) 공통 */
     private fun parseList(doc: Document): AnimesPage {
         val seen = HashSet<String>()
         val cards = doc.select(".module-item, .search-result-item")
-            // 화면 맨 위 추천 슬라이드·작품 페이지의 추천 영상은 빼고 본 목록만
             .filterNot { it.parents().any { p -> p.hasClass("owl-carousel") } }
         val animes = cards.mapNotNull { item ->
             val a = item.selectFirst("a.v-item-hitarea[href], a.search-result-item-hitarea[href]") ?: return@mapNotNull null
@@ -245,7 +245,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
         return AnimesPage(animes, hasNext)
     }
 
-    /** 그림 주소 (늦게 불러오는 그림은 data-src, 빈 자리 그림은 제외) */
     private fun imgOf(img: Element): String? =
         listOf(img.absUrl("data-src"), img.absUrl("src")).firstOrNull { it.isNotEmpty() && !it.contains("/resource/image/") }
 
@@ -268,7 +267,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
             author = infoRow(doc, "감독")
             artist = infoRow(doc, "출연")
             if (eps.size <= 1 && eps.firstOrNull()?.text()?.replace(" ", "")?.contains("본편") != false) {
-                // 영화(본편 하나): 다시 확인할 필요 없음
                 status = SAnime.COMPLETED
                 update_strategy = AnimeUpdateStrategy.ONLY_FETCH_ONCE
             } else {
@@ -277,7 +275,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
         }
     }
 
-    /** "장르:", "감독:" 같은 항목 값 */
     private fun infoRow(doc: Document, key: String): String? = doc.select(".detail-info-row")
         .firstOrNull { it.selectFirst(".detail-info-row-side")?.text()?.contains(key) == true }
         ?.selectFirst(".detail-info-row-main")?.text()?.trim()?.ifEmpty { null }
@@ -293,7 +290,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
             Triple(url.encodedPath, label, EP_NUM_REGEX.find(label)?.groupValues?.get(1)?.toFloatOrNull())
         }.distinctBy { it.first }
         if (items.isEmpty()) {
-            // 회차 목록이 없으면 지금 페이지 하나
             return listOf(
                 SEpisode.create().apply {
                     url = response.request.url.encodedPath
@@ -302,7 +298,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
                 },
             )
         }
-        // 오래된 회차가 1번: 번호가 있으면 번호 순, 없으면 사이트 순서
         val ordered = if (items.all { it.third != null }) items.sortedBy { it.third } else items
         return ordered.mapIndexed { i, (path, label, num) ->
             SEpisode.create().apply {
@@ -322,7 +317,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
         }.reversed()
     }
 
-    /** "2026-09-29", "26.09.29", "260929" → 한국시간 그날 0시 (없으면 0) */
     private fun dateOf(text: String): Long {
         val (y, mo, d) = DATE_REGEX.find(text)?.let {
             Triple(it.groupValues[1].toInt(), it.groupValues[2].toInt(), it.groupValues[3].toInt())
@@ -359,11 +353,16 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     private fun videoHeaders(referer: String, cookie: String? = null): Headers {
-        val origin = referer.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" }
+        val refererUrl = referer.toHttpUrlOrNull()
+        val origin = refererUrl?.let { "${it.scheme}://${it.host}" }
         return Headers.Builder()
-            .set("User-Agent", USER_AGENT)
+            .set("User-Agent", systemUserAgent)
             .set("Referer", referer)
             .set("Accept", "*/*")
+            .set("Accept-Language", "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7")
+            .set("Sec-Fetch-Dest", "empty")
+            .set("Sec-Fetch-Mode", "cors")
+            .set("Sec-Fetch-Site", "cross-site")
             .apply {
                 if (origin != null) set("Origin", origin)
                 if (!cookie.isNullOrEmpty()) set("Cookie", cookie)
@@ -371,7 +370,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
             .build()
     }
 
-    /** 영상 목록 요청인지 (주소가 .m3u8 로 끝나거나 /m3u8/ 경로) */
     private fun isMedia(path: String): Boolean = path.endsWith(".m3u8") || path.contains("/m3u8/") || path.endsWith(".mp4")
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -392,7 +390,8 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
                 webView.settings.domStorageEnabled = true
                 webView.settings.databaseEnabled = true
                 webView.settings.mediaPlaybackRequiresUserGesture = true
-                webView.settings.userAgentString = USER_AGENT
+                // 브라우저와 동일한 User-Agent 사용
+                webView.settings.userAgentString = systemUserAgent
                 webView.settings.blockNetworkImage = true
 
                 val cookieManager = CookieManager.getInstance()
@@ -508,9 +507,8 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
         private val DISCOVER_LOCK = Any()
         private const val DEFAULT_BASE_URL = "https://tvroom36.org"
         private const val RATE_GAP_MS = 350L
-        private const val USER_AGENT =
-            "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
-                "Chrome/124.0.0.0 Mobile Safari/537.36"
+        private const val DEFAULT_UA =
+            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
 
         private val DOMAIN_REGEX = Regex("""^https://(?:www\.)?tvroom\d+\.[a-z]{2,6}$""")
         private val HOST_REGEX = Regex("""^(?:www\.)?tvroom\d+\.[a-z]{2,6}$""")
@@ -520,7 +518,6 @@ class TvRoomSite : AnimeHttpSource(), ConfigurableAnimeSource {
         private val SHORT_DATE_REGEX = Regex("""(?<!\d)(\d{2})[.]?(\d{2})[.]?(\d{2})(?!\d)""")
         private val LABEL_DATE_REGEX = Regex("""\s*\(?(?:20)?\d{2}[-.]?\d{2}[-.]?\d{2}\)?""")
 
-        /** 분류 이름 → 주소 */
         private val CATEGORIES = listOf(
             "영화" to "영화",
             "드라마" to "드라마",
