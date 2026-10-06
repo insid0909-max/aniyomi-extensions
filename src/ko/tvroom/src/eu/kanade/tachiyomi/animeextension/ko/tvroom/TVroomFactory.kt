@@ -45,6 +45,11 @@ class TVroomFactory : AnimeSourceFactory {
         } catch (e: Throwable) {
             list.add(ErrorSource("미미티비 오류", e))
         }
+        try {
+            list.add(TvRoomSite()) // 티비룸
+        } catch (e: Throwable) {
+            list.add(ErrorSource("티비룸 오류", e))
+        }
         return list
     }
 }
