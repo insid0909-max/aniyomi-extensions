@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.11",
+    "version": "0.1.12",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -248,10 +248,14 @@ class DefaultExtension extends MProvider {
         const started = Date.now();
         try {
             const timeout = new Promise((res) => setTimeout(() => res(null), 25000));
-            const res = await Promise.race([
-                evaluateJavascriptViaWebview(url, { "Referer": referer }, [script]),
-                timeout,
-            ]);
+            // 앱마다 웹뷰 기능이 받는 값이 달라 오류가 나면 헤더 없이 한 번 더
+            let res;
+            try {
+                res = await Promise.race([evaluateJavascriptViaWebview(url, { "Referer": referer }, [script]), timeout]);
+            } catch (e1) {
+                this.wvDiag.push(`1차 ${String((e1 && e1.message) || e1).substring(0, 40)}`);
+                res = await Promise.race([evaluateJavascriptViaWebview(url, {}, [script]), timeout]);
+            }
             const host = url.replace(/^https?:\/\//, "").split("/")[0];
             if (!res) {
                 this.wvDiag.push(`${host}: 응답 없음 ${Math.round((Date.now() - started) / 1000)}초`);
