@@ -22,14 +22,6 @@ class TVroomFactory : AnimeSourceFactory {
         } catch (e: Throwable) {
             list.add(ErrorSource("고고티비 오류", e))
         }
-        // 고고티비 분류별 소스 (번호 = GogoTV 의 분류 순서): 드라마, 예능, 시사(TV프로), 음악프로, 영화
-        for (cat in listOf(0, 2, 3, 4, 1)) {
-            try {
-                list.add(GogoTV(cat))
-            } catch (e: Throwable) {
-                list.add(ErrorSource("고고티비 분류 오류", e))
-            }
-        }
         try {
             list.add(TVchak()) // 티비착
         } catch (e: Throwable) {
