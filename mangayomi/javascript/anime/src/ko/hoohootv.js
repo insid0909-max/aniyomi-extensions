@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.7",
+    "version": "0.1.8",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -461,8 +461,11 @@ class DefaultExtension extends MProvider {
                 break;
             }
             const m = MEDIA_RE.exec(body);
-            if (m) {
-                media = m[0];
+            // creatorofvideo 플레이어는 "/hls/…/master.m3u8?token=…" 처럼 앞부분 없는 주소를 쓰기도 함
+            const rel = m ? null : /["'`]((?:\/|\.\.?\/)[^"'`\s<>]*\.m3u8[^"'`\s<>]*)["'`]/.exec(body);
+            if (m || rel) {
+                media = m ? m[0] : this.resolveUrl(target, rel[1]);
+                media = media.replace(/&amp;/g, "&").replace(/\\u0026/g, "&");
                 referer = target;
                 break;
             }
