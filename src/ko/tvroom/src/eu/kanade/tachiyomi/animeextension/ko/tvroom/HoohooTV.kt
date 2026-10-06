@@ -200,7 +200,10 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         }
         if (query.isNotBlank()) {
             val url = "$baseUrl/search".toHttpUrl().newBuilder()
-                .addQueryParameter(searchParam(), query.trim())
+                // 사이트 검색창과 같은 방식: 제목·시즌 제목·태그에서 찾기
+                .addQueryParameter("sfl", "common_title||season_title||tag_title")
+                .addQueryParameter("sop", "and")
+                .addQueryParameter("query", query.trim())
                 .apply { if (page > 1) addQueryParameter("page", page.toString()) }
                 .build()
             return GET(url.toString(), h())
@@ -208,24 +211,6 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         val cat = filters.filterIsInstance<CategoryFilter>().firstOrNull()?.state ?: 0
         filters.filterIsInstance<TabRule.RuleFilter>().firstOrNull()?.let { TabRule.apply(ownPrefs(), it.state, intArrayOf(cat)) }
         return GET(listUrl(categories().getOrElse(cat) { categories()[0] }.second, page), h())
-    }
-
-    /** 검색 주소의 검색어 이름 (처음 한 번 맞는 것을 찾아 기억) */
-    private fun searchParam(): String {
-        prefs()?.getString(PREF_SEARCH_PARAM, null)?.let { return it }
-        for (p in SEARCH_PARAMS) {
-            val ok = runCatching {
-                val url = "$baseUrl/search".toHttpUrl().newBuilder().addQueryParameter(p, "사랑").build()
-                client.newCall(GET(url.toString(), h())).execute().use { res ->
-                    res.isSuccessful && parseList(Jsoup.parse(res.body.string(), url.toString())).animes.isNotEmpty()
-                }
-            }.getOrDefault(false)
-            if (ok) {
-                prefs()?.edit()?.putString(PREF_SEARCH_PARAM, p)?.apply()
-                return p
-            }
-        }
-        return SEARCH_PARAMS.first()
     }
 
     override fun searchAnimeParse(response: Response): AnimesPage {
@@ -241,7 +226,9 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
     /** 목록·검색·홈 공통: 작품 링크(/detail/)가 있는 카드 */
     private fun parseList(doc: Document): AnimesPage {
         val seen = HashSet<String>()
-        val animes = doc.select("a.thumb[href*=/detail/]").mapNotNull { a ->
+        // 목록은 a.thumb, 검색 결과 등 다른 모양이면 그림이 든 작품 링크
+        val links = doc.select("a.thumb[href*=/detail/]").ifEmpty { doc.select("a[href*=/detail/]:has(img)") }
+        val animes = links.mapNotNull { a ->
             val path = DETAIL_REGEX.find(a.attr("href"))?.let { "/detail/${it.groupValues[1]}/" } ?: return@mapNotNull null
             if (!seen.add(path)) return@mapNotNull null
             val img = a.selectFirst("img")
@@ -249,7 +236,9 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             SAnime.create().apply {
                 url = path
                 title = box?.selectFirst(".subject a")?.text()?.trim()?.ifEmpty { null }
-                    ?: img?.attr("alt")?.trim().orEmpty()
+                    ?: img?.attr("alt")?.trim()?.ifEmpty { null }
+                    ?: a.attr("title").trim().ifEmpty { null }
+                    ?: box?.selectFirst("a[href*=/detail/]:not(:has(img))")?.text()?.trim().orEmpty()
                 thumbnail_url = img?.let { it.absUrl("data-src").ifEmpty { it.absUrl("src") } }?.ifEmpty { null }
             }
         }.filter { it.title.isNotEmpty() }
@@ -606,7 +595,6 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                 val input = (newValue as String).trim().trimEnd('/')
                 if (input.isEmpty() || DOMAIN_REGEX.matches(input)) {
                     summary = "현재 주소: ${input.ifEmpty { DEFAULT_BASE_URL }}"
-                    prefs()?.edit()?.remove(PREF_SEARCH_PARAM)?.apply()
                     true
                 } else {
                     Toast.makeText(ctx, "올바른 주소 형식이 아닙니다 (예: https://hoohootv1.com)", Toast.LENGTH_LONG).show()
@@ -629,7 +617,6 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
 
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
-        private const val PREF_SEARCH_PARAM = "pref_search_param"
         private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
         private const val SITE_MARKER = "HOOHOO TV"
         private val DISCOVER_LOCK = Any()
@@ -649,7 +636,6 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             """https?://[^"'\s<>\\]+\.(?:m3u8|mp4)(?:\?[^"'\s<>\\]*)?""",
             RegexOption.IGNORE_CASE,
         )
-        private val SEARCH_PARAMS = listOf("q", "query", "keyword", "search", "s")
 
         const val KIND_ALL = 0
         const val KIND_MOVIE = 1
