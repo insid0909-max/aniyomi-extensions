@@ -41,10 +41,10 @@ internal object HlsQuality {
                 for (line in lines) {
                     if (line.startsWith("#EXT-X-STREAM-INF:")) {
                         currentHeight = HEIGHT_REGEX.find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 720
-                    } else if (line.isNotEmpty() && !line.startsWith("#")) {
+                    } else if (currentHeight != null && line.isNotEmpty() && !line.startsWith("#")) {
+                        // #EXT-X-STREAM-INF 바로 다음 줄만 화질 주소 (단일 화질 목록의 영상 조각 주소는 제외)
                         val subUrl = base.resolve(line)?.toString() ?: line
-                        val h = currentHeight ?: 720
-                        list.add(h to subUrl)
+                        list.add(currentHeight to subUrl)
                         currentHeight = null
                     }
                 }
@@ -58,8 +58,8 @@ internal object HlsQuality {
         }
 
         // 서브 스트림 목록 생성 (서브 스트림 URL로 직접 재생해야 Live로 오인하지 않고 0:00부터 재생됨)
-        val videoList = variants.map { (h, u) -> 
-            Video(u, "$label ${h}p", u, headers) 
+        val videoList = variants.map { (h, u) ->
+            Video(u, "$label ${h}p", u, headers)
         }.toMutableList()
 
         // 첫 번째(최고화질) 항목 뒤에 자동 선택용 마스터 URL을 옵션으로 추가
