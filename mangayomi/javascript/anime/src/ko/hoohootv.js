@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.5",
+    "version": "0.1.6",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -412,7 +412,10 @@ class DefaultExtension extends MProvider {
             episodes = eps.map((e) => {
                 const d = /(\d{4})[-.](\d{1,2})[-.](\d{1,2})/.exec(e.date);
                 return {
-                    name: multi ? `시즌${e.season} ${e.label}` : e.label,
+                    // 망가요미는 이름 맨 앞 숫자를 회차 번호로 써서 "시즌4 12화"면 시즌 번호가 겹쳐 회차가 숨는다
+                    // → 이름은 회차("12화")로 시작하고, 시즌은 스캔레이터 칸으로 구분
+                    name: e.label,
+                    scanlator: multi ? `시즌${e.season}` : "",
                     url: `${path}?season=${e.season}&episode=${e.episode}`,
                     dateUpload: d ? String(Date.UTC(+d[1], +d[2] - 1, +d[3]) - 9 * 3600000) : null,
                 };
@@ -441,12 +444,16 @@ class DefaultExtension extends MProvider {
         let media = null;
         let referer = pageUrl;
         let target = player;
+        let lastUrl = player;
+        let lastRef = pageUrl;
         for (let depth = 0; depth < 3 && target && !media; depth++) {
             let body = "";
             try {
                 const r = await this.client.get(target, this.headers(referer));
                 body = String(r.body || "").replace(/\\\//g, "/");
                 tried.push(`${target.substring(0, 50)}(${r.statusCode})`);
+                lastUrl = target;
+                lastRef = referer;
             } catch (e) {
                 tried.push(`${target.substring(0, 50)}(오류)`);
                 break;
@@ -463,7 +470,9 @@ class DefaultExtension extends MProvider {
         }
         if (!media) {
             // 플레이어가 보안 확인(Cloudflare)을 거치거나 스크립트로 영상을 불러오는 경우: 숨은 웹뷰로 열어 읽음
-            const w = await this.playerViaWebview(player, pageUrl);
+            // 플레이어는 마지막 페이지(보통 creatorofvideo) 안에 있으므로 그 페이지를 직접 연다
+            let w = await this.playerViaWebview(lastUrl, lastRef);
+            if (!w && lastUrl !== player) w = await this.playerViaWebview(player, pageUrl);
             if (w) {
                 media = w.url;
                 referer = w.referer;
