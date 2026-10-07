@@ -63,7 +63,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     override val baseUrl: String
         get() {
             val custom = prefs()?.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/').orEmpty()
-            return if (DOMAIN_REGEX.matches(custom)) custom else DEFAULT_BASE_URL
+            return if (DOMAIN_REGEX.matches(custom)) DomainGuard.preferDefault(custom, DEFAULT_BASE_URL) else DEFAULT_BASE_URL
         }
 
     private fun autoDomain(): Boolean = prefs()?.getBoolean(PREF_AUTO_DOMAIN, true) ?: true
@@ -76,6 +76,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         .addInterceptor(PageCache(Regex("/vod/detail/")))
         .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS))
         .addInterceptor { chain -> domainIntercept(chain) }
+        .addInterceptor(NoticeFollow(HOST_REGEX, "/vod/detail/"))
         .addInterceptor { chain -> challengeIntercept(chain) }
         .addInterceptor(RetryOnce(HOST_REGEX))
         .build()
