@@ -58,7 +58,7 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
     override val baseUrl: String
         get() {
             val custom = prefs()?.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/').orEmpty()
-            return if (DOMAIN_REGEX.matches(custom)) custom else DEFAULT_BASE_URL
+            return if (DOMAIN_REGEX.matches(custom)) DomainGuard.preferDefault(custom, DEFAULT_BASE_URL) else DEFAULT_BASE_URL
         }
 
     override val client: OkHttpClient = network.client.newBuilder()
@@ -75,6 +75,7 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
             res
         }
         .addInterceptor { chain -> domainIntercept(chain) }
+        .addInterceptor(NoticeFollow(HOST_REGEX, "shplay.php"))
         .addInterceptor(RetryOnce(HOST_REGEX))
         .build()
 
@@ -131,7 +132,7 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
                         plain.newCall(r).execute().use { res ->
                             val fh = res.request.url.host
                             val ok = HOST_REGEX.matches(fh) && res.code == 200 &&
-                                res.peekBody(300_000).string().contains(SITE_MARKER)
+                                res.peekBody(300_000).string().contains("shplay.php")
                             if (ok) fh else null
                         }
                     }.getOrNull()
@@ -474,9 +475,8 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
         private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
-        private const val SITE_MARKER = "미미티비"
         private val DISCOVER_LOCK = Any()
-        private const val DEFAULT_BASE_URL = "https://mimitv7.com"
+        private const val DEFAULT_BASE_URL = "https://mimitv9.com"
         private const val RATE_GAP_MS = 350L
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +

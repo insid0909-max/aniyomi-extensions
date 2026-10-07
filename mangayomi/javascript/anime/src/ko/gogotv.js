@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.21",
+    "version": "0.1.22",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -207,6 +207,33 @@ function ruleFilters(prefix, sizes, defaults, text) {
     ];
 }
 
+// 옛 주소가 끊기지 않고 "접속 주소 안내" 페이지(새 주소 링크만 있는 작은 페이지)를 보여 주면,
+// 거기 적힌 더 큰 번호의 같은 사이트 주소 중 진짜 사이트(marker 가 보임)를 돌려줌
+async function noticeTarget(ext, body, base, marker) {
+    body = String(body || "");
+    if (!body || body.length >= 30000 || body.indexOf(marker) >= 0) return null;
+    const host = base.replace(/^https?:\/\//, "");
+    const head = host.substring(0, host.lastIndexOf("."));
+    const m = /(\d+)(?!.*\d)/.exec(head);
+    if (!m) return null;
+    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`${esc(head.substring(0, m.index))}\\d+${esc(head.substring(m.index + m[1].length))}\\.[a-z]{2,6}`, "gi");
+    const num = (s) => {
+        const x = /(\d+)(?!.*\d)/.exec(String(s).replace(/^https?:\/\//, "").replace(/\.[a-z]{2,6}$/i, ""));
+        return x ? parseInt(x[1], 10) : 0;
+    };
+    const cur = parseInt(m[1], 10);
+    const cands = [...new Set((body.match(re) || []).map((x) => "https://" + x.toLowerCase()))]
+        .filter((x) => DOMAIN_RE.test(x) && num(x) > cur).sort((a, b) => num(b) - num(a));
+    for (const c of cands) {
+        try {
+            const r = await ext.client.get(c + "/", { "User-Agent": UA });
+            if (r.statusCode === 200 && String(r.body || "").indexOf(marker) >= 0) return c;
+        } catch (e) {}
+    }
+    return null;
+}
+
 class DefaultExtension extends MProvider {
     constructor() {
         super();
@@ -225,7 +252,9 @@ class DefaultExtension extends MProvider {
             custom = "";
         }
         if (DOMAIN_RE.test(custom)) return custom;
-        return DOMAIN_RE.test(auto) ? auto : DEFAULT_BASE_URL;
+        // 자동으로 찾은 주소가 확장 업데이트로 바뀐 기본 주소보다 옛 번호면 기본 주소를 씀
+        const n = (u) => parseInt((/(\d+)(?!.*\d)/.exec(String(u).replace(/\.[a-z]{2,6}$/i, "")) || [0, "0"])[1], 10) || 0;
+        return DOMAIN_RE.test(auto) && n(auto) >= n(DEFAULT_BASE_URL) ? auto : DEFAULT_BASE_URL;
     }
 
     autoOn() {
@@ -253,7 +282,8 @@ class DefaultExtension extends MProvider {
         const hits = await Promise.all(cands.map(async (c) => {
             try {
                 const r = await this.client.get(c + "/", { "User-Agent": UA });
-                return r.statusCode === 200 && /gogotv/i.test(String(r.body || "")) ? c : null;
+                // 안내 페이지도 "gogotv" 글자는 있어서, 작품 링크(/player/)가 있는 주소만
+                return r.statusCode === 200 && String(r.body || "").indexOf("/player/") >= 0 ? c : null;
             } catch (e) {
                 return null;
             }
@@ -274,15 +304,20 @@ class DefaultExtension extends MProvider {
         const ours = url.startsWith(base);
         await siteWait();
         let res = null;
+        let notice = null;
         try {
             res = await this.client.get(url, this.headers());
             const code = Number(res.statusCode);
-            if (!ours || !(code >= 500 || code === 451)) return { doc: new Document(res.body), base: base };
+            if (!ours || !(code >= 500 || code === 451)) {
+                notice = ours && code === 200 && this.autoOn() ? await noticeTarget(this, res.body, base, "/player/") : null;
+                if (!notice) return { doc: new Document(res.body), base: base };
+            }
         } catch (e) {
             if (!ours) throw e;
             res = null;
         }
-        const found = this.autoOn() ? await this.discover(base) : null;
+        const found = notice || (this.autoOn() ? await this.discover(base) : null);
+        if (notice) new SharedPreferences().setString("gogotv_auto_domain", notice);
         if (!found) {
             if (res) return { doc: new Document(res.body), base: base };
             throw new Error(`접속 실패: ${url}`);

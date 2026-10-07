@@ -71,7 +71,7 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
     override val baseUrl: String
         get() {
             val custom = sitePrefs()?.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/').orEmpty()
-            return if (DOMAIN_REGEX.matches(custom)) custom else DEFAULT_BASE_URL
+            return if (DOMAIN_REGEX.matches(custom)) DomainGuard.preferDefault(custom, DEFAULT_BASE_URL) else DEFAULT_BASE_URL
         }
 
     private fun autoDomain(): Boolean = sitePrefs()?.getBoolean(PREF_AUTO_DOMAIN, true) ?: true
@@ -85,6 +85,7 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         .addInterceptor(PageCache(Regex("^/player/")))
         .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS))
         .addInterceptor { chain -> domainIntercept(chain) }
+        .addInterceptor(NoticeFollow(HOST_REGEX, "/player/"))
         .addInterceptor(RetryOnce(HOST_REGEX))
         .build()
 
