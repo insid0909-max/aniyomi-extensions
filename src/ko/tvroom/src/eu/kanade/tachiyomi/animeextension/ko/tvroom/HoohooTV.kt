@@ -75,7 +75,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             val res = chain.proceed(chain.request())
             val from = chain.request().url.host
             val to = res.request.url.host
-            if (from != to && HOST_REGEX.matches(from) && HOST_REGEX.matches(to)) {
+            if (from != to && HOST_REGEX.matches(from) && SUBDOMAIN_REGEX.matches(to)) {
                 prefs()?.edit()?.putString(PREF_DOMAIN_KEY, "https://$to")?.apply()
             }
             res
@@ -105,34 +105,70 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             val found = discoverDomain(baseHost) ?: throw e
             return retryOn(found)
         }
-        val dead = !HOST_REGEX.matches(res.request.url.host) || res.code == 403 || res.code == 451 || res.code >= 500
+        // 옛 주소가 주소 안내 사이트(hoohootv1.com 등)로 넘겨 버려도 끊긴 것으로 봄
+        val dead = !SUBDOMAIN_REGEX.matches(res.request.url.host) || res.code == 403 || res.code == 451 || res.code >= 500
         if (req.method == "GET" && dead) {
             val found = discoverDomain(baseHost) ?: return res
             res.close()
             return retryOn(found)
         }
+        if (req.method == "GET" && res.isSuccessful) checkNewerLater(baseHost)
         return res
+    }
+
+    // 옛 주소가 한동안 같이 열리면 위의 자동 찾기가 안 돌아서, 6시간에 한 번은 더 높은 번호 주소가 열리는지 따로 확인
+    private fun checkNewerLater(baseHost: String) {
+        val p = prefs() ?: return
+        val now = System.currentTimeMillis()
+        if (now - p.getLong(PREF_LAST_NEWER_CHECK, 0L) < NEWER_CHECK_MS) return
+        p.edit().putLong(PREF_LAST_NEWER_CHECK, now).apply()
+        Thread {
+            runCatching {
+                discoverDomain(baseHost, newerOnly = true)?.let {
+                    if (baseUrl.toHttpUrlOrNull()?.host == baseHost) p.edit().putString(PREF_DOMAIN_KEY, "https://$it").apply()
+                }
+            }
+        }.start()
     }
 
     @Volatile private var lastDiscover = 0L
 
-    private fun discoverDomain(currentHost: String): String? = synchronized(DISCOVER_LOCK) {
+    private fun discoverDomain(currentHost: String, newerOnly: Boolean = false): String? = synchronized(DISCOVER_LOCK) {
         val now = System.currentTimeMillis()
-        if (now - lastDiscover < 60_000) return null
-        lastDiscover = now
+        if (!newerOnly) {
+            if (now - lastDiscover < 60_000) return null
+            lastDiscover = now
+        }
         val m = SUBDOMAIN_REGEX.matchEntire(currentHost) ?: return null
         val (first, second, num, tld) = m.destructured
         val n = num.toIntOrNull() ?: return null
         val abc = "abcdefghijklmnopqrstuvwxyz"
         val start = abc.indexOf(second[0])
-        // 같은 숫자에서 다음 글자들 → 숫자 +1 ~ +3 에서 같은 글자·다음 글자
-        val candidates = (1 until 26).map { "$first${abc[(start + it) % 26]}.hoohootv$n.$tld" } +
-            (1..3).flatMap { d -> (0..2).map { "$first${abc[(start + it) % 26]}.hoohootv${n + d}.$tld" } }
         val plain = OkHttpClient.Builder()
             .connectTimeout(4, TimeUnit.SECONDS)
             .readTimeout(6, TimeUnit.SECONDS)
             .callTimeout(8, TimeUnit.SECONDS)
             .build()
+        // 주소 안내 사이트에 적힌 후후티비 주소들 (번호 큰 것 먼저)
+        val announced = runCatching {
+            val r = Request.Builder().url(PORTAL_URL).header("User-Agent", USER_AGENT).build()
+            plain.newCall(r).execute().use { res -> res.peekBody(500_000).string() }
+        }.getOrNull().orEmpty().let { body ->
+            ANNOUNCED_REGEX.findAll(body).map { it.value.lowercase() }
+                .filter { SUBDOMAIN_REGEX.matches(it) }.distinct()
+                .sortedByDescending { SUBDOMAIN_REGEX.matchEntire(it)!!.groupValues[3].toInt() }.toList()
+        }
+        // 숫자 +1 ~ +3 에서 모든 둘째 글자 (가까운 글자부터)
+        val newer = (1..3).flatMap { d -> (0 until 26).map { "$first${abc[(start + it) % 26]}.hoohootv${n + d}.$tld" } }
+        // 같은 숫자에서 다음 글자들
+        val same = (1 until 26).map { "$first${abc[(start + it) % 26]}.hoohootv$n.$tld" }
+        val candidates = (
+            if (newerOnly) {
+                announced.filter { SUBDOMAIN_REGEX.matchEntire(it)!!.groupValues[3].toInt() > n } + newer
+            } else {
+                announced + same + newer
+            }
+            ).distinct().filter { it != currentHost }
         val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
         try {
             val futures = candidates.map { host ->
@@ -141,15 +177,16 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                         val r = Request.Builder().url("https://$host/home").header("User-Agent", USER_AGENT).build()
                         plain.newCall(r).execute().use { res ->
                             val fh = res.request.url.host
-                            val ok = HOST_REGEX.matches(fh) && res.code == 200 &&
+                            val ok = SUBDOMAIN_REGEX.matches(fh) && res.code == 200 &&
                                 res.peekBody(300_000).string().contains(SITE_MARKER)
                             if (ok) fh else null
                         }
                     }.getOrNull()
                 }
             }
-            // 후보 순서대로 (가까운 다음 주소 우선)
-            futures.firstNotNullOfOrNull { runCatching { it.get() }.getOrNull() }?.takeIf { it != currentHost }
+            val found = futures.mapNotNull { runCatching { it.get() }.getOrNull() }.filter { it != currentHost }
+            // 열리는 주소 중 번호가 가장 큰 것 (같으면 후보 순서대로)
+            found.maxByOrNull { SUBDOMAIN_REGEX.matchEntire(it)?.groupValues?.get(3)?.toIntOrNull() ?: 0 }
         } finally {
             pool.shutdown()
         }
@@ -618,6 +655,10 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
         private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
+        private const val PREF_LAST_NEWER_CHECK = "pref_last_newer_check"
+        private const val NEWER_CHECK_MS = 6 * 3_600_000L
+        private const val PORTAL_URL = "https://hoohootv1.com/"
+        private val ANNOUNCED_REGEX = Regex("""[a-z]{2}\.hoohootv\d+\.[a-z]{2,6}""", RegexOption.IGNORE_CASE)
         private const val SITE_MARKER = "HOOHOO TV"
         private val DISCOVER_LOCK = Any()
         private val SUBDOMAIN_REGEX = Regex("""^([a-z])([a-z])\.hoohootv(\d+)\.([a-z]{2,6})$""")
