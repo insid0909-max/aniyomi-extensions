@@ -86,6 +86,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             res
         }
         .addInterceptor { chain -> domainIntercept(chain) }
+        .addInterceptor(NoticeFollow(HOST_REGEX, "/detail/"))
         .addInterceptor(RetryOnce(HOST_REGEX))
         .build()
 

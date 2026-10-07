@@ -74,7 +74,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         get() {
             val custom = prefs()?.getString(PREF_DOMAIN_KEY, "")
                 ?.trim()?.trimEnd('/').orEmpty()
-            return if (custom.isNotEmpty() && DOMAIN_REGEX.matches(custom)) custom else DEFAULT_BASE_URL
+            return if (custom.isNotEmpty() && DOMAIN_REGEX.matches(custom)) DomainGuard.preferDefault(custom, DEFAULT_BASE_URL) else DEFAULT_BASE_URL
         }
 
     private val livePageUrl: String
@@ -114,6 +114,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
     // 주소 번호가 바뀌어 접속이 안 되면 njtv-01~60.com 중 열리는 주소를 찾아 자동 연결
     override val client: OkHttpClient = network.cloudflareClient.newBuilder()
         .addInterceptor { chain -> domainIntercept(chain) }
+        .addInterceptor(NoticeFollow(HOST_REGEX, "g5_url"))
         .build()
 
     // ================= 0-1. 도메인 자동 찾기 =================
