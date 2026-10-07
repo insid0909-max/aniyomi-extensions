@@ -64,8 +64,13 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
     override val baseUrl: String
         get() {
             val custom = prefs()?.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/').orEmpty()
-            return if (DOMAIN_REGEX.matches(custom)) custom else DEFAULT_BASE_URL
+            if (!DOMAIN_REGEX.matches(custom)) return DEFAULT_BASE_URL
+            // 저장된 주소가 확장 업데이트로 바뀐 기본 주소보다 옛 번호면 기본 주소를 씀
+            return if (hostNumber(custom) in 1 until hostNumber(DEFAULT_BASE_URL)) DEFAULT_BASE_URL else custom
         }
+
+    private fun hostNumber(url: String): Int =
+        SUBDOMAIN_REGEX.matchEntire(url.substringAfter("://").substringBefore('/'))?.groupValues?.get(3)?.toIntOrNull() ?: 0
 
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor(PageCache(Regex("^/detail/")))
@@ -85,7 +90,8 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         .build()
 
     // ================= 도메인 자동 찾기 =================
-    // 주소가 fo.hoohootv459.xyz → fp → fq 처럼 앞 글자가 바뀌거나 숫자가 바뀜.
+    // 주소가 fo.hoohootv459.xyz → fp → bd.hoohootv460.xyz 처럼 앞 두 글자가 바뀌거나(아무 글자로) 숫자가 바뀜.
+    // 두 글자가 통째로 바뀌면 짐작할 수 없어서, 주소 안내 사이트에 적힌 주소와 옛 주소가 넘겨 주는 주소를 먼저 씀.
     // 접속이 안 되거나 막히면 다음 글자·숫자 주소를 차례로 열어 보고, 진짜 후후티비인 주소를 저장해 다시 요청한다.
     private fun autoDomain(): Boolean = prefs()?.getBoolean(PREF_AUTO_DOMAIN, true) ?: true
 
@@ -158,8 +164,9 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                 .filter { SUBDOMAIN_REGEX.matches(it) }.distinct()
                 .sortedByDescending { SUBDOMAIN_REGEX.matchEntire(it)!!.groupValues[3].toInt() }.toList()
         }
-        // 숫자 +1 ~ +3 에서 모든 둘째 글자 (가까운 글자부터)
-        val newer = (1..3).flatMap { d -> (0 until 26).map { "$first${abc[(start + it) % 26]}.hoohootv${n + d}.$tld" } }
+        // 숫자 +1 ~ +3 에서 같은 두 글자 → 모든 둘째 글자 (가까운 글자부터)
+        val newer = (1..3).map { d -> "$first$second.hoohootv${n + d}.$tld" } +
+            (1..3).flatMap { d -> (0 until 26).map { "$first${abc[(start + it) % 26]}.hoohootv${n + d}.$tld" } }
         // 같은 숫자에서 다음 글자들
         val same = (1 until 26).map { "$first${abc[(start + it) % 26]}.hoohootv$n.$tld" }
         val candidates = (
@@ -662,7 +669,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         private const val SITE_MARKER = "HOOHOO TV"
         private val DISCOVER_LOCK = Any()
         private val SUBDOMAIN_REGEX = Regex("""^([a-z])([a-z])\.hoohootv(\d+)\.([a-z]{2,6})$""")
-        private const val DEFAULT_BASE_URL = "https://fp.hoohootv459.xyz"
+        private const val DEFAULT_BASE_URL = "https://bd.hoohootv460.xyz"
         private const val RATE_GAP_MS = 350L
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
