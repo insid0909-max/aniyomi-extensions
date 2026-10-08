@@ -570,9 +570,14 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     override fun videoListParse(response: Response): List<Video> {
         val pageUrl = response.request.url.toString()
         val html = response.body.string()
-        // 같은 회차의 다른 서버 영상 (플레이어에서 바로 바꿀 수 있게 목록 뒤에 붙임)
-        val others = runCatching { otherServerVideos(Jsoup.parse(html, pageUrl), response.request.url.encodedPath) }
-            .getOrDefault(emptyList())
+        // 같은 회차의 다른 서버 영상 (플레이어에서 바로 바꿀 수 있게 목록 뒤에 붙임).
+        // 설정 "다른 서버도 함께 찾기"를 끄면 미리 찾지 않아 재생이 빨리 시작됨 (이 서버가 안 될 때만 찾음)
+        val othersLazy = lazy {
+            runCatching { otherServerVideos(Jsoup.parse(html, pageUrl), response.request.url.encodedPath) }
+                .getOrDefault(emptyList())
+        }
+        val wantOthers = prefs()?.getBoolean(PREF_OTHER_SERVERS, true) ?: true
+        val others = if (wantOthers) othersLazy.value else emptyList()
 
         val media = mediaOf(html)
 
@@ -594,7 +599,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         val sniffed = sniffWithWebView(pageUrl)
         if (sniffed == null) {
             // 이 서버가 안 되면 다른 서버 영상이라도
-            if (others.isNotEmpty()) return others
+            if (othersLazy.value.isNotEmpty()) return othersLazy.value
             throw Exception("영상 주소를 찾지 못했습니다: $pageUrl")
         }
         val (url, referer) = sniffed
@@ -765,6 +770,13 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
             summary = "접속이 안 되면 tvchak 번호 주소(현재 번호 -5 ~ +30)를 찾아 자동 변경합니다."
             setDefaultValue(true)
         }.also(screen::addPreference)
+        SwitchPreferenceCompat(ctx).apply {
+            key = PREF_OTHER_SERVERS
+            title = "다른 서버도 함께 찾기"
+            summary = "켜면 재생 목록에 다른 서버 영상([서버 이름])도 붙여서, 플레이어에서 바로 바꿀 수 있어요. " +
+                "끄면 미리 찾지 않아 재생이 더 빨리 시작돼요 (지금 서버가 안 될 때만 다른 서버를 찾음)."
+            setDefaultValue(true)
+        }.also(screen::addPreference)
         HlsQuality.addPreference(screen)
     }
 
@@ -776,6 +788,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
         private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
+        private const val PREF_OTHER_SERVERS = "pref_other_servers"
         private const val DEFAULT_BASE_URL = "https://tvchak208.com"
         private const val SITE_MARKER = "티비착"
         private const val PLAYER_REFERER = "https://ckp2.wiselife.blog/"
