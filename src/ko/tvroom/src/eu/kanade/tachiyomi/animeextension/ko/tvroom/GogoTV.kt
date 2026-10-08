@@ -32,6 +32,8 @@ import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import java.io.ByteArrayInputStream
+import java.net.URLDecoder
+import java.net.URLEncoder
 import java.util.Calendar
 import java.util.TimeZone
 import java.util.concurrent.CountDownLatch
@@ -371,20 +373,26 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
     }
 
     // ================= 회차 =================
-    override fun episodeListParse(response: Response): List<SEpisode> {
-        val doc = response.asDoc()
-        val links = doc.select(".view-floor1-rt-cont li").mapNotNull { li ->
+    /** 작품 페이지의 회차 링크 (주소, 이름). 주소(send5video go.php?key=…)는 시간이 지나면 만료됨 */
+    private fun episodeLinks(doc: Document): List<Pair<String, String>> =
+        doc.select(".view-floor1-rt-cont li").mapNotNull { li ->
             val a = li.selectFirst("p.left a[href]") ?: li.selectFirst("a[href]") ?: return@mapNotNull null
             val href = a.absUrl("href").ifEmpty { return@mapNotNull null }
             // 아이콘 글꼴 문자 제거
             href to a.text().replace(ICON_REGEX, "").trim().ifEmpty { "바로보기" }
         }.distinctBy { it.first }
 
+    override fun episodeListParse(response: Response): List<SEpisode> {
+        val doc = response.asDoc()
+        val links = episodeLinks(doc)
+        // 회차 주소는 만료되므로 "작품 주소#ep=회차 이름" 으로 저장하고, 재생할 때 작품 페이지에서 새 주소를 받음
+        val detailPath = response.request.url.encodedPath
+
         return links.mapIndexed { i, (href, label) ->
             val no = EP_REGEX.find(label)?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() }?.toFloatOrNull()
             val d = CARD_DATE_REGEX.find(label)
             SEpisode.create().apply {
-                url = href
+                url = if (href.startsWith(baseUrl)) href.removePrefix(baseUrl) else "$detailPath#ep=" + URLEncoder.encode(label, "UTF-8")
                 // "제19회 26/10/04 - 최종회" → "19회 (10.04) 최종회" 처럼 보기 좋게 (날짜가 없으면 그대로)
                 name = if (no != null && d != null) {
                     val note = label.substringAfter(" - ", "").trim()
@@ -398,15 +406,37 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         }
     }
 
-    override fun getEpisodeUrl(episode: SEpisode): String = episode.url
+    override fun getEpisodeUrl(episode: SEpisode): String =
+        if (episode.url.startsWith("http")) episode.url else baseUrl + episode.url.substringBefore("#ep=")
 
     // ================= 영상 =================
-    override fun videoListRequest(episode: SEpisode): Request =
-        GET(episode.url, headersBuilder().set("Referer", "$baseUrl/").build())
+    override fun videoListRequest(episode: SEpisode): Request {
+        val u = episode.url
+        // 새 방식: 작품 페이지를 열어 그 회차의 지금 주소를 받음 (이름은 tag 로 넘김)
+        if (!u.startsWith("http") && u.contains("#ep=")) {
+            val label = URLDecoder.decode(u.substringAfter("#ep="), "UTF-8")
+            return GET(baseUrl + u.substringBefore("#ep="), headersBuilder().set("Referer", "$baseUrl/").build())
+                .newBuilder().tag(String::class.java, label).build()
+        }
+        return GET(if (u.startsWith("http")) u else baseUrl + u, headersBuilder().set("Referer", "$baseUrl/").build())
+    }
 
     override fun videoListParse(response: Response): List<Video> {
-        val pageUrl = response.request.url.toString()
-        val html = response.body.string()
+        var pageUrl = response.request.url.toString()
+        var html = response.body.string()
+        response.request.tag(String::class.java)?.let { label ->
+            // 작품 페이지에서 같은 이름(없으면 같은 회차 번호)의 지금 주소를 찾아 열기
+            val links = episodeLinks(Jsoup.parse(html, pageUrl))
+            val no = EP_REGEX.find(label)?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() }
+            val href = links.firstOrNull { it.second == label }?.first
+                ?: links.firstOrNull { l -> no != null && EP_REGEX.find(l.second)?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() } == no }?.first
+                ?: throw Exception("이 회차를 작품 페이지에서 찾지 못했습니다. 회차 목록을 새로고침해 주세요: $label")
+            client.newCall(GET(href, headersBuilder().set("Referer", pageUrl).build())).execute().use { r ->
+                if (!r.isSuccessful) throw Exception("회차 주소를 열지 못했습니다 (HTTP ${r.code})")
+                pageUrl = r.request.url.toString()
+                html = r.body.string()
+            }
+        }
 
         val pageHeaders = headersBuilder().set("Referer", pageUrl).build()
         val iframes = Jsoup.parse(html, pageUrl).select("iframe[src]")
