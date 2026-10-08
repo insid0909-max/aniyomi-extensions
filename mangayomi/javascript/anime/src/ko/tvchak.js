@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.24",
+    "version": "0.1.25",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -239,6 +239,7 @@ function ruleFilters(prefix, sizes, defaults, text) {
 async function noticeTarget(ext, body, base, marker) {
     body = String(body || "");
     if (!body || body.length >= 30000 || body.indexOf(marker) >= 0) return null;
+    if (!/<html|<!doctype/i.test(body.substring(0, 3000))) return null; // JSON·API 응답은 제외
     const host = base.replace(/^https?:\/\//, "");
     const head = host.substring(0, host.lastIndexOf("."));
     const m = /(\d+)(?!.*\d)/.exec(head);
