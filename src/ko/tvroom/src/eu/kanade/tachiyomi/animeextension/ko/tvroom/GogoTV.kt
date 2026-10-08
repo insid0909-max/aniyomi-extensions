@@ -416,15 +416,16 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         }.getOrDefault(emptyList())
 
         // 설정 "다른 서버도 함께 찾기"가 꺼져 있으면(기본): 후보를 하나씩 열어 보고 처음 열리는 영상으로 바로 재생
-        // (나머지 후보·iframe 은 열지 않아 재생이 빨리 시작됨)
+        // (나머지 후보는 열지 않아 재생이 빨리 시작됨)
         if (!(prefs()?.getBoolean(PREF_OTHER_SERVERS, false) ?: false)) {
-            val tried = ArrayList<String>()
+            val tried = ArrayList<Pair<String, String>>()
+            // 회차 주소가 중간 페이지(send5video go.php → 자동 제출 폼 → 플레이어)면 망가요미처럼 직접 따라가서 찾음
             val first = sequence {
-                yieldAll(findAllMedia(html))
-                for (src in iframes) yieldAll(mediaIn(src))
-            }.distinct().take(4).onEach { tried.add(it) }.firstOrNull { HlsQuality.works(client, it, pageHeaders) }
-            val (m, r) = first?.let { it to pageUrl } ?: sniffWithWebView(pageUrl)
-                ?: tried.firstOrNull()?.let { it to pageUrl }
+                yieldAll(findAllMedia(html).map { it to pageUrl })
+                yieldAll(crawlMedia(html, pageUrl))
+            }.distinctBy { it.first }.take(4).onEach { tried.add(it) }
+                .firstOrNull { (m, r) -> HlsQuality.works(client, m, videoHeaders(r)) }
+            val (m, r) = first ?: sniffWithWebView(pageUrl) ?: tried.firstOrNull()
                 ?: throw Exception("영상 주소를 찾지 못했습니다: $pageUrl")
             return HlsQuality.sort(prefs(), HlsQuality.expand(client, m, qualityOf(m), videoHeaders(r)))
         }
@@ -456,6 +457,50 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
             .set("Referer", referer)
             .apply { if (origin != null) set("Origin", origin) }
             .build()
+    }
+
+    /**
+     * 중간 페이지를 따라가며 영상 주소를 찾음 (망가요미 고고티비와 같은 방식): 자동 제출 폼(숨은 값을 붙인 주소),
+     * meta refresh, location.href, iframe(data-src·src). 최대 3단계·10페이지. (영상 주소, 그 영상을 찾은 페이지) 를 차례로 내놓음
+     */
+    private fun crawlMedia(startHtml: String, startUrl: String): Sequence<Pair<String, String>> = sequence {
+        val visited = HashSet<String>().apply { add(startUrl) }
+        val queue = ArrayDeque<Triple<String, String, Int>>()
+        nextTargets(startHtml, startUrl).forEach { queue.add(Triple(it, startUrl, 1)) }
+        while (queue.isNotEmpty() && visited.size < 10) {
+            val (url, referer, depth) = queue.removeFirst()
+            if (!visited.add(url)) continue
+            val body = runCatching {
+                client.newCall(GET(url, headersBuilder().set("Referer", referer).build())).execute()
+                    .use { it.body.string() }
+            }.getOrNull() ?: continue
+            val found = findAllMedia(body)
+            if (found.isNotEmpty()) {
+                yieldAll(found.map { it to url })
+                continue
+            }
+            if (depth < 3) nextTargets(body, url).forEach { queue.add(Triple(it, url, depth + 1)) }
+        }
+    }
+
+    private fun nextTargets(html: String, pageUrl: String): List<String> {
+        val doc = Jsoup.parse(html, pageUrl)
+        val out = LinkedHashSet<String>()
+        fun add(u: String) {
+            if (u.startsWith("http")) out.add(u)
+        }
+        // 자동 제출 폼 (GET): action + 숨은 입력값
+        doc.select("form[action]").toList().filter { it.attr("method").ifEmpty { "get" }.equals("get", true) }.forEach { f ->
+            val b = f.absUrl("action").toHttpUrlOrNull()?.newBuilder() ?: return@forEach
+            f.select("input[name]").forEach { b.addQueryParameter(it.attr("name"), it.attr("value")) }
+            add(b.build().toString())
+        }
+        Regex("""http-equiv=["']?refresh["']?[^>]+url=([^"'>\s]+)""", RegexOption.IGNORE_CASE).findAll(html)
+            .forEach { add(doc.location().toHttpUrlOrNull()?.resolve(it.groupValues[1])?.toString().orEmpty()) }
+        Regex("""(?:location\.href|location\.replace|window\.location)\s*(?:=|\()\s*["']([^"']+)["']""").findAll(html)
+            .forEach { add(doc.location().toHttpUrlOrNull()?.resolve(it.groupValues[1])?.toString().orEmpty()) }
+        doc.select("iframe").forEach { f -> add(f.absUrl("data-src").ifEmpty { f.absUrl("src") }) }
+        return out.take(6)
     }
 
     private fun findAllMedia(text: String): List<String> =
