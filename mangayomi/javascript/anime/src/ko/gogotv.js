@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.23",
+    "version": "0.1.24",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -546,8 +546,17 @@ class DefaultExtension extends MProvider {
         const qOf = (u) => (u.includes(".m3u8") ? "고고티비 (HLS)" : "고고티비");
         // 같은 페이지에 영상 주소가 여러 개면 실제로 열리는 것을 먼저 쓰고, 나머지는 "(대체 N)" 으로 뒤에 붙임
         const candidates = (found.all || [found.url]).slice(0, 4);
+        // 설정 "다른 서버도 함께 찾기"가 꺼져 있으면(기본) 처음 열리는 영상에서 멈춰 바로 재생 (더 빨리 시작)
+        let wantOthers = false;
+        try {
+            const v = new SharedPreferences().get("gogotv_other_servers");
+            wantOthers = v === true || v === "true";
+        } catch (e) {}
         const working = [];
-        for (const u of candidates) if (await mediaWorks(this.client, u, headers)) working.push(u);
+        for (const u of candidates) {
+            if (await mediaWorks(this.client, u, headers)) working.push(u);
+            if (!wantOthers && working.length) break;
+        }
         const main = working[0] || found.url;
         const extras = working.filter((u) => u !== main)
             .map((u, i) => ({ url: u, originalUrl: u, quality: `${qOf(u)} (대체 ${i + 1})`, headers }));
@@ -770,6 +779,13 @@ class DefaultExtension extends MProvider {
                 title: "도메인 자동 찾기",
                 summary: "접속이 안 되면 gogotv 번호 주소(현재 번호 -5 ~ +30)를 찾아 자동 변경",
                 value: true,
+            },
+        }, {
+            key: "gogotv_other_servers",
+            switchPreferenceCompat: {
+                title: "다른 서버도 함께 찾기",
+                summary: "켜면 재생 목록에 다른 영상 후보((대체 N))도 붙임. 끄면(기본) 처음 열리는 영상으로 바로 재생해서 더 빨리 시작",
+                value: false,
             },
         }, qualityPreference("gogotv_quality")];
     }

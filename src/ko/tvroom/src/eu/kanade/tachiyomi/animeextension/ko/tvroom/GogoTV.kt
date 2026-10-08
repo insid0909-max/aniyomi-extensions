@@ -408,17 +408,29 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         val pageUrl = response.request.url.toString()
         val html = response.body.string()
 
-        // 1) 페이지와 그 안 iframe 들에 들어 있는 영상 주소 후보를 모두 모음 (최대 4개)
         val pageHeaders = headersBuilder().set("Referer", pageUrl).build()
-        val candidates = (
-            findAllMedia(html) + Jsoup.parse(html, pageUrl).select("iframe[src]")
-                .map { it.absUrl("src") }.filter { it.startsWith("http") }.take(3)
-                .flatMap { src ->
-                    runCatching {
-                        client.newCall(GET(src, pageHeaders)).execute().use { findAllMedia(it.body.string()) }
-                    }.getOrDefault(emptyList())
-                }
-            ).distinct().take(4)
+        val iframes = Jsoup.parse(html, pageUrl).select("iframe[src]")
+            .map { it.absUrl("src") }.filter { it.startsWith("http") }.take(3)
+        fun mediaIn(src: String) = runCatching {
+            client.newCall(GET(src, pageHeaders)).execute().use { findAllMedia(it.body.string()) }
+        }.getOrDefault(emptyList())
+
+        // 설정 "다른 서버도 함께 찾기"가 꺼져 있으면(기본): 후보를 하나씩 열어 보고 처음 열리는 영상으로 바로 재생
+        // (나머지 후보·iframe 은 열지 않아 재생이 빨리 시작됨)
+        if (!(prefs()?.getBoolean(PREF_OTHER_SERVERS, false) ?: false)) {
+            val tried = ArrayList<String>()
+            val first = sequence {
+                yieldAll(findAllMedia(html))
+                for (src in iframes) yieldAll(mediaIn(src))
+            }.distinct().take(4).onEach { tried.add(it) }.firstOrNull { HlsQuality.works(client, it, pageHeaders) }
+            val (m, r) = first?.let { it to pageUrl } ?: sniffWithWebView(pageUrl)
+                ?: tried.firstOrNull()?.let { it to pageUrl }
+                ?: throw Exception("영상 주소를 찾지 못했습니다: $pageUrl")
+            return HlsQuality.sort(prefs(), HlsQuality.expand(client, m, qualityOf(m), videoHeaders(r)))
+        }
+
+        // 1) 페이지와 그 안 iframe 들에 들어 있는 영상 주소 후보를 모두 모음 (최대 4개)
+        val candidates = (findAllMedia(html) + iframes.flatMap { mediaIn(it) }).distinct().take(4)
 
         // 2) 실제로 열리는 후보만. 하나도 없으면 숨은 화면(WebView)으로 열어 영상 요청을 가로챈다 (자동 전환)
         val working = candidates.filter { HlsQuality.works(client, it, pageHeaders) }
@@ -571,6 +583,14 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
             setDefaultValue(true)
         }.also(screen::addPreference)
 
+        SwitchPreferenceCompat(ctx).apply {
+            key = PREF_OTHER_SERVERS
+            title = "다른 서버도 함께 찾기"
+            summary = "켜면 재생 목록에 다른 영상 후보((대체 N))도 붙여서, 플레이어에서 바로 바꿀 수 있어요. " +
+                "끄면(기본) 처음 열리는 영상으로 바로 재생해서 더 빨리 시작돼요. 영화·드라마 소스에도 같이 적용."
+            setDefaultValue(false)
+        }.also(screen::addPreference)
+
         HlsQuality.addPreference(screen)
     }
 
@@ -582,6 +602,7 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
         private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
+        private const val PREF_OTHER_SERVERS = "pref_other_servers"
         private const val DEFAULT_BASE_URL = "https://gogotv2.xyz"
         private const val SITE_MARKER = "gogoTV"
         private const val USER_AGENT =
