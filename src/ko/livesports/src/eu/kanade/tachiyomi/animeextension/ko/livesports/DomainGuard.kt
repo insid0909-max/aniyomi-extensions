@@ -37,12 +37,16 @@ internal class NoticeFollow(private val hostRegex: Regex, private val marker: St
         val host = req.url.host
         if (req.method != "GET" || res.code != 200 || !hostRegex.matches(host)) return res
         if (IMAGE_PATH.containsMatchIn(req.url.encodedPath)) return res
+        // JSON·API 응답은 제외 (HTML 페이지만)
+        val type = res.header("Content-Type").orEmpty()
+        if (type.isNotEmpty() && !type.contains("html", ignoreCase = true)) return res
         val peek = try {
             String(res.peekBody(MAX_BYTES).bytes(), Charsets.ISO_8859_1)
         } catch (e: Exception) {
             return res
         }
         if (peek.length >= MAX_BYTES || peek.contains(marker)) return res
+        if (!Regex("<html|<!doctype", RegexOption.IGNORE_CASE).containsMatchIn(peek.take(3000))) return res
         val cur = DomainGuard.hostNumber(host)
         val family = familyRegex(host) ?: return res
         val targets = family.findAll(peek).map { it.value.lowercase() }
