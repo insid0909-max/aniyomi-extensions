@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.25",
+    "version": "0.1.26",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -706,17 +706,26 @@ class DefaultExtension extends MProvider {
     async getVideoList(url) {
         const path = this.toPath(url);
         const { html, base } = await this.getPage(path);
-        // 같은 회차의 다른 서버 영상 (플레이어에서 바로 바꿀 수 있게 목록 뒤에 붙임)
-        let others = [];
+        // 같은 회차의 다른 서버 영상 (플레이어에서 바로 바꿀 수 있게 목록 뒤에 붙임).
+        // 설정 "다른 서버도 함께 찾기"를 끄면 미리 찾지 않아 재생이 빨리 시작됨 (이 서버가 안 될 때만 찾음)
+        const findOthers = async () => {
+            try {
+                return await this.otherServerVideos(html, path, base);
+            } catch (e) {
+                return [];
+            }
+        };
+        let wantOthers = true;
         try {
-            others = await this.otherServerVideos(html, path, base);
-        } catch (e) {
-            others = [];
-        }
+            const v = new SharedPreferences().get("tvchak_other_servers");
+            wantOthers = v !== false && v !== "false";
+        } catch (e) {}
+        const others = wantOthers ? await findOthers() : [];
         const media = this.mediaOf(html);
         if (!media) {
             // 이 서버가 안 되면 다른 서버 영상이라도
-            if (others.length) return others;
+            const fallback = wantOthers ? others : await findOthers();
+            if (fallback.length) return fallback;
             throw new Error(`영상 주소를 찾지 못했습니다: ${base}${path}`);
         }
         const q = media.includes(".m3u8") ? "티비착 (HLS)" : "티비착";
@@ -878,6 +887,13 @@ class DefaultExtension extends MProvider {
             switchPreferenceCompat: {
                 title: "도메인 자동 찾기",
                 summary: "접속이 안 되면 tvchak 번호 주소(현재 번호 -5 ~ +30)를 찾아 자동 변경",
+                value: true,
+            },
+        }, {
+            key: "tvchak_other_servers",
+            switchPreferenceCompat: {
+                title: "다른 서버도 함께 찾기",
+                summary: "켜면 재생 목록에 다른 서버 영상([서버 이름])도 붙임. 끄면 미리 찾지 않아 재생이 더 빨리 시작 (지금 서버가 안 될 때만 찾음)",
                 value: true,
             },
         }, qualityPreference("tvchak_quality")];
