@@ -576,7 +576,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
             runCatching { otherServerVideos(Jsoup.parse(html, pageUrl), response.request.url.encodedPath) }
                 .getOrDefault(emptyList())
         }
-        val wantOthers = prefs()?.getBoolean(PREF_OTHER_SERVERS, true) ?: true
+        val wantOthers = prefs()?.getBoolean(PREF_OTHER_SERVERS, false) ?: false
         val others = if (wantOthers) othersLazy.value else emptyList()
 
         val media = mediaOf(html)
@@ -775,7 +775,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
             title = "다른 서버도 함께 찾기"
             summary = "켜면 재생 목록에 다른 서버 영상([서버 이름])도 붙여서, 플레이어에서 바로 바꿀 수 있어요. " +
                 "끄면 미리 찾지 않아 재생이 더 빨리 시작돼요 (지금 서버가 안 될 때만 다른 서버를 찾음)."
-            setDefaultValue(true)
+            setDefaultValue(false)
         }.also(screen::addPreference)
         HlsQuality.addPreference(screen)
     }

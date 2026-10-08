@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.26",
+    "version": "0.1.27",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -715,10 +715,10 @@ class DefaultExtension extends MProvider {
                 return [];
             }
         };
-        let wantOthers = true;
+        let wantOthers = false;
         try {
             const v = new SharedPreferences().get("tvchak_other_servers");
-            wantOthers = v !== false && v !== "false";
+            wantOthers = v === true || v === "true";
         } catch (e) {}
         const others = wantOthers ? await findOthers() : [];
         const media = this.mediaOf(html);
@@ -894,7 +894,7 @@ class DefaultExtension extends MProvider {
             switchPreferenceCompat: {
                 title: "다른 서버도 함께 찾기",
                 summary: "켜면 재생 목록에 다른 서버 영상([서버 이름])도 붙임. 끄면 미리 찾지 않아 재생이 더 빨리 시작 (지금 서버가 안 될 때만 찾음)",
-                value: true,
+                value: false,
             },
         }, qualityPreference("tvchak_quality")];
     }
