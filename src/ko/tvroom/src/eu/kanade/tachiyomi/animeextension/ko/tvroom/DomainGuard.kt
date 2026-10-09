@@ -83,8 +83,8 @@ internal class NoticeFollow(private val hostRegex: Regex, private val marker: St
         return Regex("""(?:www\.)?$pre\d+$post\.[a-z]{2,6}""", RegexOption.IGNORE_CASE)
     }
 
-    private companion object {
-        const val MAX_BYTES = 30_000L
+    companion object {
+        private const val MAX_BYTES = 30_000L
         val IMAGE_PATH = Regex("""\.(?:jpe?g|png|webp|gif|avif|bmp)$""", RegexOption.IGNORE_CASE)
     }
 }

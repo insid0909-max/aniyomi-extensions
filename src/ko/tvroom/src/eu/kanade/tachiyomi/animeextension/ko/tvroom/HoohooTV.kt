@@ -25,9 +25,11 @@ import eu.kanade.tachiyomi.network.GET
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -74,7 +76,8 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
 
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor(PageCache(Regex("^/detail/")))
-        .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS))
+        .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS, skipImages = true))
+        .addInterceptor { chain -> posterRetry(chain) }
         .addInterceptor { chain ->
             // 사이트가 새 주소로 넘겨 주면 그 주소를 저장 (다음부터 바로 새 주소로)
             val res = chain.proceed(chain.request())
@@ -88,7 +91,40 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         .addInterceptor { chain -> domainIntercept(chain) }
         .addInterceptor(NoticeFollow(HOST_REGEX, "/detail/"))
         .addInterceptor(RetryOnce(HOST_REGEX))
+        .addInterceptor { chain -> endOfList(chain) }
         .build()
+
+    // 포스터는 사이트 주소에 있어서 한꺼번에 받다가 가끔 실패(빈칸)함 → 잠깐 쉬고 한 번 더 받음
+    private fun posterRetry(chain: okhttp3.Interceptor.Chain): Response {
+        val req = chain.request()
+        if (req.method != "GET" || !HOST_REGEX.matches(req.url.host) || !isImage(req)) return chain.proceed(req)
+        val res = try {
+            chain.proceed(req)
+        } catch (e: java.io.IOException) {
+            if (chain.call().isCanceled()) throw e
+            Thread.sleep(POSTER_RETRY_MS)
+            return chain.proceed(req)
+        }
+        val bad = res.code == 403 || res.code == 429 || res.code >= 500 ||
+            res.header("Content-Type").orEmpty().contains("html", ignoreCase = true)
+        if (!bad || chain.call().isCanceled()) return res
+        res.close()
+        Thread.sleep(POSTER_RETRY_MS)
+        return chain.proceed(req)
+    }
+
+    private fun isImage(req: Request): Boolean = NoticeFollow.IMAGE_PATH.containsMatchIn(req.url.encodedPath)
+
+    // 목록 끝을 넘어선 페이지가 404면 오류 대신 "더 없음"으로 처리
+    private fun endOfList(chain: okhttp3.Interceptor.Chain): Response {
+        val req = chain.request()
+        val res = chain.proceed(req)
+        val page = req.url.queryParameter("page")?.toIntOrNull() ?: 0
+        if (res.code != 404 || page < 2 || !HOST_REGEX.matches(req.url.host) || req.url.encodedPath.startsWith("/detail/")) return res
+        res.close()
+        return res.newBuilder().code(200).message("OK")
+            .body("<html></html>".toResponseBody("text/html; charset=utf-8".toMediaType())).build()
+    }
 
     // ================= 도메인 자동 찾기 =================
     // 주소가 fo.hoohootv459.xyz → fp → bd.hoohootv460.xyz 처럼 앞 두 글자가 바뀌거나(아무 글자로) 숫자가 바뀜.
@@ -99,7 +135,8 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
     private fun domainIntercept(chain: okhttp3.Interceptor.Chain): Response {
         val req = chain.request()
         val baseHost = baseUrl.toHttpUrlOrNull()?.host
-        if (baseHost == null || req.url.host != baseHost || !autoDomain()) return chain.proceed(req)
+        // 포스터 이미지 실패는 주소가 바뀐 신호로 보지 않음
+        if (baseHost == null || req.url.host != baseHost || !autoDomain() || isImage(req)) return chain.proceed(req)
 
         fun retryOn(found: String): Response {
             prefs()?.edit()?.putString(PREF_DOMAIN_KEY, "https://$found")?.apply()
@@ -698,6 +735,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         private val SUBDOMAIN_REGEX = Regex("""^([a-z])([a-z])\.hoohootv(\d+)\.([a-z]{2,6})$""")
         private const val DEFAULT_BASE_URL = "https://bd.hoohootv460.xyz"
         private const val RATE_GAP_MS = 350L
+        private const val POSTER_RETRY_MS = 800L
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/124.0.0.0 Mobile Safari/537.36"
