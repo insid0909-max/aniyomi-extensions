@@ -373,8 +373,6 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                 }.apply { isDaemon = true }.start()
             }
         }
-        val md = java.text.SimpleDateFormat("MM.dd", java.util.Locale.KOREAN)
-            .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }
         val yf = java.text.SimpleDateFormat("yyyy", java.util.Locale.KOREAN)
             .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }
         fun withYear(a: SAnime, y: String) {
@@ -386,9 +384,8 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
             if (YEAR_REGEX.matches(y)) return@forEach withYear(a, y)
             val latest = airOf(p, id).first
             if (latest <= 0) return@forEach
-            if (now - latest <= ONGOING_DAYS * 86_400_000L) {
-                a.title = "${a.title} · ${md.format(java.util.Date(latest))}"
-            } else {
+            // 방영 중이면 날짜를 붙이지 않음 (서재에 담긴 작품은 제목이 갱신되지 않아 날짜가 굳어 버림, 최근 방영일은 설명 맨 위)
+            if (now - latest > ONGOING_DAYS * 86_400_000L) {
                 // 방영이 끝난 시리즈: 사이트의 연도, 없으면 마지막 방영 연도
                 withYear(a, seriesYear(p, id) ?: yf.format(java.util.Date(latest)))
             }
@@ -499,12 +496,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                     java.text.SimpleDateFormat("yyyy", java.util.Locale.KOREAN)
                         .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }.format(java.util.Date(it))
                 }
-                val md = latest?.let {
-                    java.text.SimpleDateFormat("MM.dd", java.util.Locale.KOREAN)
-                        .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }.format(java.util.Date(it))
-                }
                 title = when {
-                    status == SAnime.ONGOING && md != null -> "$name · $md"
                     endYear != null && !name.contains(endYear) -> "$name ($endYear)"
                     else -> name
                 }
