@@ -406,8 +406,8 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         if (latest <= 0 || title.isEmpty()) return title
         val tz = TimeZone.getTimeZone("Asia/Seoul")
         return if (System.currentTimeMillis() - latest <= ONGOING_DAYS * DAY_MS) {
-            val md = java.text.SimpleDateFormat("MM.dd", java.util.Locale.KOREAN).apply { timeZone = tz }
-            "${title.replace(TITLE_YEAR_REGEX, "")} · ${md.format(java.util.Date(latest))}"
+            // 방영 중이면 날짜를 붙이지 않음 (서재에 담긴 작품은 제목이 갱신되지 않아 날짜가 굳어 버림, 최근 방영일은 설명 맨 위)
+            title.replace(TITLE_YEAR_REGEX, "")
         } else {
             val y = java.text.SimpleDateFormat("yyyy", java.util.Locale.KOREAN).apply { timeZone = tz }
                 .format(java.util.Date(latest))
@@ -426,10 +426,19 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             val rawTitle = doc.selectFirst("meta[property=og:title]")?.attr("content")
                 ?.substringBeforeLast(" - 후후티비")?.trim()?.ifEmpty { null }
                 ?: doc.selectFirst(".share-title h1")?.text()?.substringBefore(" - ")?.trim().orEmpty()
-            // 목록 카드와 같은 모양 (방영 중 "제목 · 09.29", 끝났으면 "제목 (2026)")
+            // 목록 카드와 같은 모양 (방영 중 "제목", 끝났으면 "제목 (2026)")
             title = titleWithAir(rawTitle, latest)
             genre = doc.select(".share-title .datetime-hit a").joinToString(", ") { it.text().trim() }.ifEmpty { null }
-            description = doc.selectFirst(".overview")?.text()?.trim()
+            val head = if (episodes.isNotEmpty() && latest > 0) {
+                val fmt = java.text.SimpleDateFormat("yyyy.MM.dd (E)", java.util.Locale.KOREAN)
+                    .apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }
+                val st = if (System.currentTimeMillis() - latest <= ONGOING_DAYS * DAY_MS) "방영 중" else "종영"
+                "$st · 최근 방영: ${fmt.format(java.util.Date(latest))}"
+            } else {
+                null
+            }
+            description = listOfNotNull(head, doc.selectFirst(".overview")?.text()?.trim()?.ifEmpty { null })
+                .joinToString("\n\n").ifEmpty { null }
             if (episodes.isEmpty()) {
                 // 영화(회차 없음): 다시 확인할 필요 없음
                 status = SAnime.COMPLETED

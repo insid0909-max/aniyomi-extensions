@@ -256,12 +256,12 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
                 title = dl.selectFirst(".tit")?.text()?.trim()?.ifEmpty { null }
                     ?: img?.attr("alt")?.trim().orEmpty()
                 thumbnail_url = img?.absUrl("src")?.ifEmpty { null }
-                // 방영 중이면 제목 뒤에 최근 방영일 (겹치는 "(2026)" 연도는 뺌),
-                // 방영이 끝났으면 제목 뒤에 연도 (사이트 제목에 없으면 마지막 방영 연도)
+                // 방영이 끝났으면 제목 뒤에 연도 (사이트 제목에 없으면 마지막 방영 연도).
+                // 방영 중이면 날짜를 붙이지 않음 (서재에 담긴 작품은 제목이 갱신되지 않아 날짜가 굳어 버림)
                 val date = dl.selectFirst(".date")?.text().orEmpty()
                 val air = airLabel(date)
                 if (title.isNotEmpty() && air != null) {
-                    title = "${title.replace(TITLE_YEAR_REGEX, "")} · $air"
+                    title = title.replace(TITLE_YEAR_REGEX, "")
                 } else if (title.isNotEmpty() && !TITLE_YEAR_REGEX.containsMatchIn(title)) {
                     CARD_DATE_REGEX.find(date)?.let { title = "$title (20${it.groupValues[1]})" }
                 }
@@ -306,7 +306,7 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
                 title = li.selectFirst(".view-floor2-lf-cont .tit")?.text()?.trim().orEmpty()
                 thumbnail_url = a.selectFirst("img")?.absUrl("src")?.ifEmpty { null }
                 airLabel(li.selectFirst(".date")?.text().orEmpty())?.let {
-                    if (title.isNotEmpty()) title = "${title.replace(TITLE_YEAR_REGEX, "")} · $it"
+                    if (title.isNotEmpty()) title = title.replace(TITLE_YEAR_REGEX, "")
                 }
             }
         }.filter { it.title.isNotEmpty() }
@@ -329,7 +329,7 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
                 ?: doc.selectFirst(".view-floor2-tit")?.ownText()?.trim().orEmpty()
             // 방영 중/종영 판단은 목록 카드와 같은 기준: 가장 최근 회차가 최종회가 아니고 21일 안이면 방영 중
             // 제목도 목록 카드와 똑같이 (애니요미는 한 번 연 작품을 목록에서 이 제목으로 보여 줌):
-            // 방영 중 "제목 · 10.04", 끝났으면 "제목 (2026)" (사이트 제목에 연도가 없으면 방영 시작 연도, 그것도 없으면 마지막 방영 연도)
+            // 방영 중 "제목"(최근 방영일은 설명 맨 위), 끝났으면 "제목 (2026)" (사이트 제목에 연도가 없으면 방영 시작 연도, 그것도 없으면 마지막 방영 연도)
             val epLabels = doc.select(".view-floor1-rt-cont li p.left a").map { it.text().replace(ICON_REGEX, "").trim() }
             val newest = epLabels.maxByOrNull { dateOf(it) }?.takeIf { dateOf(it) > 0 }
             val air = newest?.let { airLabel(it) }
@@ -337,7 +337,7 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
             val year = periodText?.let { PERIOD_YEAR_REGEX.find(it)?.groupValues?.get(1) }
                 ?: newest?.let { CARD_DATE_REGEX.find(it)?.groupValues?.get(1) }?.let { "20$it" }
             title = when {
-                air != null -> "${name.replace(TITLE_YEAR_REGEX, "")} · $air"
+                air != null -> name.replace(TITLE_YEAR_REGEX, "")
                 year != null && !TITLE_YEAR_REGEX.containsMatchIn(name) -> "$name ($year)"
                 else -> name
             }
