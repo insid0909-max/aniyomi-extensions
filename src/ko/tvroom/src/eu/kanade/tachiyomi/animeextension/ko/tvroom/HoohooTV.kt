@@ -566,7 +566,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         val quality = if (media.contains(".m3u8")) "후후티비 (HLS)" else "후후티비"
         val videos = HlsQuality.expand(client, media, quality, videoHeaders(referer))
         val took = if (started > 0L) " · %.1f초".format((System.currentTimeMillis() - started) / 1000.0) else ""
-        val named = if (took.isEmpty()) videos else videos.map { it.copy(quality = it.quality + took) }
+        val named = if (took.isEmpty()) videos else videos.map { Video(it.url, it.quality + took, it.videoUrl, it.headers) }
         return HlsQuality.sort(prefs(), named)
     }
 
