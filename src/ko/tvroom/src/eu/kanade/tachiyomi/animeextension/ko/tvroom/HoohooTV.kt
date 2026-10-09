@@ -522,12 +522,13 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
     override fun videoListRequest(episode: SEpisode): Request = GET(baseUrl + episode.url, h())
 
     override fun videoListParse(response: Response): List<Video> {
+        val started = System.currentTimeMillis()
         val pageUrl = response.request.url.toString()
         // 같은 회차를 다시 열면(이어보기·재시도) 기억해 둔 영상 주소로 바로 재생
         val cacheKey = response.request.url.encodedPath + "?" + (response.request.url.encodedQuery ?: "")
         MEDIA_CACHE[cacheKey]?.let { (media, referer, at) ->
             if (System.currentTimeMillis() - at < MEDIA_CACHE_MS && HlsQuality.works(client, media, videoHeaders(referer))) {
-                return toVideos(media, referer)
+                return toVideos(media, referer, started)
             }
             MEDIA_CACHE.remove(cacheKey)
         }
@@ -539,7 +540,9 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
 
         // 1) 플레이어 페이지 글자 안에 영상 주소가 있으면 바로, 2) 없으면 숨은 화면으로 열어 영상 요청을 가로챈다
         // jwpcdn 플레이어는 보안 확인(Cloudflare)이 걸려 글자 읽기로는 못 찾으므로 바로 숨은 화면으로 (시간 절약)
-        val direct = if (player.contains("jwpcdn")) {
+        // 숨은 화면이 필요하다고 기억된 플레이어도 글자 읽기를 건너뜀
+        val needsWebView = player.contains("jwpcdn") || player.toHttpUrlOrNull()?.host in autoplayHosts()
+        val direct = if (needsWebView) {
             null
         } else {
             runCatching {
@@ -555,12 +558,16 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             if (MEDIA_CACHE.size >= MEDIA_CACHE_MAX) MEDIA_CACHE.keys.firstOrNull()?.let { MEDIA_CACHE.remove(it) }
             MEDIA_CACHE[cacheKey] = Triple(media, referer, System.currentTimeMillis())
         }
-        return toVideos(media, referer)
+        return toVideos(media, referer, started)
     }
 
-    private fun toVideos(media: String, referer: String): List<Video> {
+    /** started: 재생 준비에 걸린 시간을 화질 이름 뒤에 잠시 표시 (속도 확인용) */
+    private fun toVideos(media: String, referer: String, started: Long = 0L): List<Video> {
         val quality = if (media.contains(".m3u8")) "후후티비 (HLS)" else "후후티비"
-        return HlsQuality.sort(prefs(), HlsQuality.expand(client, media, quality, videoHeaders(referer)))
+        val videos = HlsQuality.expand(client, media, quality, videoHeaders(referer))
+        val took = if (started > 0L) " · %.1f초".format((System.currentTimeMillis() - started) / 1000.0) else ""
+        val named = if (took.isEmpty()) videos else videos.map { it.copy(quality = it.quality + took) }
+        return HlsQuality.sort(prefs(), named)
     }
 
     private fun videoHeaders(referer: String): Headers {
@@ -614,13 +621,18 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                         request: WebResourceRequest,
                     ): WebResourceResponse? {
                         val reqUrl = request.url.toString()
-                        if (found == null && MEDIA_REGEX.containsMatchIn(reqUrl)) {
-                            found = reqUrl to (request.requestHeaders["Referer"] ?: lastPage)
-                            latch.countDown()
+                        if (MEDIA_REGEX.containsMatchIn(reqUrl)) {
+                            if (found == null) {
+                                found = reqUrl to (request.requestHeaders["Referer"] ?: lastPage)
+                                latch.countDown()
+                            }
+                            // 주소만 알면 되므로 숨은 화면에는 영상을 주지 않음 (재생·소리가 안 나서 음량 막대도 안 뜸)
+                            return emptyResponse()
                         }
-                        // 광고·분석·P2P 추적 요청은 빈 응답으로 막아 로딩을 줄임
-                        if (BLOCKED_HOSTS.any { request.url.host?.endsWith(it) == true }) {
-                            return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
+                        // 광고·분석·P2P 추적 요청과 글꼴은 빈 응답으로 막아 로딩을 줄임
+                        val host = request.url.host.orEmpty()
+                        if (BLOCKED_HOSTS.any { host.endsWith(it) } || FONT_REGEX.containsMatchIn(request.url.path.orEmpty())) {
+                            return emptyResponse()
                         }
                         return super.shouldInterceptRequest(view, request)
                     }
@@ -649,6 +661,8 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         }
         return found
     }
+
+    private fun emptyResponse() = WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
 
     private fun autoplayHosts(): Set<String> =
         prefs()?.getString(PREF_AUTOPLAY_HOSTS, "").orEmpty().split(',').filter { it.isNotBlank() }.toSet()
@@ -818,7 +832,14 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             "cloudflareinsights.com",
             "jwpltx.com",
             "btorrent.xyz",
+            "doubleclick.net",
+            "googlesyndication.com",
+            "googleadservices.com",
+            "adservice.google.com",
+            "adnxs.com",
+            "facebook.net",
         )
+        private val FONT_REGEX = Regex("""\.(?:woff2?|ttf|otf|eot)$""", RegexOption.IGNORE_CASE)
         private const val MEDIA_CACHE_MS = 20 * 60_000L
         private const val MEDIA_CACHE_MAX = 30
 
