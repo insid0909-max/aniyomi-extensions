@@ -626,12 +626,33 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
 
     // ================= 설정 화면 =================
     override fun setupPreferenceScreen(screen: PreferenceScreen) {
-        // 영화·드라마 소스는 기본 "후후티비" 소스의 설정(주소·자동 찾기·화질)을 같이 씀
-        if (kind != KIND_ALL) return
+        // 영화·드라마 소스도 같은 설정을 보여 주고, 바꾸면 기본 "후후티비" 소스 저장소에 같이 써서 세 소스가 같이 씀
         val ctx = screen.context
+        val shared = prefs()
+        val same = if (kind != KIND_ALL) " (후후티비와 같이 씀)" else ""
+        fun share(key: String, v: Any?) {
+            if (kind == KIND_ALL) return
+            runCatching {
+                when (v) {
+                    is String -> shared?.edit()?.putString(key, v)?.apply()
+                    is Boolean -> shared?.edit()?.putBoolean(key, v)?.apply()
+                    else -> Unit
+                }
+            }
+        }
+        // 화면을 열 때 공통 저장소의 현재 값을 이 소스 화면에도 맞춰 둠
+        if (kind != KIND_ALL && shared != null) {
+            runCatching {
+                ownPrefs()?.edit()
+                    ?.putString(PREF_DOMAIN_KEY, shared.getString(PREF_DOMAIN_KEY, "") ?: "")
+                    ?.putBoolean(PREF_AUTO_DOMAIN, shared.getBoolean(PREF_AUTO_DOMAIN, true))
+                    ?.putString(HlsQuality.KEY, shared.getString(HlsQuality.KEY, HlsQuality.AUTO) ?: HlsQuality.AUTO)
+                    ?.commit()
+            }
+        }
         EditTextPreference(ctx).apply {
             key = PREF_DOMAIN_KEY
-            title = "후후티비 주소 직접 지정 (선택)"
+            title = "후후티비 주소 직접 지정 (선택)$same"
             summary = "빈 값이면 기본 주소($DEFAULT_BASE_URL)를 사용합니다. 사이트가 새 주소로 넘겨 주면 자동으로 저장됩니다.\n현재 주소: $baseUrl"
             dialogTitle = "기본값: $DEFAULT_BASE_URL"
             dialogMessage = "https:// 로 시작하는 후후티비 주소 (예: https://hoohootv1.com)"
@@ -640,6 +661,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                 val input = (newValue as String).trim().trimEnd('/')
                 if (input.isEmpty() || DOMAIN_REGEX.matches(input)) {
                     summary = "현재 주소: ${input.ifEmpty { DEFAULT_BASE_URL }}"
+                    share(PREF_DOMAIN_KEY, input)
                     true
                 } else {
                     Toast.makeText(ctx, "올바른 주소 형식이 아닙니다 (예: https://hoohootv1.com)", Toast.LENGTH_LONG).show()
@@ -650,12 +672,16 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
 
         androidx.preference.SwitchPreferenceCompat(ctx).apply {
             key = PREF_AUTO_DOMAIN
-            title = "도메인 자동 찾기"
+            title = "도메인 자동 찾기$same"
             summary = "접속이 안 되거나 막히면 다음 후후티비 주소(예: fp → fq → fr…, 숫자가 바뀐 주소)를 찾아 자동 변경합니다."
             setDefaultValue(true)
+            setOnPreferenceChangeListener { _, v ->
+                share(PREF_AUTO_DOMAIN, v)
+                true
+            }
         }.also(screen::addPreference)
 
-        HlsQuality.addPreference(screen)
+        HlsQuality.addPreference(screen) { share(HlsQuality.KEY, it) }
     }
 
     private fun Response.asDoc(): Document = Jsoup.parse(body.string(), request.url.toString())
