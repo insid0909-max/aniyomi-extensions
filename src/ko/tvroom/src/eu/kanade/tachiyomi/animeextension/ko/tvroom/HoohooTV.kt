@@ -522,13 +522,12 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
     override fun videoListRequest(episode: SEpisode): Request = GET(baseUrl + episode.url, h())
 
     override fun videoListParse(response: Response): List<Video> {
-        val started = System.currentTimeMillis()
         val pageUrl = response.request.url.toString()
         // 같은 회차를 다시 열면(이어보기·재시도) 기억해 둔 영상 주소로 바로 재생
         val cacheKey = response.request.url.encodedPath + "?" + (response.request.url.encodedQuery ?: "")
         MEDIA_CACHE[cacheKey]?.let { (media, referer, at) ->
             if (System.currentTimeMillis() - at < MEDIA_CACHE_MS && HlsQuality.works(client, media, videoHeaders(referer))) {
-                return toVideos(media, referer, started)
+                return toVideos(media, referer)
             }
             MEDIA_CACHE.remove(cacheKey)
         }
@@ -558,16 +557,12 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             if (MEDIA_CACHE.size >= MEDIA_CACHE_MAX) MEDIA_CACHE.keys.firstOrNull()?.let { MEDIA_CACHE.remove(it) }
             MEDIA_CACHE[cacheKey] = Triple(media, referer, System.currentTimeMillis())
         }
-        return toVideos(media, referer, started)
+        return toVideos(media, referer)
     }
 
-    /** started: 재생 준비에 걸린 시간을 화질 이름 뒤에 잠시 표시 (속도 확인용) */
-    private fun toVideos(media: String, referer: String, started: Long = 0L): List<Video> {
+    private fun toVideos(media: String, referer: String): List<Video> {
         val quality = if (media.contains(".m3u8")) "후후티비 (HLS)" else "후후티비"
-        val videos = HlsQuality.expand(client, media, quality, videoHeaders(referer))
-        val took = if (started > 0L) " · %.1f초".format((System.currentTimeMillis() - started) / 1000.0) else ""
-        val named = if (took.isEmpty()) videos else videos.map { Video(it.url, it.quality + took, it.videoUrl, it.headers) }
-        return HlsQuality.sort(prefs(), named)
+        return HlsQuality.sort(prefs(), HlsQuality.expand(client, media, quality, videoHeaders(referer)))
     }
 
     private fun videoHeaders(referer: String): Headers {
