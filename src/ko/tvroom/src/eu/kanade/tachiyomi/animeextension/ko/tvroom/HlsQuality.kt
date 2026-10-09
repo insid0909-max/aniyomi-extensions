@@ -14,8 +14,9 @@ import okhttp3.OkHttpClient
  * 설정에서 고른 화질을 맨 앞에 둔다. 화질이 하나뿐이거나 읽지 못하면 원래 영상 그대로.
  */
 internal object HlsQuality {
-    private const val PREF_KEY = "pref_quality"
-    private const val AUTO = "자동"
+    const val KEY = "pref_quality"
+    const val AUTO = "자동"
+    private const val PREF_KEY = KEY
     private val CHOICES = arrayOf<CharSequence>(AUTO, "1080p", "720p", "480p", "360p")
     private val HEIGHT_REGEX = Regex("""RESOLUTION=\d+x(\d+)""")
     private val URL_RES_REGEX = Regex("""(?<![0-9])(2160|1440|1080|720|576|480|360|240)[pP](?![0-9a-zA-Z])""")
@@ -83,7 +84,7 @@ internal object HlsQuality {
         return videos.sortedByDescending { it.quality.endsWith(" $want") || it.quality.contains(" $want ") }
     }
 
-    fun addPreference(screen: PreferenceScreen) {
+    fun addPreference(screen: PreferenceScreen, onChange: ((String) -> Unit)? = null) {
         ListPreference(screen.context).apply {
             key = PREF_KEY
             title = "선호 화질"
@@ -91,6 +92,12 @@ internal object HlsQuality {
             entryValues = CHOICES
             setDefaultValue(AUTO)
             summary = "%s\n영상이 여러 화질을 제공할 때 이 화질을 먼저 재생합니다."
+            if (onChange != null) {
+                setOnPreferenceChangeListener { _, v ->
+                    onChange(v as String)
+                    true
+                }
+            }
         }.also(screen::addPreference)
     }
 }
