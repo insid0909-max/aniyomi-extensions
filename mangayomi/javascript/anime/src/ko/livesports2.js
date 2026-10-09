@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.8",
+    "version": "0.1.9",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/livesports2.js"
@@ -659,8 +659,8 @@ class DefaultExtension extends MProvider {
 
     async search(query, page, filters) {
         await statusRefresh(this.client);
-        // 맨 위 상태 줄은 빼고 넘김 (필터 순서 기준 동작 유지)
-        return this.searchBase(query, page, (filters || []).filter((f) => !(f && f._status)));
+        // 맨 위 상태 줄은 빼고 넘김 (필터 순서 기준 동작 유지). 망가요미는 _status 표시를 지워서 돌려주므로 글자로도 거름
+        return this.searchBase(query, page, (filters || []).filter((f) => f && !f._status && !(f.type_name === "HeaderFilter" && /^(?:📡|🩺|❌|🛡)/.test(String(f.name || "")))));
     }
 
     getSourcePreferences() {
