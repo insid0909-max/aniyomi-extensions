@@ -582,6 +582,10 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         var lastPage = url
         val handler = Handler(Looper.getMainLooper())
         var webViewRef: WebView? = null
+        // 재생을 눌러야만 영상 주소를 내보내는 플레이어는 기억해 두었다가 처음부터 자동 재생(소리 끔)으로 엶
+        val playerHost = url.toHttpUrlOrNull()?.host.orEmpty()
+        val knownAutoplay = playerHost.isNotEmpty() && playerHost in autoplayHosts()
+        var autoplay = knownAutoplay
 
         handler.post {
             try {
@@ -591,13 +595,18 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                 webView.settings.domStorageEnabled = true
                 // 먼저 자동 재생을 막은 채로 열어 영상 주소만 찾음 (숨은 화면에서 소리가 나면
                 // 앱 플레이어가 음량 변화로 보고 음량 막대를 띄우므로). 못 찾으면 아래에서 자동 재생을 켜고 다시 연다
-                webView.settings.mediaPlaybackRequiresUserGesture = true
+                webView.settings.mediaPlaybackRequiresUserGesture = !autoplay
                 webView.settings.userAgentString = USER_AGENT
                 // 그림은 받지 않아 영상 주소를 더 빨리 찾음
                 webView.settings.blockNetworkImage = true
                 webView.webViewClient = object : WebViewClient() {
                     override fun onPageStarted(view: WebView, pageUrl: String, favicon: android.graphics.Bitmap?) {
                         lastPage = pageUrl
+                    }
+
+                    // 자동 재생으로 열 때는 소리를 꺼서 앱 플레이어에 음량 막대가 뜨지 않게 함
+                    override fun onPageFinished(view: WebView, pageUrl: String) {
+                        if (autoplay) view.evaluateJavascript(MUTE_JS, null)
                     }
 
                     override fun shouldInterceptRequest(
@@ -622,21 +631,32 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             }
         }
 
-        if (!latch.await(12, TimeUnit.SECONDS)) {
+        if (!latch.await(if (knownAutoplay) 15L else 12L, TimeUnit.SECONDS) && !knownAutoplay) {
             // 재생을 눌러야만 영상 주소를 받는 플레이어: 자동 재생을 켜고 다시 열어 봄
             handler.post {
                 runCatching {
+                    autoplay = true
                     webViewRef?.settings?.mediaPlaybackRequiresUserGesture = false
                     webViewRef?.loadUrl(url, mapOf("Referer" to referer))
                 }
             }
-            latch.await(15, TimeUnit.SECONDS)
+            // 자동 재생을 켜고 나서 찾았으면 다음부터는 처음부터 자동 재생으로
+            if (latch.await(15, TimeUnit.SECONDS) && playerHost.isNotEmpty()) rememberAutoplay(playerHost)
         }
         handler.post {
             webViewRef?.stopLoading()
             webViewRef?.destroy()
         }
         return found
+    }
+
+    private fun autoplayHosts(): Set<String> =
+        prefs()?.getString(PREF_AUTOPLAY_HOSTS, "").orEmpty().split(',').filter { it.isNotBlank() }.toSet()
+
+    private fun rememberAutoplay(host: String) {
+        val p = prefs() ?: return
+        val hosts = (autoplayHosts() + host).toList().takeLast(10)
+        p.edit().putString(PREF_AUTOPLAY_HOSTS, hosts.joinToString(",")).apply()
     }
 
     // ================= 필터 =================
@@ -727,6 +747,12 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
         private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
         private const val PREF_LAST_NEWER_CHECK = "pref_last_newer_check"
+        private const val PREF_AUTOPLAY_HOSTS = "pref_autoplay_hosts"
+
+        // 숨은 화면의 영상·소리를 계속 꺼 둠 (플레이어가 나중에 만드는 영상도)
+        private const val MUTE_JS =
+            "(function(){function m(){document.querySelectorAll('video,audio').forEach(function(v){v.muted=true;v.volume=0;});}" +
+                "m();setInterval(m,200);})()"
         private const val NEWER_CHECK_MS = 6 * 3_600_000L
         private const val PORTAL_URL = "https://hoohootv1.com/"
         private val ANNOUNCED_REGEX = Regex("""[a-z]{2}\.hoohootv\d+\.[a-z]{2,6}""", RegexOption.IGNORE_CASE)
