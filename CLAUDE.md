@@ -27,3 +27,21 @@
 - 회차 이름은 회차 번호로 시작(맨 앞 숫자를 회차로 인식), 시즌은 `scanlator`에
 - `selectFirst`는 비어도 truthy → `select().length` 사용; appClient는 UA 제거됨; followRedirects 옵션 무시됨
 - 파일 버전과 anime_index.json 버전 같이 올리기, `node --check` 통과
+
+## 지금까지 고친 것·배운 것 (다시 같은 실수 하지 않기)
+
+### 앱 동작 (확장으로 못 바꾸는 것)
+- 애니요미는 서재에 담긴 작품의 **제목을 갱신하지 않음** → 제목에 바뀌는 정보(방영일 " · MM.dd") 넣지 않음. 최근 방영일은 설명 맨 위("방영 중 · 최근 방영: yyyy.MM.dd (E)"). 종영·영화 " (yyyy)"는 유지. 망가요미는 서재 제목도 갱신되므로 그대로 둠.
+- 애니요미/망가요미는 **회차 이름으로 다운로드를 찾음** → 회차 이름을 바꾸면 받은 회차가 안 받은 것처럼 보임을 사용자에게 알림.
+- 앱의 `Video`는 data class가 아님 → `copy()` 쓰면 "No static method copy$default" 오류. 새 `Video(url, quality, videoUrl, headers)`로 만들 것.
+- 망가요미는 필터를 돌려줄 때 `_status` 같은 사용자 정의 표시를 지움 → 상태 줄은 글자(📡/🩺/❌/🛡)로도 거를 것 (gogotv·livesports2·tvchak).
+- 망가요미 목록 표지는 확장의 `getHeaders(url)`(UA + Referer)가 있어야 뜸.
+- Mangayomi JS는 master raw에서 바로 배포(빌드 불필요), Kotlin APK는 master push CI(`build_push.yml`)로 배포. PR 검사(googledrive-extractor)는 원래 실패하므로 무시. 저장소 Actions가 꺼지면 빌드가 안 돌므로 사용자에게 켜 달라고 안내.
+
+### 소스별
+- 후후티비: 포스터는 사이트 주소(/media/poster_image)에 있음 → `SiteRateLimit(skipImages = true)`, 포스터 실패 시 0.8초 후 재시도, 포스터 실패는 주소 변경 신호로 보지 않음, 목록 끝 404는 "더 없음".
+- 후후티비 재생: 플레이어가 재생해야 주소를 냄 → 자동재생이 필요한 플레이어 host를 기억(`pref_autoplay_hosts`)해 처음부터 음소거 자동재생, 숨은 WebView엔 영상 주소만 기록하고 빈 응답. 확장 처리 ≈2초, 나머지는 사이트·영상 서버 속도.
+- 후후티비 영화·드라마: 설정(주소·자동 찾기·화질)을 기본 후후티비와 공유하며 각 화면에도 표시.
+- 후후티비 회차 날짜는 사이트가 대부분 안 줌(앱이 받은 날로 표시) — 확장으로 채울 수 없음.
+- 고고티비: go.php 회차 링크는 만료됨 → 작품 페이지에서 재생 시 다시 찾음.
+- 성능 변경은 한 번에 하나씩, 측정이 필요하면 임시 표시를 넣고 끝나면 반드시 뺄 것.
