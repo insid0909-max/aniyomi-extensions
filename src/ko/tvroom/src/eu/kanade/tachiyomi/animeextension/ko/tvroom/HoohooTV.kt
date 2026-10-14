@@ -63,13 +63,29 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         app?.getSharedPreferences("source_${generateId("후후티비", lang, versionId)}", 0)
     }.getOrNull()
 
+    // 주소: 직접 넣은 주소(접속되는 동안) > 자동으로 찾은 주소 > 기본 주소.
+    // 직접 넣은 주소가 끊겨 자동으로 새 주소를 찾으면 그 주소를 "끊긴 주소"로 표시해 두고 자동 주소를 씀 (덮어쓰지 않음)
     override val baseUrl: String
         get() {
-            val custom = prefs()?.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/').orEmpty()
-            if (!DOMAIN_REGEX.matches(custom)) return DEFAULT_BASE_URL
-            // 저장된 주소가 확장 업데이트로 바뀐 기본 주소보다 옛 번호면 기본 주소를 씀
-            return if (hostNumber(custom) in 1 until hostNumber(DEFAULT_BASE_URL)) DEFAULT_BASE_URL else custom
+            val p = prefs()
+            fun clean(key: String) = p?.getString(key, "")?.trim()?.trimEnd('/').orEmpty()
+
+            // 확장 업데이트로 바뀐 기본 주소보다 옛 번호인 주소는 쓰지 않음
+            fun usable(u: String) = DOMAIN_REGEX.matches(u) && hostNumber(u) !in 1 until hostNumber(DEFAULT_BASE_URL)
+            val manual = clean(PREF_DOMAIN_KEY)
+            if (usable(manual) && manual.substringAfter("://") != clean(PREF_MANUAL_DEAD)) return manual
+            val auto = clean(PREF_AUTO_FOUND)
+            return if (usable(auto)) auto else DEFAULT_BASE_URL
         }
+
+    /** 자동으로 찾은 주소 저장. 지금 쓰던 주소가 직접 넣은 주소였으면 끊긴 주소로 표시 */
+    private fun saveFound(oldHost: String, newHost: String) {
+        val p = prefs() ?: return
+        val manual = p.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/').orEmpty().substringAfter("://")
+        p.edit().putString(PREF_AUTO_FOUND, "https://$newHost")
+            .apply { if (manual.isNotEmpty() && manual == oldHost) putString(PREF_MANUAL_DEAD, oldHost) }
+            .apply()
+    }
 
     private fun hostNumber(url: String): Int =
         SUBDOMAIN_REGEX.matchEntire(url.substringAfter("://").substringBefore('/'))?.groupValues?.get(3)?.toIntOrNull() ?: 0
@@ -83,9 +99,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             val res = chain.proceed(chain.request())
             val from = chain.request().url.host
             val to = res.request.url.host
-            if (from != to && HOST_REGEX.matches(from) && SUBDOMAIN_REGEX.matches(to)) {
-                prefs()?.edit()?.putString(PREF_DOMAIN_KEY, "https://$to")?.apply()
-            }
+            if (from != to && HOST_REGEX.matches(from) && SUBDOMAIN_REGEX.matches(to)) saveFound(from, to)
             res
         }
         .addInterceptor { chain -> domainIntercept(chain) }
@@ -127,7 +141,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
     }
 
     // ================= 도메인 자동 찾기 =================
-    // 주소가 fo.hoohootv459.xyz → fp → bd.hoohootv460.xyz 처럼 앞 두 글자가 바뀌거나(아무 글자로) 숫자가 바뀜.
+    // 주소가 fo.hoohootv459.xyz → fp → bd.hoohootv460.xyz → al.hoohootv461.xyz 처럼 앞 두 글자가 바뀌거나(아무 글자로) 숫자가 바뀜.
     // 두 글자가 통째로 바뀌면 짐작할 수 없어서, 주소 안내 사이트에 적힌 주소와 옛 주소가 넘겨 주는 주소를 먼저 씀.
     // 접속이 안 되거나 막히면 다음 글자·숫자 주소를 차례로 열어 보고, 진짜 후후티비인 주소를 저장해 다시 요청한다.
     private fun autoDomain(): Boolean = prefs()?.getBoolean(PREF_AUTO_DOMAIN, true) ?: true
@@ -139,7 +153,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         if (baseHost == null || req.url.host != baseHost || !autoDomain() || isImage(req)) return chain.proceed(req)
 
         fun retryOn(found: String): Response {
-            prefs()?.edit()?.putString(PREF_DOMAIN_KEY, "https://$found")?.apply()
+            saveFound(baseHost, found)
             return chain.proceed(req.newBuilder().url(req.url.newBuilder().host(found).build()).build())
         }
 
@@ -160,7 +174,8 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         return res
     }
 
-    // 옛 주소가 한동안 같이 열리면 위의 자동 찾기가 안 돌아서, 6시간에 한 번은 더 높은 번호 주소가 열리는지 따로 확인
+    // 옛 주소가 한동안 같이 열리면 위의 자동 찾기가 안 돌아서, 1시간에 한 번은 주소 안내 사이트·다음 번호 주소를 가볍게 확인.
+    // 찾으면 자동 주소로 저장 (직접 넣은 주소가 접속되는 동안은 그 주소를 계속 씀)
     private fun checkNewerLater(baseHost: String) {
         val p = prefs() ?: return
         val now = System.currentTimeMillis()
@@ -169,7 +184,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         Thread {
             runCatching {
                 discoverDomain(baseHost, newerOnly = true)?.let {
-                    if (baseUrl.toHttpUrlOrNull()?.host == baseHost) p.edit().putString(PREF_DOMAIN_KEY, "https://$it").apply()
+                    if (baseUrl.toHttpUrlOrNull()?.host == baseHost) p.edit().putString(PREF_AUTO_FOUND, "https://$it").apply()
                 }
             }
         }.start()
@@ -202,20 +217,32 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                 .filter { SUBDOMAIN_REGEX.matches(it) }.distinct()
                 .sortedByDescending { SUBDOMAIN_REGEX.matchEntire(it)!!.groupValues[3].toInt() }.toList()
         }
-        // 숫자 +1 ~ +3 에서 같은 두 글자 → 모든 둘째 글자 (가까운 글자부터)
+        fun numOf(h: String) = SUBDOMAIN_REGEX.matchEntire(h)?.groupValues?.get(3)?.toIntOrNull() ?: 0
+        // 1) 주소 안내 사이트에 적힌 주소만 먼저 확인 (앞 두 글자가 통째로 바뀌어도 찾음, 몇 초면 끝남).
+        //    가볍게 확인할 때는 번호가 더 크거나, 같은 번호라도 지금 주소가 안내에서 빠진 경우만
+        val fromPortal = announced.filter { h ->
+            h != currentHost && (!newerOnly || numOf(h) > n || (numOf(h) == n && currentHost !in announced))
+        }
+        probeHosts(fromPortal, currentHost)?.let { return it }
+        // 2) 못 찾으면 짐작: 숫자 +1 ~ +3 에서 같은 두 글자 → 모든 둘째 글자 (가까운 글자부터), 같은 숫자의 다음 글자들.
+        //    1시간마다 하는 가벼운 확인에서는 같은 두 글자의 다음 번호만
         val newer = (1..3).map { d -> "$first$second.hoohootv${n + d}.$tld" } +
             (1..3).flatMap { d -> (0 until 26).map { "$first${abc[(start + it) % 26]}.hoohootv${n + d}.$tld" } }
-        // 같은 숫자에서 다음 글자들
         val same = (1 until 26).map { "$first${abc[(start + it) % 26]}.hoohootv$n.$tld" }
-        val candidates = (
-            if (newerOnly) {
-                announced.filter { SUBDOMAIN_REGEX.matchEntire(it)!!.groupValues[3].toInt() > n } + newer
-            } else {
-                announced + same + newer
-            }
-            ).distinct().filter { it != currentHost }
+        val guesses = if (newerOnly) newer.take(3) else same + newer
+        return probeHosts(guesses.distinct().filter { it != currentHost && it !in fromPortal }, currentHost)
+    }
+
+    /** 후보 주소의 /home 을 동시에 열어 진짜 후후티비인 주소 중 번호가 가장 큰 것 */
+    private fun probeHosts(candidates: List<String>, currentHost: String): String? {
+        if (candidates.isEmpty()) return null
+        val plain = OkHttpClient.Builder()
+            .connectTimeout(4, TimeUnit.SECONDS)
+            .readTimeout(6, TimeUnit.SECONDS)
+            .callTimeout(8, TimeUnit.SECONDS)
+            .build()
         val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
-        try {
+        return try {
             val futures = candidates.map { host ->
                 pool.submit<String?> {
                     runCatching {
@@ -728,7 +755,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         EditTextPreference(ctx).apply {
             key = PREF_DOMAIN_KEY
             title = "후후티비 주소 직접 지정 (선택)$same"
-            summary = "빈 값이면 기본 주소($DEFAULT_BASE_URL)를 사용합니다. 사이트가 새 주소로 넘겨 주면 자동으로 저장됩니다.\n현재 주소: $baseUrl"
+            summary = "직접 넣은 주소는 접속되는 동안 계속 씁니다. 끊기면 자동 찾기로 찾은 새 주소를 씁니다 (직접 넣은 주소는 지우지 않음).\n현재 주소: $baseUrl"
             dialogTitle = "기본값: $DEFAULT_BASE_URL"
             dialogMessage = "https:// 로 시작하는 후후티비 주소 (예: https://hoohootv1.com)"
             setDefaultValue("")
@@ -737,6 +764,8 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                 if (input.isEmpty() || DOMAIN_REGEX.matches(input)) {
                     summary = "현재 주소: ${input.ifEmpty { DEFAULT_BASE_URL }}"
                     share(PREF_DOMAIN_KEY, input)
+                    // 새로 넣은 주소는 다시 써 봄 (전에 끊긴 주소로 표시됐어도)
+                    shared?.edit()?.remove(PREF_MANUAL_DEAD)?.apply()
                     true
                 } else {
                     Toast.makeText(ctx, "올바른 주소 형식이 아닙니다 (예: https://hoohootv1.com)", Toast.LENGTH_LONG).show()
@@ -748,7 +777,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         androidx.preference.SwitchPreferenceCompat(ctx).apply {
             key = PREF_AUTO_DOMAIN
             title = "도메인 자동 찾기$same"
-            summary = "접속이 안 되거나 막히면 다음 후후티비 주소(예: fp → fq → fr…, 숫자가 바뀐 주소)를 찾아 자동 변경합니다."
+            summary = "접속이 안 되면 바로, 접속돼도 1시간마다 주소 안내 사이트(hoohootv1.com)에 적힌 새 주소를 먼저 확인합니다 (앞 두 글자가 바뀌어도). 못 찾으면 다음 글자·번호 주소를 짐작해 찾습니다."
             setDefaultValue(true)
             setOnPreferenceChangeListener { _, v ->
                 share(PREF_AUTO_DOMAIN, v)
@@ -771,13 +800,15 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         private const val MUTE_JS =
             "(function(){function m(){document.querySelectorAll('video,audio').forEach(function(v){v.muted=true;v.volume=0;});}" +
                 "m();setInterval(m,200);})()"
-        private const val NEWER_CHECK_MS = 6 * 3_600_000L
+        private const val NEWER_CHECK_MS = 3_600_000L
+        private const val PREF_AUTO_FOUND = "pref_auto_found_domain"
+        private const val PREF_MANUAL_DEAD = "pref_manual_dead_host"
         private const val PORTAL_URL = "https://hoohootv1.com/"
         private val ANNOUNCED_REGEX = Regex("""[a-z]{2}\.hoohootv\d+\.[a-z]{2,6}""", RegexOption.IGNORE_CASE)
         private const val SITE_MARKER = "HOOHOO TV"
         private val DISCOVER_LOCK = Any()
         private val SUBDOMAIN_REGEX = Regex("""^([a-z])([a-z])\.hoohootv(\d+)\.([a-z]{2,6})$""")
-        private const val DEFAULT_BASE_URL = "https://bd.hoohootv460.xyz"
+        private const val DEFAULT_BASE_URL = "https://al.hoohootv461.xyz"
         private const val RATE_GAP_MS = 350L
         private const val POSTER_RETRY_MS = 800L
         private const val USER_AGENT =
