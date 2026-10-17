@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.3",
+    "version": "0.1.4",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -809,7 +809,7 @@ class DefaultExtension extends MProvider {
         if (!found) found = direct;
         if (!found) {
             const why = typeof evaluateJavascriptViaWebview !== "function" ? " [웹뷰 미지원]" : this.lastDiag ? ` [${this.lastDiag}]` : "";
-            throw new Error(`영상 주소를 찾지 못했습니다: ${playerHost}${why}`);
+            throw new Error(why ? `영상 못 찾음${why}` : `영상 주소를 찾지 못했습니다: ${playerHost}`);
         }
         const keys = Object.keys(MEDIA_CACHE);
         if (keys.length >= 30) delete MEDIA_CACHE[keys[0]];
@@ -859,12 +859,13 @@ class DefaultExtension extends MProvider {
             "var b=document.querySelector('.jw-icon-display,.jw-display-icon-container,.vjs-big-play-button,.plyr__control--overlaid,.play-button,[aria-label=Play]');if(b)b.click();}" +
             // 19초가 지나도 못 찾으면 무엇이 보였는지 알려 줌 (제목·주소·받은 파일 수·영상 칸·안쪽 화면 주소·글자·마지막 요청들)
             "if(n===63){clearInterval(t);var r=performance.getEntriesByType('resource');var last=[];" +
-            "for(var i=Math.max(0,r.length-3);i<r.length;i++){last.push(r[i].name.replace(/^https?:\\/\\//,'').substring(0,50));}" +
+            "for(var i=0;i<r.length;i++){var nm=r[i].name;if(/\\.(svg|css|woff2?|png|gif|ico)(\\?|$)|cdn-cgi|beacon|cloudflareinsights/i.test(nm))continue;" +
+            "last.push(r[i].initiatorType.substring(0,3)+':'+nm.replace(/^https?:\\/\\//,'').substring(0,70));}" +
             "var v=document.querySelector('video');var f=document.querySelector('iframe');" +
             "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:null,p:played," +
-            "d:(document.title||'제목없음').substring(0,30)+' | '+location.host+' | 파일'+r.length+' | 영상'+(v?((v.currentSrc||v.src||'').substring(0,20)||'있음'):'없음')+" +
-            "' | iframe '+(f?((f.src||f.getAttribute('data-src')||'주소없음').replace(/^https?:\\/\\//,'').substring(0,70)):'없음')+" +
-            "' | 글자 '+((document.body&&document.body.innerText)||'').replace(/\\s+/g,' ').substring(0,40)+' | '+last.join(' , ')}));}" +
+            "d:location.host+location.pathname.substring(0,30)+' | 영상'+(v?((v.currentSrc||v.src||'').substring(0,20)||'있음'):'없음')+' | '+last.slice(-6).join(' , ')+" +
+            "' | 파일'+r.length+' | 제목 '+(document.title||'없음').substring(0,20)+' | iframe '+(f?((f.src||f.getAttribute('data-src')||'주소없음').replace(/^https?:\\/\\//,'').substring(0,60)):'없음')+" +
+            "' | 글자 '+((document.body&&document.body.innerText)||'').replace(/\\s+/g,' ').substring(0,40)}));}" +
             "},300);})();";
         try {
             // 망가요미 웹뷰는 화면을 다 불러온 뒤(보안 확인 화면이 있으면 그다음 화면에서도) 스크립트를 넣음 → 넉넉히 36초
