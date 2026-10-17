@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv_movie.js"
@@ -857,10 +857,12 @@ class DefaultExtension extends MProvider {
             "' | iframe'+document.querySelectorAll('iframe').length+' | '+last.join(' , ')}));}" +
             "},300);})();";
         try {
-            const timeout = new Promise((res) => setTimeout(() => res(null), 22000));
-            const res = await Promise.race([evaluateJavascriptViaWebview(player, { "Referer": pageUrl }, [script]), timeout]);
+            // 망가요미 웹뷰는 화면을 다 불러온 뒤(보안 확인 화면이 있으면 그다음 화면에서도) 스크립트를 넣음 → 넉넉히 36초
+            const started = Date.now();
+            const timeout = new Promise((res) => setTimeout(() => res(null), 36000));
+            const res = await Promise.race([evaluateJavascriptViaWebview(player, { "Referer": pageUrl }, [script], 35), timeout]);
             if (!res) {
-                this.lastDiag = "웹뷰 응답 없음";
+                this.lastDiag = `웹뷰 응답 없음 ${Math.round((Date.now() - started) / 1000)}초 (화면을 다 불러오지 못했거나 스크립트가 안 돌았음)`;
                 return null;
             }
             const o = JSON.parse(String(res));
