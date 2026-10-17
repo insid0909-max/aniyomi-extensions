@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli24.js"
@@ -541,7 +541,7 @@ class DefaultExtension extends MProvider {
             for (const g of got) {
                 if (/자동/.test(g.quality)) continue;
                 const ts = await this.tsPlaylist(g.url, h);
-                if (ts) list.push({ url: ts, originalUrl: g.url, quality: `${g.quality} (ts 실험)`, headers: h });
+                if (ts) list.push({ url: ts, originalUrl: g.url, quality: `${g.quality} (ts 실험2)`, headers: h });
             }
         }
         if (!list.length) {
@@ -572,7 +572,8 @@ class DefaultExtension extends MProvider {
                 if (v !== u) changed = true;
                 return v;
             }).join("\n");
-            return changed ? "data:application/vnd.apple.mpegurl;base64," + b64(out) : null;
+            // data: 주소는 무한 로딩이었음 → 재생기(mpv)의 memory:// (주소 뒤 글을 그대로 재생 목록으로 씀)로 시험
+            return changed ? "memory://" + out : null;
         } catch (e) {
             return null;
         }
