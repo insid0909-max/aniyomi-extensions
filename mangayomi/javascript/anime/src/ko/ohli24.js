@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.7",
+    "version": "0.1.8",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli24.js"
@@ -85,6 +85,24 @@ function fullDate(ms) {
     const d = new Date(ms + 9 * 3600000);
     const w = ["일", "월", "화", "수", "목", "금", "토"][d.getUTCDay()];
     return d.toISOString().substring(0, 10).replace(/-/g, ".") + ` (${w})`;
+}
+
+// 압축된 자바스크립트(eval(function(p,a,c,k,e,d)…)를 원래 글로 풀기 (흔한 공개 압축 방식)
+function unpack(src) {
+    try {
+        const m = /\}\('([\s\S]*)',\s*(\d+),\s*(\d+),\s*'([\s\S]*?)'\.split\('\|'\)/.exec(src);
+        if (!m) return "";
+        let p = m[1].replace(/\\'/g, "'");
+        const a = parseInt(m[2], 10);
+        let c = parseInt(m[3], 10);
+        const k = m[4].split("|");
+        const enc = (n) => (n < a ? "" : enc(Math.floor(n / a))) + ((n = n % a) > 35 ? String.fromCharCode(n + 29) : n.toString(36));
+        const dict = {};
+        while (c--) dict[enc(c)] = k[c] || enc(c);
+        return p.replace(/\b\w+\b/g, (w) => (w in dict ? dict[w] : w));
+    } catch (e) {
+        return "";
+    }
 }
 
 function ruleText(i) {
@@ -509,7 +527,8 @@ class DefaultExtension extends MProvider {
             const player = players[i];
             const label = i === 0 ? LABEL : `${LABEL} (대체 ${i})`;
             // .m3u8 주소를 못 받았으면 웹뷰로 플레이어가 실제로 받는 .m3u8 을 찾아 봄 (없으면 받은 주소 그대로)
-            const fire = await this.firePlayer(player, pageUrl);
+            // 다른 애니24 확장앱(DC 애니24, 망가요미에서 잘 됨)처럼 플레이어 화면의 FirePlayer 설정에서 securedLink 를 먼저 찾음
+            const fire = (await this.playerPage(player, pageUrl)) || (await this.firePlayer(player, pageUrl));
             let found = fire ? fire.url : null;
             if (!fire || !fire.sure) {
                 const w = await this.viaWebview(player, pageUrl);
@@ -523,13 +542,8 @@ class DefaultExtension extends MProvider {
             const h = { "User-Agent": UA, "Referer": `${origin}/`, "Origin": origin };
             const got = await this.expand(found, label, h);
             list = list.concat(got);
-            // [실험] 영상 조각이 .html 로 꾸며져 있어 망가요미 재생기가 몇 초마다 멈춤 (애니요미는 정상).
-            // 같은 조각을 .ts 주소로도 주므로, 조각 주소만 .ts 로 바꾼 재생 목록을 따로 추가
-            for (const g of got) {
-                if (/자동/.test(g.quality)) continue;
-                const ts = await this.tsPlaylist(g.url, h);
-                if (ts) list.push({ url: ts, originalUrl: g.url, quality: `${g.quality} (ts 실험2)`, headers: h });
-            }
+            // 화질이 하나뿐이면 원래 목록 주소도 함께 (재생기에 따라 이쪽이 잘 될 수 있음)
+            if (got.length === 1 && got[0].url !== found) list.push({ url: found, originalUrl: found, quality: `${label} 원본 목록`, headers: h });
         }
         if (!list.length) {
             const wv = typeof evaluateJavascriptViaWebview === "function" ? "" : " · 웹뷰 미지원";
@@ -542,26 +556,24 @@ class DefaultExtension extends MProvider {
      * 화질 나누기. 이 플레이어의 재생 목록은 주소 끝에 .m3u8 이 없으므로(/m3/…, master.txt)
      * 주소 모양 대신 내용(#EXTM3U)을 보고 화질 목록이면 화질별로 나눔 (자동 화질 바꿈으로 자주 멈추는 것을 피하게)
      */
-    /** [실험] 조각 주소(.html)를 .ts 로 바꾼 재생 목록을 data: 주소로 만듦. 조각이 .html 이 아니면 null */
-    async tsPlaylist(url, h) {
+    /** 플레이어 화면(cdndania.com/video/…)의 스크립트에서 securedLink 를 찾음 (압축된 스크립트는 풀어서) */
+    async playerPage(player, pageUrl) {
         try {
-            const res = await this.client.get(url, h);
-            const body = String(res.body || "").replace(/\r/g, "");
-            if (!body.startsWith("#EXTM3U") || /#EXT-X-STREAM-INF/.test(body)) return null;
-            const origin = (/^(https?:\/\/[^/]+)/.exec(url) || [null, ""])[1];
-            const dir = url.replace(/[^/]*(?:\?.*)?$/, "");
-            let changed = false;
-            const out = body.split("\n").map((line) => {
-                const t = line.trim();
-                if (!t || t.startsWith("#")) return line;
-                let u = /^https?:\/\//.test(t) ? t : t.startsWith("/") ? origin + t : dir + t;
-                const v = u.replace(/\.html(?=\?|$)/, ".ts");
-                if (v !== u) changed = true;
-                return v;
-            }).join("\n");
-            // data: 주소는 무한 로딩이었음 → 재생기(mpv)의 memory:// (주소 뒤 글을 그대로 재생 목록으로 씀)로 시험
-            return changed ? "memory://" + out : null;
+            const res = await this.client.get(player, { "User-Agent": UA, "Referer": pageUrl });
+            if (res.statusCode >= 400) {
+                this.diag.push(`플레이어 ${res.statusCode}`);
+                return null;
+            }
+            let html = String(res.body || "");
+            const packed = html.match(/eval\(function\(p,a,c,k,e,[dr]\)[\s\S]*?\.split\('\|'\)[^)]*\)\)/g) || [];
+            for (const p of packed) html += "\n" + unpack(p);
+            const text = html.replace(/\\\//g, "/");
+            const m = /securedLink"?\s*:\s*"([^"]+)"/.exec(text);
+            if (m && /^https?:\/\//.test(m[1])) return { url: m[1], sure: true };
+            this.diag.push(`플레이어에 securedLink 없음${packed.length ? "(압축 " + packed.length + ")" : ""}`);
+            return null;
         } catch (e) {
+            this.diag.push(`플레이어 열기 실패 ${String((e && e.message) || e).substring(0, 40)}`);
             return null;
         }
     }
