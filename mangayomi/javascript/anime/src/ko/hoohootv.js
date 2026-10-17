@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.4",
+    "version": "0.1.5",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -847,7 +847,10 @@ class DefaultExtension extends MProvider {
             "function scan(w){try{var r=w.performance.getEntriesByType('resource');for(var i=0;i<r.length;i++){" +
             "if(/\\.(m3u8|mp4)(\\?|$)/i.test(r[i].name))return r[i].name;}" +
             "var v=w.document.querySelector('video');var s=v&&(v.currentSrc||v.src);if(s&&/^https?:/.test(s)&&/\\.(m3u8|mp4)/i.test(s))return s;}catch(e){}return null;}" +
-            "function find(){var u=scan(window);if(u)return u;var f=document.querySelectorAll('iframe');" +
+            // JW Player 는 영상 칸을 만들기 전에도 설정된 영상 주소(playlist)를 알려 줌 (확장자가 없어도 그 주소를 씀)
+            "function jw(){try{var j=window.jwplayer&&window.jwplayer();if(!j||!j.getPlaylistItem)return null;var it=j.getPlaylistItem()||(j.getPlaylist&&j.getPlaylist()[0]);" +
+            "var f=it&&(it.file||(it.sources&&it.sources[0]&&it.sources[0].file));return f?new URL(f,location.href).href:null;}catch(e){return null;}}" +
+            "function find(){var u=scan(window)||jw();if(u)return u;var f=document.querySelectorAll('iframe');" +
             "for(var i=0;i<f.length;i++){try{u=scan(f[i].contentWindow);if(u)return u;}catch(e){}}return null;}" +
             "function inner(){var f=document.querySelectorAll('iframe');for(var i=0;i<f.length;i++){var s=f[i].src||f[i].getAttribute('data-src')||'';" +
             "if(/^https?:/.test(s)&&!/challenges\\.cloudflare\\.com|google|facebook|doubleclick/.test(s)&&s!==location.href)return s;}return null;}" +
@@ -856,15 +859,17 @@ class DefaultExtension extends MProvider {
             "if(n>=12&&n<=40){var s=inner();if(s){clearInterval(t);location.href=s;return;}}" +
             "if(n===" + playAt + "||n===" + (playAt + 15) + "){played=true;var v=document.querySelector('video');" +
             "if(v){v.muted=true;try{var q=v.play();if(q&&q.catch)q.catch(function(){});}catch(e){}}" +
+            "try{var j=window.jwplayer&&window.jwplayer();if(j&&j.play){if(j.setMute)j.setMute(true);j.play();}}catch(e){}" +
             "var b=document.querySelector('.jw-icon-display,.jw-display-icon-container,.vjs-big-play-button,.plyr__control--overlaid,.play-button,[aria-label=Play]');if(b)b.click();}" +
             // 19초가 지나도 못 찾으면 무엇이 보였는지 알려 줌 (제목·주소·받은 파일 수·영상 칸·안쪽 화면 주소·글자·마지막 요청들)
             "if(n===63){clearInterval(t);var r=performance.getEntriesByType('resource');var last=[];" +
-            "for(var i=0;i<r.length;i++){var nm=r[i].name;if(/\\.(svg|css|woff2?|png|gif|ico)(\\?|$)|cdn-cgi|beacon|cloudflareinsights/i.test(nm))continue;" +
-            "last.push(r[i].initiatorType.substring(0,3)+':'+nm.replace(/^https?:\\/\\//,'').substring(0,70));}" +
+            "for(var i=0;i<r.length;i++){var nm=r[i].name;if(r[i].initiatorType==='script'||r[i].initiatorType==='link'||/\\.(svg|css|js|woff2?|png|gif|ico)(\\?|$)|cdn-cgi|beacon|cloudflareinsights/i.test(nm))continue;" +
+            "last.push(r[i].initiatorType.substring(0,3)+':'+nm.replace(/^https?:\\/\\//,'').substring(0,60));}" +
+            "var js='없음';try{var j=window.jwplayer&&window.jwplayer();if(window.jwplayer)js=(j&&j.getState?j.getState():'설정전')+(j&&j.getPlaylist?' 목록'+(j.getPlaylist()||[]).length:'');}catch(e){js='오류 '+String(e).substring(0,30);}" +
             "var v=document.querySelector('video');var f=document.querySelector('iframe');" +
             "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:null,p:played," +
-            "d:location.host+location.pathname.substring(0,30)+' | 영상'+(v?((v.currentSrc||v.src||'').substring(0,20)||'있음'):'없음')+' | '+last.slice(-6).join(' , ')+" +
-            "' | 파일'+r.length+' | 제목 '+(document.title||'없음').substring(0,20)+' | iframe '+(f?((f.src||f.getAttribute('data-src')||'주소없음').replace(/^https?:\\/\\//,'').substring(0,60)):'없음')+" +
+            "d:location.host+' | jw '+js+' | 영상'+(v?'있음':'없음')+' | 요청 '+(last.slice(-4).join(' , ')||'없음')+' | 파일'+r.length+" +
+            "' | iframe '+(f?((f.src||'주소없음').replace(/^https?:\\/\\//,'').substring(0,40)):'없음')+" +
             "' | 글자 '+((document.body&&document.body.innerText)||'').replace(/\\s+/g,' ').substring(0,40)}));}" +
             "},300);})();";
         try {
