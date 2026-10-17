@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/anilife.js"
@@ -337,18 +337,18 @@ class DefaultExtension extends MProvider {
         return { "User-Agent": UA, "Referer": `${this.getBaseUrl()}/` };
     }
 
-    apiHeaders(base) {
-        return { "User-Agent": UA, "Referer": `${base || this.getBaseUrl()}/`, "Accept": "application/json" };
+    apiHeaders(base, refPath) {
+        return { "User-Agent": UA, "Referer": `${base || this.getBaseUrl()}${refPath || "/"}`, "Accept": "application/json" };
     }
 
     /** 사이트 API(JSON) 요청. 접속이 안 되거나 막히면(오류/403/5xx) anilife 번호 주소를 찾아 바꾼 뒤 다시 요청 */
-    async api(path) {
+    async api(path, refPath) {
         const base = this.getBaseUrl();
         let res = null;
         for (let attempt = 0; attempt < 2; attempt++) {
             await siteWait();
             try {
-                res = await this.client.get(base + path, this.apiHeaders(base));
+                res = await this.client.get(base + path, this.apiHeaders(base, refPath));
                 break;
             } catch (e) {
                 res = null;
@@ -360,7 +360,7 @@ class DefaultExtension extends MProvider {
             const found = await this.discover(base);
             if (found) {
                 await siteWait();
-                res = await this.client.get(found + path, this.apiHeaders(found));
+                res = await this.client.get(found + path, this.apiHeaders(found, refPath));
             }
         }
         if (!res) throw new Error(`애니라이프 접속 실패: ${base}`);
@@ -554,13 +554,16 @@ class DefaultExtension extends MProvider {
         let main = "";
         let backup = "";
         let sub = "";
+        let apiError = "";
         try {
-            const d = await this.api(`/api/playback/${m[1]}/${m[2]}?request=${Date.now()}-0`);
+            // 사이트 재생 화면(/content/작품/회차)에서 부르는 것처럼 그 화면 주소를 Referer 로
+            const d = await this.api(`/api/playback/${m[1]}/${m[2]}?request=${Date.now()}-0`, `/content/${m[1]}/${m[2]}`);
             main = str(d, "videoUrl");
             backup = str(d, "backupUrl");
             sub = str(d, "subtitleUrl");
+            if (!main && !backup) apiError = "빈 응답 " + JSON.stringify(d).substring(0, 80);
         } catch (e) {
-            // 아래에서 작품 정보에 적힌 주소를 찾아 봄
+            apiError = String((e && e.message) || e);
         }
         if (!main && !backup) {
             try {
@@ -573,7 +576,7 @@ class DefaultExtension extends MProvider {
                 }
             } catch (e) {}
         }
-        if (!main && !backup) throw new Error("재생 주소를 받지 못했습니다. 잠시 뒤 다시 시도해 주세요");
+        if (!main && !backup) throw new Error("재생 주소를 받지 못했습니다. 잠시 뒤 다시 시도해 주세요" + (apiError ? ` [${apiError}]` : ""));
         const base = this.getBaseUrl();
         const h = { "User-Agent": UA, "Referer": `${base}/`, "Origin": base };
         const subtitles = sub ? [{ file: this.abs(sub), label: "한국어" }] : [];

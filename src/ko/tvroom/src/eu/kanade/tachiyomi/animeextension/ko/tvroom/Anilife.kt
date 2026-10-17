@@ -1,7 +1,14 @@
 package eu.kanade.tachiyomi.animeextension.ko.tvroom
 
+import android.annotation.SuppressLint
 import android.app.Application
 import android.content.SharedPreferences
+import android.os.Handler
+import android.os.Looper
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
@@ -25,10 +32,12 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
@@ -348,14 +357,21 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         var main = ""
         var backup = ""
         var sub = ""
-        runCatching {
+        var apiError = ""
+        // 사이트 재생 화면(/content/작품/회차)에서 부르는 것처럼 그 화면 주소를 Referer 로
+        val page = "$baseUrl/content/$animeId/$key"
+        try {
             val url = "$baseUrl${episode.url.substringBefore('?')}?request=${System.currentTimeMillis()}-0"
-            client.newCall(GET(url, apiHeaders().newBuilder().set("Cache-Control", "no-store").build())).execute().use { res ->
+            val hh = apiHeaders().newBuilder().set("Referer", page).set("Cache-Control", "no-store").build()
+            client.newCall(GET(url, hh)).execute().use { res ->
                 val o = json(res)
                 main = str(o, "videoUrl")
                 backup = str(o, "backupUrl")
                 sub = str(o, "subtitleUrl")
+                if (main.isEmpty() && backup.isEmpty()) apiError = "빈 응답 ${o.toString().take(80)}"
             }
+        } catch (e: Exception) {
+            apiError = e.message.orEmpty()
         }
         // 재생 주소를 못 받으면 작품 정보에 적힌 주소를 씀
         if (main.isEmpty() && backup.isEmpty()) {
@@ -372,9 +388,14 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
                 }
             }
         }
-        if (main.isEmpty() && backup.isEmpty()) throw Exception("재생 주소를 받지 못했습니다. 잠시 뒤 다시 시도해 주세요")
-
-        val vh = videoHeaders()
+        var vh = videoHeaders()
+        // 그래도 없으면 숨은 화면(WebView)으로 사이트 재생 화면을 열어 플레이어가 부르는 영상 주소를 받음
+        if (main.isEmpty() && backup.isEmpty()) {
+            val found = sniffWithWebView(page, "$baseUrl/")
+                ?: throw Exception("재생 주소를 받지 못했습니다. 잠시 뒤 다시 시도해 주세요 [$apiError]".replace(" []", ""))
+            main = found.first
+            vh = videoHeaders(found.second)
+        }
         val subs = if (sub.isNotEmpty()) listOf(Track(abs(sub), "한국어")) else emptyList()
         // 기본 주소가 안 열리면 대체 주소를 먼저
         val servers = listOf(abs(main) to LABEL, abs(backup) to "$LABEL (대체 1)").filter { it.first.isNotEmpty() }.distinctBy { it.first }
@@ -385,11 +406,78 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         HlsQuality.sort(prefs(), videos)
     }
 
-    private fun videoHeaders(): Headers = Headers.Builder()
-        .set("User-Agent", USER_AGENT)
-        .set("Referer", "$baseUrl/")
-        .set("Origin", baseUrl)
-        .build()
+    private fun videoHeaders(referer: String = "$baseUrl/"): Headers {
+        val origin = referer.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" } ?: baseUrl
+        return Headers.Builder()
+            .set("User-Agent", USER_AGENT)
+            .set("Referer", referer)
+            .set("Origin", origin)
+            .build()
+    }
+
+    /** 숨은 WebView 로 재생 화면을 열고, 처음 나오는 m3u8 요청 주소와 그 Referer 를 돌려줌 */
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun sniffWithWebView(url: String, referer: String): Pair<String, String>? {
+        val latch = CountDownLatch(1)
+        var found: Pair<String, String>? = null
+        var lastPage = url
+        val handler = Handler(Looper.getMainLooper())
+        var webViewRef: WebView? = null
+
+        handler.post {
+            try {
+                val context = Class.forName("android.app.ActivityThread")
+                    .getMethod("currentApplication").invoke(null) as Application
+                val webView = WebView(context)
+                webViewRef = webView
+                webView.settings.javaScriptEnabled = true
+                webView.settings.domStorageEnabled = true
+                // 먼저 자동 재생을 막은 채로 열어 영상 주소만 찾음 (숨은 화면에서 소리가 나 음량 막대가 뜨지 않게).
+                // 못 찾으면 아래에서 자동 재생을 켜고 다시 연다
+                webView.settings.mediaPlaybackRequiresUserGesture = true
+                webView.settings.userAgentString = USER_AGENT
+                // 그림은 받지 않아 영상 주소를 더 빨리 찾음
+                webView.settings.blockNetworkImage = true
+                webView.webViewClient = object : WebViewClient() {
+                    override fun onPageStarted(view: WebView, pageUrl: String, favicon: android.graphics.Bitmap?) {
+                        lastPage = pageUrl
+                    }
+
+                    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                        val path = request.url.path?.lowercase().orEmpty()
+                        if (found == null && (path.endsWith(".m3u8") || path.endsWith(".mp4"))) {
+                            found = request.url.toString() to (request.requestHeaders["Referer"] ?: lastPage)
+                            latch.countDown()
+                        }
+                        // 광고·통계 요청은 빈 응답으로 막아 로딩을 줄임
+                        if (BLOCKED_HOSTS.any { request.url.host?.endsWith(it) == true }) {
+                            return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
+                        }
+                        return super.shouldInterceptRequest(view, request)
+                    }
+                }
+                webView.loadUrl(url, mapOf("Referer" to referer))
+            } catch (e: Exception) {
+                latch.countDown()
+            }
+        }
+
+        if (!latch.await(12, TimeUnit.SECONDS)) {
+            // 재생을 눌러야만 영상 주소를 받는 경우: 자동 재생을 켜고 다시 열어 봄
+            handler.post {
+                runCatching {
+                    webViewRef?.settings?.mediaPlaybackRequiresUserGesture = false
+                    webViewRef?.loadUrl(url, mapOf("Referer" to referer))
+                }
+            }
+            latch.await(15, TimeUnit.SECONDS)
+        }
+        handler.post {
+            webViewRef?.stopLoading()
+            webViewRef?.destroy()
+        }
+        return found
+    }
 
     override fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()
 
@@ -495,6 +583,14 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         private val DETAIL_PATH = Regex("""^/api/anime/\d+$""")
         private val PLAYBACK_REGEX = Regex("""/api/playback/(\d+)/([^/?#]+)""")
         private val EP_NUM_REGEX = Regex("""(\d+(?:\.\d+)?)\s*화""")
+
+        private val BLOCKED_HOSTS = listOf(
+            "googletagmanager.com",
+            "google-analytics.com",
+            "cloudflareinsights.com",
+            "openwebtorrent.com",
+            "webtorrent.dev",
+        )
 
         private val KST = TimeZone.getTimeZone("Asia/Seoul")
         private val IN_FMT = SimpleDateFormat("yyyy-MM-dd", Locale.KOREA).apply { timeZone = KST }
