@@ -87,19 +87,6 @@ function fullDate(ms) {
     return d.toISOString().substring(0, 10).replace(/-/g, ".") + ` (${w})`;
 }
 
-// 영문·숫자로 된 글을 base64 로 (앱에 btoa 가 없을 수 있어 직접 만듦)
-function b64(str) {
-    const bytes = [];
-    for (const ch of unescape(encodeURIComponent(str))) bytes.push(ch.charCodeAt(0));
-    const T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let out = "";
-    for (let i = 0; i < bytes.length; i += 3) {
-        const n = (bytes[i] << 16) | ((bytes[i + 1] || 0) << 8) | (bytes[i + 2] || 0);
-        out += T[(n >> 18) & 63] + T[(n >> 12) & 63] + (i + 1 < bytes.length ? T[(n >> 6) & 63] : "=") + (i + 2 < bytes.length ? T[n & 63] : "=");
-    }
-    return out;
-}
-
 function ruleText(i) {
     return [
         KINDS[i[0]][0],
