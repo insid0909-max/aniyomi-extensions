@@ -125,12 +125,20 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         val width = m.groupValues[1].length
         fun host(v: Int) = "anilife${v.toString().padStart(width, '0')}.tv"
         // 다음 번호 우선, 그다음 이전 번호
-        val candidates = (1..8).map { host(n + it) } + (1..2).mapNotNull { (n - it).takeIf { v -> v > 0 }?.let(::host) }
         val plain = OkHttpClient.Builder()
             .connectTimeout(4, TimeUnit.SECONDS)
             .readTimeout(6, TimeUnit.SECONDS)
             .callTimeout(8, TimeUnit.SECONDS)
             .build()
+        // 공개 주소 목록(중앙신호등: 여러 사이트의 최신 주소를 확인해 올려 두는 곳)에 적힌 주소를 먼저 후보로
+        val signal = runCatching {
+            plain.newCall(Request.Builder().url("$SIGNAL_URL?t=$now").header("Cache-Control", "no-cache").build()).execute().use { r ->
+                JSONObject(r.body.string()).optJSONObject("domains")?.optJSONObject("anilife")?.optString("baseUrl")
+                    ?.trimEnd('/')?.toHttpUrlOrNull()?.host?.takeIf { HOST_REGEX.matches(it) }
+            }
+        }.getOrNull()
+        val candidates = (listOfNotNull(signal) + (1..8).map { host(n + it) } + (1..2).mapNotNull { (n - it).takeIf { v -> v > 0 }?.let(::host) })
+            .distinct().filter { it != currentHost }
         val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
         try {
             val futures = candidates.map { h ->
@@ -572,6 +580,7 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val RATE_GAP_MS = 250L
         private const val LABEL = "애니라이프"
         private const val SITE_MARKER = "애니라이프"
+        private const val SIGNAL_URL = "https://wankyo83.github.io/tokki-traffic-light/domains.json"
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/124.0.0.0 Mobile Safari/537.36"
@@ -599,7 +608,7 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
 
         /** 목록 종류 (사이트 메뉴: 인기 작품 · 최근 업데이트) */
         private val SCOPES = listOf("전체 작품" to "", "인기 작품" to "popular", "최근 업데이트" to "updates")
-        private val STATUSES = listOf("전체", "방영중", "완결")
+        private val STATUSES = listOf("전체", "방영중", "완결", "방영예정")
         private val DAYS = listOf("전체", "월", "화", "수", "목", "금", "토", "일")
         private val FORMATS = listOf("전체" to "", "TV" to "TV", "극장판" to "Movie", "OVA" to "OVA", "ONA" to "ONA")
         private val FORMAT_NAMES = mapOf("Movie" to "극장판")
