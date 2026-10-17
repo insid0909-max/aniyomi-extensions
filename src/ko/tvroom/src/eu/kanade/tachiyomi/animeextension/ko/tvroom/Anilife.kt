@@ -369,6 +369,10 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         var backup = ""
         var sub = ""
         var apiError = ""
+        // [임시 측정] 단계별 걸린 시간 (화질 이름 뒤에 표시, 원인 찾으면 뺄 것)
+        val t0 = System.currentTimeMillis()
+        val times = mutableListOf<String>()
+        fun lap(name: String, since: Long) = times.add("$name ${"%.1f".format((System.currentTimeMillis() - since) / 1000.0)}")
         // 사이트 재생 화면(/content/작품/회차)에서 부르는 것처럼 그 화면 주소를 Referer 로
         val page = "$baseUrl/content/$animeId/$key"
         try {
@@ -384,7 +388,9 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         } catch (e: Exception) {
             apiError = e.message.orEmpty()
         }
+        lap("API", t0)
         // 재생 주소를 못 받으면 작품 정보에 적힌 주소를 씀
+        val t1 = System.currentTimeMillis()
         if (main.isEmpty() && backup.isEmpty()) {
             runCatching {
                 client.newCall(GET(detailUrl(animeId), apiHeaders())).execute().use { res ->
@@ -399,21 +405,29 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
                 }
             }
         }
+        lap("상세", t1)
         var vh = videoHeaders()
-        // 그래도 없으면 숨은 화면(WebView)으로 사이트 재생 화면을 열어 플레이어가 부르는 영상 주소를 받음
+        // 그래도 없으면 숨은 화면(WebView)으로 사이트 재생 화면을 열어 영상 주소를 받음
+        val t2 = System.currentTimeMillis()
         if (main.isEmpty() && backup.isEmpty()) {
             val found = sniffWithWebView(page, "$baseUrl/")
                 ?: throw Exception("재생 주소를 받지 못했습니다. 잠시 뒤 다시 시도해 주세요 [$apiError]".replace(" []", ""))
-            main = found.first
-            vh = videoHeaders(found.second)
+            main = found.url
+            if (backup.isEmpty()) backup = found.backup
+            if (sub.isEmpty()) sub = found.sub
+            vh = videoHeaders(found.referer)
+            lap("웹뷰(${found.via})", t2)
         }
+        val t3 = System.currentTimeMillis()
         val subs = if (sub.isNotEmpty()) listOf(Track(abs(sub), "한국어")) else emptyList()
         // 기본 주소가 안 열리면 대체 주소를 먼저
         val servers = listOf(abs(main) to LABEL, abs(backup) to "$LABEL (대체 1)").filter { it.first.isNotEmpty() }.distinctBy { it.first }
         val ordered = if (servers.size > 1 && !HlsQuality.works(client, servers[0].first, vh)) servers.reversed() else servers
-        val videos = ordered.flatMap { (u, label) ->
-            HlsQuality.expand(client, u, label, vh).map { Video(it.url, it.quality, it.videoUrl, vh, subs) }
-        }
+        val expanded = ordered.flatMap { (u, label) -> HlsQuality.expand(client, u, label, vh) }
+        lap("화질", t3)
+        lap("합계", t0)
+        val tag = " [${times.joinToString("·")}초]"
+        val videos = expanded.map { Video(it.url, it.quality + tag, it.videoUrl, vh, subs) }
         HlsQuality.sort(prefs(), videos)
     }
 
@@ -426,11 +440,17 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
             .build()
     }
 
-    /** 숨은 WebView 로 재생 화면을 열고, 처음 나오는 m3u8 요청 주소와 그 Referer 를 돌려줌 */
+    private class Sniffed(val url: String, val referer: String, val backup: String = "", val sub: String = "", val via: String = "m3u8")
+
+    /**
+     * 숨은 WebView 로 재생 화면을 열고 영상 주소를 받음.
+     * 화면이 재생 주소 API(/api/playback/…)를 부르면 그 요청을 화면 대신 보내 응답에서 바로 주소를 꺼냄
+     * (플레이어가 준비돼 m3u8 을 부를 때까지 기다리지 않아 빠름). 안 되면 처음 나오는 m3u8 요청 주소.
+     */
     @SuppressLint("SetJavaScriptEnabled")
-    private fun sniffWithWebView(url: String, referer: String): Pair<String, String>? {
+    private fun sniffWithWebView(url: String, referer: String): Sniffed? {
         val latch = CountDownLatch(1)
-        var found: Pair<String, String>? = null
+        var found: Sniffed? = null
         var lastPage = url
         val handler = Handler(Looper.getMainLooper())
         var webViewRef: WebView? = null
@@ -456,8 +476,17 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
 
                     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                         val path = request.url.path?.lowercase().orEmpty()
+                        if (found == null && request.method == "GET" && path.startsWith("/api/playback/")) {
+                            apiFromWebView(request, lastPage)?.let { (res, hit) ->
+                                if (hit != null && found == null) {
+                                    found = hit
+                                    latch.countDown()
+                                }
+                                return res
+                            }
+                        }
                         if (found == null && (path.endsWith(".m3u8") || path.endsWith(".mp4"))) {
-                            found = request.url.toString() to (request.requestHeaders["Referer"] ?: lastPage)
+                            found = Sniffed(request.url.toString(), request.requestHeaders["Referer"] ?: lastPage)
                             latch.countDown()
                         }
                         // 광고·통계 요청은 빈 응답으로 막아 로딩을 줄임
@@ -489,6 +518,29 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         }
         return found
     }
+
+    /** 화면의 재생 주소 API 요청을 화면의 쿠키·헤더 그대로 대신 보내고, 응답을 화면에도 돌려줌. 실패하면 null (화면이 직접 보냄) */
+    private fun apiFromWebView(request: WebResourceRequest, page: String): Pair<WebResourceResponse, Sniffed?>? = runCatching {
+        val u = request.url.toString()
+        val b = Request.Builder().url(u)
+        request.requestHeaders.forEach { (k, v) -> b.header(k, v) }
+        android.webkit.CookieManager.getInstance().getCookie(u)?.let { b.header("Cookie", it) }
+        if (request.requestHeaders.keys.none { it.equals("User-Agent", true) }) b.header("User-Agent", USER_AGENT)
+        client.newCall(b.build()).execute().use { res ->
+            if (!res.isSuccessful) return@runCatching null
+            val bytes = res.body.bytes()
+            val o = runCatching { JSONObject(String(bytes, Charsets.UTF_8)) }.getOrNull()
+            val main = o?.let { str(it, "videoUrl") }.orEmpty()
+            val backup = o?.let { str(it, "backupUrl") }.orEmpty()
+            val hit = if (main.isNotEmpty() || backup.isNotEmpty()) {
+                Sniffed(abs(main.ifEmpty { backup }), page, if (main.isNotEmpty()) abs(backup) else "", o?.let { str(it, "subtitleUrl") }.orEmpty(), "API")
+            } else {
+                null
+            }
+            val type = res.header("Content-Type") ?: "application/json"
+            WebResourceResponse(type.substringBefore(';').trim(), "UTF-8", res.code, "OK", mapOf("Content-Type" to type), ByteArrayInputStream(bytes)) to hit
+        }
+    }.getOrNull()
 
     override fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()
 
