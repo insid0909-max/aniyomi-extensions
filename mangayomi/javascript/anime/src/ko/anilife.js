@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/anilife.js"
@@ -576,6 +576,19 @@ class DefaultExtension extends MProvider {
                 }
             } catch (e) {}
         }
+        // 그래도 없으면 숨은 웹뷰로 사이트 재생 화면을 열어, 그 화면이 받는 재생 주소를 씀
+        if (!main && !backup) {
+            const w = await this.viaWebview(`${this.getBaseUrl()}/content/${m[1]}/${m[2]}`, `/api/playback/${m[1]}/${m[2]}`);
+            if (w) {
+                main = w.videoUrl || "";
+                backup = w.backupUrl || "";
+                sub = sub || w.subtitleUrl || "";
+            } else if (typeof evaluateJavascriptViaWebview !== "function") {
+                apiError += " · 웹뷰 미지원";
+            } else {
+                apiError += " · 웹뷰에서도 못 찾음";
+            }
+        }
         if (!main && !backup) throw new Error("재생 주소를 받지 못했습니다. 잠시 뒤 다시 시도해 주세요" + (apiError ? ` [${apiError}]` : ""));
         const base = this.getBaseUrl();
         const h = { "User-Agent": UA, "Referer": `${base}/`, "Origin": base };
@@ -587,6 +600,32 @@ class DefaultExtension extends MProvider {
         let list = [];
         for (const [u, label] of servers) list = list.concat(await hlsExpand(this.client, u, label, h));
         return qualitySort("anilife_quality", list.map((v) => Object.assign(v, { subtitles, audios: [] })));
+    }
+
+    /**
+     * 숨은 웹뷰에서 재생 화면을 열고, 화면 안에서 재생 주소(API)를 다시 물어보거나
+     * 플레이어가 부른 m3u8 주소를 찾아 {videoUrl, backupUrl, subtitleUrl} 로 돌려줌
+     */
+    async viaWebview(url, apiPath) {
+        if (typeof evaluateJavascriptViaWebview !== "function") return null;
+        const script = "(function(){var done=false,n=0;function send(o){if(done)return;done=true;" +
+            "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify(o));}" +
+            "function seen(){var r=performance.getEntriesByType('resource');for(var i=0;i<r.length;i++){" +
+            "if(/\\.m3u8(\\?|$)/.test(r[i].name))return r[i].name;}return null;}" +
+            "function ask(){fetch(" + JSON.stringify(apiPath) + "+'?request='+Date.now()+'-w',{cache:'no-store',credentials:'same-origin'," +
+            "headers:{Accept:'application/json'}}).then(function(r){return r.ok?r.json():null;})" +
+            ".then(function(j){if(j&&(j.videoUrl||j.backupUrl))send(j);}).catch(function(){});}" +
+            "var t=setInterval(function(){n++;var u=seen();if(u){clearInterval(t);send({videoUrl:u});return;}" +
+            "if(n===5||n===15||n===30)ask();},300);})();";
+        try {
+            const timeout = new Promise((res) => setTimeout(() => res(null), 20000));
+            const res = await Promise.race([evaluateJavascriptViaWebview(url, {}, [script]), timeout]);
+            if (!res) return null;
+            const o = JSON.parse(String(res));
+            return o && (o.videoUrl || o.backupUrl) ? o : null;
+        } catch (e) {
+            return null;
+        }
     }
 
     // ================= 필터 · 설정 =================
