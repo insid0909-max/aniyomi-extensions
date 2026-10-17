@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/samsungtvplus.js"
@@ -20,6 +20,8 @@ const mangayomiSources = [{
 //   (안 되면 같은 목록의 m3u 사본 dc-toki-aniyomi-media.pages.dev)
 // - 영상: jmp2.uk/stvp-{채널ID} 가 삼성 공식 영상 서버(akamaized·mediatailor) 주소로 넘겨 줌. 복사 방지(DRM) 없음
 // 채널마다 카드 하나(로고), 분류는 필터. 카드를 열면 설명에 지금·다음 편성, 회차는 "실시간" 하나.
+// 분류별 소스(samsungtvplus_*.js)는 이 파일과 같고 이름·경로·STV_FIXED 만 다름.
+const STV_FIXED = "";
 const UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) " +
     "Chrome/131.0.0.0 Mobile Safari/537.36";
 const THUMB = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/thumbs/tv.png";
@@ -27,6 +29,18 @@ const STV_JSON = "https://i.mjh.nz/SamsungTVPlus/.channels.json";
 const STV_M3U = "https://dc-toki-aniyomi-media.pages.dev/playlist/samsung-tv-plus.m3u";
 const STV_STREAM = "https://jmp2.uk/stvp-";
 const STV_ALL = "전체";
+const STV_LIVE = "실시간";
+const STV_TAB_POPULAR = "stv_tab_popular";
+const STV_TAB_LATEST = "stv_tab_latest";
+const STV_RULE_NAME = "인기/최신 탭 규칙";
+const STV_RULES = [
+    "저장하지 않음 (필터 결과만 보기)",
+    "고른 분류를 인기 탭에 저장",
+    "고른 분류를 최신 탭에 저장",
+    "인기 탭을 기본값(전체)으로",
+    "최신 탭을 기본값(실시간)으로",
+    "두 탭 모두 기본값으로",
+];
 const STV_CACHE_MS = 30 * 60 * 1000;
 const STV_GROUPS = ["뉴스", "예능", "드라마", "시사/교양", "영화", "실시간", "어린이", "음악", "라이프스타일", "쇼핑", "스포츠"];
 
@@ -65,6 +79,27 @@ function liveQualitySort(list) {
     }
     if (want === "자동") return list;
     return list.filter((x) => x.quality.includes(` ${want}`)).concat(list.filter((x) => !x.quality.includes(` ${want}`)));
+}
+
+// 탭 규칙으로 저장한 분류 (없으면 기본값)
+function stvTab(key, def) {
+    try {
+        return new SharedPreferences().getString(key, "") || def;
+    } catch (e) {
+        return def;
+    }
+}
+
+function stvTabSave(rule, group) {
+    try {
+        const p = new SharedPreferences();
+        if (rule === 1) p.setString(STV_TAB_POPULAR, group);
+        else if (rule === 2) p.setString(STV_TAB_LATEST, group);
+        if (rule === 3 || rule === 5) p.setString(STV_TAB_POPULAR, "");
+        if (rule === 4 || rule === 5) p.setString(STV_TAB_LATEST, "");
+    } catch (e) {
+        // 저장 실패는 무시 (필터 결과는 그대로 보여 줌)
+    }
 }
 
 function qParam(url, key) {
@@ -199,24 +234,33 @@ class DefaultExtension extends MProvider {
         };
     }
 
+    // 인기 탭: 분류별 소스는 그 분류, 기본 소스는 탭 규칙(기본 전체)
     async getPopular(page) {
-        return this.page(STV_ALL, "");
+        return this.page(STV_FIXED || stvTab(STV_TAB_POPULAR, STV_ALL), "");
     }
 
     get supportsLatest() {
-        return false;
+        return !STV_FIXED;
     }
 
+    // 최신 탭: 탭 규칙(기본 실시간 분류, 없으면 전체)
     async getLatestUpdates(page) {
-        return this.getPopular(page);
+        if (STV_FIXED) return this.getPopular(page);
+        const all = await this.channels();
+        const def = all.some((c) => c.group === STV_LIVE) ? STV_LIVE : STV_ALL;
+        return this.page(stvTab(STV_TAB_LATEST, def), "");
     }
 
-    // 검색: 채널 이름이나 지금 방송 중인 프로그램 이름 + 분류 필터
+    // 검색: 채널 이름이나 지금 방송 중인 프로그램 이름 + 분류 필터 (+ 탭 규칙 저장)
     async search(query, page, filters) {
-        let group = STV_ALL;
+        let group = STV_FIXED || STV_ALL;
+        let rule = 0;
         for (const f of filters || []) {
-            if (f && f.type_name === "SelectFilter" && f.name === "분류" && f.values && f.values[f.state]) group = f.values[f.state].value;
+            if (!f || f.type_name !== "SelectFilter") continue;
+            if (f.name === "분류" && f.values && f.values[f.state] && !STV_FIXED) group = f.values[f.state].value;
+            if (f.name === STV_RULE_NAME) rule = Number(f.state) || 0;
         }
+        if (!STV_FIXED && rule) stvTabSave(rule, group);
         return this.page(group, String(query || "").trim());
     }
 
@@ -240,13 +284,22 @@ class DefaultExtension extends MProvider {
     }
 
     getFilterList() {
+        if (STV_FIXED) return [{ type_name: "HeaderFilter", name: `검색어는 채널 이름이나 지금 방송 중인 프로그램 이름 (${STV_FIXED} 채널 안에서)` }];
         // 받아 둔 목록이 있으면 그 분류, 없으면 기본 분류
         const known = this._cache.length ? this._cache.map((c) => c.group).filter((g, i, a) => a.indexOf(g) === i) : STV_GROUPS;
+        const latestDef = !this._cache.length || this._cache.some((c) => c.group === STV_LIVE) ? STV_LIVE : STV_ALL;
         return [
             { type_name: "HeaderFilter", name: "검색어는 채널 이름이나 지금 방송 중인 프로그램 이름" },
             {
                 type_name: "SelectFilter", name: "분류", state: 0,
                 values: [STV_ALL].concat(known).map((g) => ({ type_name: "SelectOption", name: g, value: g })),
+            },
+            { type_name: "SeparatorFilter" },
+            { type_name: "HeaderFilter", name: "분류를 고르고 아래 규칙을 고른 뒤 필터를 누르면 탭에 저장됩니다" },
+            { type_name: "HeaderFilter", name: `현재 인기 탭: ${stvTab(STV_TAB_POPULAR, STV_ALL)} · 최신 탭: ${stvTab(STV_TAB_LATEST, latestDef)}` },
+            {
+                type_name: "SelectFilter", name: STV_RULE_NAME, state: 0,
+                values: STV_RULES.map((r, i) => ({ type_name: "SelectOption", name: r, value: String(i) })),
             },
         ];
     }

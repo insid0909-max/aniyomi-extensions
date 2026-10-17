@@ -46,4 +46,5 @@
 - 후후티비 회차 날짜는 사이트가 대부분 안 줌(앱이 받은 날로 표시) — 확장으로 채울 수 없음.
 - 고고티비: go.php 회차 링크는 만료됨 → 작품 페이지에서 재생 시 다시 찾음.
 - 삼성 TV 플러스(LiveSports 모듈 SamsungTvPlus.kt + samsungtvplus.js): 삼성 공식 무료 채널. 목록·편성은 i.mjh.nz/SamsungTVPlus/.channels.json 의 regions.kr(안 되면 dc-toki-aniyomi-media.pages.dev m3u 사본), 영상은 jmp2.uk/stvp-{ID} → 삼성 공식 akamaized/mediatailor HLS(DRM 없음). 고고티비처럼 채널마다 카드(로고)·분류는 필터, 설명에 지금·다음 편성, 회차는 "🔴 실시간" 하나(scanlator에 편성). 사용자는 실시간스포츠식 묶음 카드보다 이 모양을 원함. 망가요미는 넘어간 최종 주소를 모르므로 자동 화질은 jmp2 주소 그대로.
+- 삼성 TV 플러스 분류별 소스: 실시간/드라마/영화/뉴스/예능. Kotlin은 `SamsungTvPlus(fixedGroup)`(설정·채널 목록을 기본 소스와 공유, 화질 설정은 기본 소스 저장소에 같이 씀). 망가요미는 `samsungtvplus_{live,drama,movie,news,ent}.js` = samsungtvplus.js 복사본(이름·pkgPath·`STV_FIXED`만 다름, id 1543270621~625) → 원본 고치면 5개도 같이 다시 만들고 버전 같이 올릴 것. 망가요미는 소스마다 설정이 따로라 화질 설정은 각자. 기본 소스엔 인기/최신 탭 규칙(stv_tab_popular/stv_tab_latest, 최신 기본 "실시간").
 - 성능 변경은 한 번에 하나씩, 측정이 필요하면 임시 표시를 넣고 끝나면 반드시 뺄 것.
