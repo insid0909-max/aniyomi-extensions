@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli24.js"
@@ -504,6 +504,7 @@ class DefaultExtension extends MProvider {
         if (!players.length) throw new Error("이 회차에는 재생 화면이 없습니다");
         let list = [];
         const fails = [];
+        this.diag = [];
         for (let i = 0; i < players.length; i++) {
             const player = players[i];
             const label = i === 0 ? LABEL : `${LABEL} (대체 ${i})`;
@@ -518,7 +519,7 @@ class DefaultExtension extends MProvider {
         }
         if (!list.length) {
             const wv = typeof evaluateJavascriptViaWebview === "function" ? "" : " · 웹뷰 미지원";
-            throw new Error(`영상 주소를 찾지 못했습니다 [${fails.join(", ")}${wv}]`);
+            throw new Error(`영상 주소를 찾지 못했습니다 [${fails.join(", ")}${wv} · ${this.diag.join(" · ")}]`);
         }
         return qualitySort("ohli24_quality", list);
     }
@@ -538,11 +539,26 @@ class DefaultExtension extends MProvider {
                 "X-Requested-With": "XMLHttpRequest",
                 "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
             }, `hash=${encodeURIComponent(m[2])}&r=${encodeURIComponent(pageUrl)}`);
-            if (res.statusCode >= 400) return null;
             const text = String(res.body || "").replace(/\\\//g, "/");
-            const v = /https?:\/\/[^"'\s<>]+\.m3u8[^"'\s<>]*/.exec(text);
+            if (res.statusCode >= 400) {
+                this.diag.push(`요청 ${res.statusCode}`);
+                return null;
+            }
+            // 영상 주소 칸(videoSource 등)을 먼저, 없으면 글 속의 재생 목록 주소 (확장자 없는 /m3/… 주소도 있음)
+            let data = null;
+            try {
+                data = JSON.parse(text);
+            } catch (e) {
+                data = null;
+            }
+            const pick = data && ["videoSource", "securedLink", "file", "hls", "src"].map((k) => data[k])
+                .find((v) => typeof v === "string" && /^https?:\/\//.test(v));
+            if (pick) return pick;
+            const v = /https?:\/\/[^"'\s<>]+(?:\.m3u8|\/m3\/|master\.(?:txt|m3u8))[^"'\s<>]*/.exec(text);
+            if (!v) this.diag.push(`응답 "${text.replace(/\s+/g, " ").substring(0, 60)}"`);
             return v ? v[0] : null;
         } catch (e) {
+            this.diag.push(`요청 실패 ${String((e && e.message) || e).substring(0, 40)}`);
             return null;
         }
     }
@@ -551,14 +567,15 @@ class DefaultExtension extends MProvider {
     async viaWebview(player, pageUrl) {
         if (typeof evaluateJavascriptViaWebview !== "function") return null;
         const script = "(function(){var n=0;var t=setInterval(function(){n++;var r=performance.getEntriesByType('resource');" +
-            "for(var i=0;i<r.length;i++){if(/\\.m3u8(\\?|$)/.test(r[i].name)){clearInterval(t);" +
+            "for(var i=0;i<r.length;i++){if(/\\.m3u8(\\?|$)|\\/m3\\/|master\\.(txt|m3u8)/.test(r[i].name)){clearInterval(t);" +
             "window.flutter_inappwebview.callHandler('setResponse',r[i].name);return;}}" +
             "if(n===20){var v=document.querySelector('video');if(v){v.muted=true;try{v.play();}catch(e){}}" +
             "var b=document.querySelector('.jw-icon-display,.vjs-big-play-button,.plyr__control--overlaid');if(b)b.click();}},300);})();";
         try {
             const timeout = new Promise((res) => setTimeout(() => res(null), 20000));
             const res = await Promise.race([evaluateJavascriptViaWebview(player, { "Referer": pageUrl }, [script]), timeout]);
-            return res && /\.m3u8/.test(String(res)) ? String(res) : null;
+            if (!res) this.diag.push("웹뷰에서도 못 찾음");
+            return res && /^https?:\/\//.test(String(res)) ? String(res) : null;
         } catch (e) {
             return null;
         }
