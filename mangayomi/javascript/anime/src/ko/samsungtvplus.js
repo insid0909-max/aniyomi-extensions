@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/samsungtvplus.js"
@@ -19,7 +19,7 @@ const mangayomiSources = [{
 // - 채널 목록·편성: i.mjh.nz 가 삼성 공개 정보를 모아 둔 .channels.json 의 regions.kr
 //   (안 되면 같은 목록의 m3u 사본 dc-toki-aniyomi-media.pages.dev)
 // - 영상: jmp2.uk/stvp-{채널ID} 가 삼성 공식 영상 서버(akamaized·mediatailor) 주소로 넘겨 줌. 복사 방지(DRM) 없음
-// 분류(뉴스·예능·드라마 …)마다 카드 하나, 회차 = 채널. 회차 옆에 지금·다음 프로그램을 보여 준다.
+// 채널마다 카드 하나(로고), 분류는 필터. 카드를 열면 설명에 지금·다음 편성, 회차는 "실시간" 하나.
 const UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) " +
     "Chrome/131.0.0.0 Mobile Safari/537.36";
 const THUMB = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/thumbs/tv.png";
@@ -28,6 +28,7 @@ const STV_M3U = "https://dc-toki-aniyomi-media.pages.dev/playlist/samsung-tv-plu
 const STV_STREAM = "https://jmp2.uk/stvp-";
 const STV_ALL = "전체";
 const STV_CACHE_MS = 30 * 60 * 1000;
+const STV_GROUPS = ["뉴스", "예능", "드라마", "시사/교양", "영화", "실시간", "어린이", "음악", "라이프스타일", "쇼핑", "스포츠"];
 
 // ---------- 화질 나누기 · 선호 화질 ----------
 const LIVE_QUALITY_CHOICES = ["자동", "1080p", "720p", "480p", "360p"];
@@ -181,29 +182,25 @@ class DefaultExtension extends MProvider {
         return parts.join(" · ");
     }
 
-    // ---------- 카드 (분류 묶음) ----------
-    async pick(group, q) {
-        const all = await this.channels();
-        return all.filter((c) => (group === STV_ALL || c.group === group) &&
-            (!q || compact(c.name).includes(compact(q)) || compact(this.nowNext(c).cur).includes(compact(q))));
+    // ---------- 카드 (채널마다 하나, 고고티비처럼) ----------
+    matches(c, q) {
+        return compact(c.name).includes(compact(q)) || compact(this.nowNext(c).cur).includes(compact(q));
     }
 
-    async card(group, q) {
-        const list = await this.pick(group, q);
-        const logo = (list.find((c) => c.logo) || {}).logo || THUMB;
+    card(c) {
+        return { name: c.name, imageUrl: c.logo || THUMB, link: `/ch?id=${encodeURIComponent(c.id)}` };
+    }
+
+    async page(group, q) {
+        const all = await this.channels();
         return {
-            name: (q ? `🔎 "${q}"` : (group === STV_ALL ? "📺 전체 채널" : `📺 ${group}`)) + ` · ${list.length}채널`,
-            imageUrl: logo,
-            link: `/g?g=${encodeURIComponent(group)}` + (q ? `&q=${encodeURIComponent(q)}` : ""),
+            list: all.filter((c) => (group === STV_ALL || c.group === group) && (!q || this.matches(c, q))).map((c) => this.card(c)),
+            hasNextPage: false,
         };
     }
 
     async getPopular(page) {
-        const all = await this.channels();
-        const groups = all.map((c) => c.group).filter((g, i, a) => a.indexOf(g) === i);
-        const list = [];
-        for (const g of groups.concat([STV_ALL])) list.push(await this.card(g, ""));
-        return { list, hasNextPage: false };
+        return this.page(STV_ALL, "");
     }
 
     get supportsLatest() {
@@ -214,33 +211,44 @@ class DefaultExtension extends MProvider {
         return this.getPopular(page);
     }
 
-    // 검색: 채널 이름이나 지금 방송 중인 프로그램 이름
+    // 검색: 채널 이름이나 지금 방송 중인 프로그램 이름 + 분류 필터
     async search(query, page, filters) {
-        const q = String(query || "").trim();
-        if (!q) return this.getPopular(page);
-        return { list: [await this.card(STV_ALL, q)], hasNextPage: false };
+        let group = STV_ALL;
+        for (const f of filters || []) {
+            if (f && f.type_name === "SelectFilter" && f.name === "분류" && f.values && f.values[f.state]) group = f.values[f.state].value;
+        }
+        return this.page(group, String(query || "").trim());
     }
 
     async getDetail(url) {
-        const g = qParam(url, "g") || STV_ALL;
-        const q = qParam(url, "q");
-        const c = await this.card(g, q);
-        const list = await this.pick(g, q);
+        const id = qParam(url, "id");
+        const all = await this.channels();
+        const ch = all.find((c) => c.id === id);
+        if (!ch) throw new Error("채널 정보를 찾지 못했습니다. 목록에서 다시 열어 주세요.");
+        const line = this.scheduleLine(ch);
         return {
-            name: c.name,
-            imageUrl: c.imageUrl,
+            name: ch.name,
+            imageUrl: ch.logo || THUMB,
             link: url,
-            description: "삼성 TV 플러스: 삼성이 광고를 넣어 무료로 제공하는 공식 실시간 채널입니다.\n" +
-                "회차(채널) 옆에 지금·다음 프로그램이 나옵니다. 편성은 목록을 다시 불러오면 새로 바뀝니다.\n" +
-                "한국에서만 나오는 채널이 있을 수 있습니다.",
+            description: [line ? "📡 " + line.replace(" · 다음", "\n다음") : "", ch.description || "",
+                `${ch.group} · 채널 ${ch.chno}\n삼성 TV 플러스: 삼성이 광고를 넣어 무료로 제공하는 공식 실시간 채널입니다. 한국에서만 나오는 채널이 있을 수 있습니다.`]
+                .filter((x) => x).join("\n\n"),
             status: 0,
-            genre: [],
-            episodes: list.map((ch) => ({
-                name: ch.name,
-                url: `/ch?id=${encodeURIComponent(ch.id)}`,
-                scanlator: [g === STV_ALL ? ch.group : "", this.scheduleLine(ch)].filter((x) => x).join(" · "),
-            })),
+            genre: [ch.group],
+            episodes: [{ name: "🔴 실시간", url: `/ch?id=${encodeURIComponent(ch.id)}`, scanlator: line }],
         };
+    }
+
+    getFilterList() {
+        // 받아 둔 목록이 있으면 그 분류, 없으면 기본 분류
+        const known = this._cache.length ? this._cache.map((c) => c.group).filter((g, i, a) => a.indexOf(g) === i) : STV_GROUPS;
+        return [
+            { type_name: "HeaderFilter", name: "검색어는 채널 이름이나 지금 방송 중인 프로그램 이름" },
+            {
+                type_name: "SelectFilter", name: "분류", state: 0,
+                values: [STV_ALL].concat(known).map((g) => ({ type_name: "SelectOption", name: g, value: g })),
+            },
+        ];
     }
 
     // ---------- 재생: jmp2.uk 가 삼성 공식 영상 주소로 넘겨 줌 ----------
