@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli24.js"
@@ -508,7 +508,9 @@ class DefaultExtension extends MProvider {
         for (let i = 0; i < players.length; i++) {
             const player = players[i];
             const label = i === 0 ? LABEL : `${LABEL} (대체 ${i})`;
-            const found = (await this.firePlayer(player, pageUrl)) || (await this.viaWebview(player, pageUrl));
+            // .m3u8 주소를 못 받았으면 웹뷰로 플레이어가 실제로 받는 .m3u8 을 찾아 봄 (없으면 받은 주소 그대로)
+            let found = await this.firePlayer(player, pageUrl);
+            if (!found || !/\.m3u8/.test(found)) found = (await this.viaWebview(player, pageUrl)) || found;
             if (!found) {
                 fails.push((/^https?:\/\/([^/]+)/.exec(player) || [null, player])[1]);
                 continue;
@@ -588,7 +590,10 @@ class DefaultExtension extends MProvider {
                 this.diag.push(`요청 ${res.statusCode}`);
                 return null;
             }
-            // 영상 주소 칸(videoSource 등)을 먼저, 없으면 글 속의 재생 목록 주소 (확장자 없는 /m3/… 주소도 있음)
+            // 애니요미와 같이 응답 안의 첫 .m3u8 주소를 먼저 씀. /m3/… 주소는 앞부분 몇 초짜리 목록이라
+            // 재생기가 실시간 방송처럼 몇 초마다 목록을 다시 받으며 멈춤 → .m3u8 이 없을 때만 다른 주소
+            const m3u8 = /https?:\/\/[^"'\s<>]+\.m3u8[^"'\s<>]*/.exec(text);
+            if (m3u8) return m3u8[0];
             let data = null;
             try {
                 data = JSON.parse(text);
@@ -598,7 +603,7 @@ class DefaultExtension extends MProvider {
             const pick = data && ["videoSource", "securedLink", "file", "hls", "src"].map((k) => data[k])
                 .find((v) => typeof v === "string" && /^https?:\/\//.test(v));
             if (pick) return pick;
-            const v = /https?:\/\/[^"'\s<>]+(?:\.m3u8|\/m3\/|master\.(?:txt|m3u8))[^"'\s<>]*/.exec(text);
+            const v = /https?:\/\/[^"'\s<>]+(?:\/m3\/|master\.txt)[^"'\s<>]*/.exec(text);
             if (!v) this.diag.push(`응답 "${text.replace(/\s+/g, " ").substring(0, 60)}"`);
             return v ? v[0] : null;
         } catch (e) {
@@ -610,9 +615,11 @@ class DefaultExtension extends MProvider {
     /** 숨은 웹뷰로 플레이어를 열고, 플레이어가 부른 m3u8 주소를 돌려받음 */
     async viaWebview(player, pageUrl) {
         if (typeof evaluateJavascriptViaWebview !== "function") return null;
-        const script = "(function(){var n=0;var t=setInterval(function(){n++;var r=performance.getEntriesByType('resource');" +
-            "for(var i=0;i<r.length;i++){if(/\\.m3u8(\\?|$)|\\/m3\\/|master\\.(txt|m3u8)/.test(r[i].name)){clearInterval(t);" +
-            "window.flutter_inappwebview.callHandler('setResponse',r[i].name);return;}}" +
+        // .m3u8 주소를 먼저 찾고, 8초가 지나도 없으면 /m3/… · master.txt 주소라도 돌려줌
+        const script = "(function(){var n=0;function find(re){var r=performance.getEntriesByType('resource');" +
+            "for(var i=0;i<r.length;i++){if(re.test(r[i].name))return r[i].name;}return null;}" +
+            "var t=setInterval(function(){n++;var u=find(/\\.m3u8(\\?|$)/)||(n>26?find(/\\/m3\\/|master\\.txt/):null);" +
+            "if(u){clearInterval(t);window.flutter_inappwebview.callHandler('setResponse',u);return;}" +
             "if(n===20){var v=document.querySelector('video');if(v){v.muted=true;try{v.play();}catch(e){}}" +
             "var b=document.querySelector('.jw-icon-display,.vjs-big-play-button,.plyr__control--overlaid');if(b)b.click();}},300);})();";
         try {
