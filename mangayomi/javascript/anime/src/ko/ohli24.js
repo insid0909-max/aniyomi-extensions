@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.8",
+    "version": "0.1.9",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli24.js"
@@ -527,8 +527,8 @@ class DefaultExtension extends MProvider {
             const player = players[i];
             const label = i === 0 ? LABEL : `${LABEL} (대체 ${i})`;
             // .m3u8 주소를 못 받았으면 웹뷰로 플레이어가 실제로 받는 .m3u8 을 찾아 봄 (없으면 받은 주소 그대로)
-            // 다른 애니24 확장앱(DC 애니24, 망가요미에서 잘 됨)처럼 플레이어 화면의 FirePlayer 설정에서 securedLink 를 먼저 찾음
-            const fire = (await this.playerPage(player, pageUrl)) || (await this.firePlayer(player, pageUrl));
+            // 다른 애니24 확장앱(DC 애니24, 망가요미에서 잘 됨)과 같은 순서: 플레이어 POST 의 securedLink → 플레이어 화면 → 웹뷰
+            const fire = (await this.firePlayer(player, pageUrl)) || (await this.playerPage(player, pageUrl));
             let found = fire ? fire.url : null;
             if (!fire || !fire.sure) {
                 const w = await this.viaWebview(player, pageUrl);
@@ -539,7 +539,8 @@ class DefaultExtension extends MProvider {
                 continue;
             }
             const origin = (/^(https?:\/\/[^/]+)/.exec(player) || [null, ""])[1];
-            const h = { "User-Agent": UA, "Referer": `${origin}/`, "Origin": origin };
+            // DC 애니24와 같은 영상 요청 정보 (X-Requested-With 가 없으면 영상 조각이 제대로 안 오는 듯)
+            const h = { "X-Requested-With": "XMLHttpRequest", "Referer": origin, "Origin": origin, "Accept": "*/*" };
             const got = await this.expand(found, label, h);
             list = list.concat(got);
             // 화질이 하나뿐이면 원래 목록 주소도 함께 (재생기에 따라 이쪽이 잘 될 수 있음)
@@ -626,13 +627,12 @@ class DefaultExtension extends MProvider {
         const m = /^(https?:\/\/[^/]+)\/.*?([^/?#]+)(?:[?#].*)?$/.exec(player);
         if (!m) return null;
         try {
+            // DC 애니24와 같게: Referer·Origin 은 플레이어 주소의 앞부분, 본문은 hash={영상ID}, r=(빈 값)
             const res = await this.client.post(`${m[1]}/player/index.php?data=${m[2]}&do=getVideo`, {
-                "User-Agent": UA,
-                "Referer": player,
-                "Origin": m[1],
                 "X-Requested-With": "XMLHttpRequest",
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-            }, `hash=${encodeURIComponent(m[2])}&r=${encodeURIComponent(pageUrl)}`);
+                "Referer": m[1],
+                "Origin": m[1],
+            }, { hash: m[2], r: "" });
             const text = String(res.body || "").replace(/\\\//g, "/");
             if (res.statusCode >= 400) {
                 this.diag.push(`요청 ${res.statusCode}`);
