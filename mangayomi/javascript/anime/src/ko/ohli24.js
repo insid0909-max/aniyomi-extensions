@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli24.js"
@@ -85,19 +85,6 @@ function fullDate(ms) {
     const d = new Date(ms + 9 * 3600000);
     const w = ["일", "월", "화", "수", "목", "금", "토"][d.getUTCDay()];
     return d.toISOString().substring(0, 10).replace(/-/g, ".") + ` (${w})`;
-}
-
-// 영문·숫자로 된 글을 base64 로 (앱에 btoa 가 없을 수 있어 직접 만듦)
-function b64(str) {
-    const bytes = [];
-    for (const ch of unescape(encodeURIComponent(str))) bytes.push(ch.charCodeAt(0));
-    const T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let out = "";
-    for (let i = 0; i < bytes.length; i += 3) {
-        const n = (bytes[i] << 16) | ((bytes[i + 1] || 0) << 8) | (bytes[i + 2] || 0);
-        out += T[(n >> 18) & 63] + T[(n >> 12) & 63] + (i + 1 < bytes.length ? T[(n >> 6) & 63] : "=") + (i + 2 < bytes.length ? T[n & 63] : "=");
-    }
-    return out;
 }
 
 function ruleText(i) {
@@ -541,7 +528,7 @@ class DefaultExtension extends MProvider {
             for (const g of got) {
                 if (/자동/.test(g.quality)) continue;
                 const ts = await this.tsPlaylist(g.url, h);
-                if (ts) list.push({ url: ts, originalUrl: g.url, quality: `${g.quality} (ts 실험)`, headers: h });
+                if (ts) list.push({ url: ts, originalUrl: g.url, quality: `${g.quality} (ts 실험2)`, headers: h });
             }
         }
         if (!list.length) {
@@ -572,7 +559,8 @@ class DefaultExtension extends MProvider {
                 if (v !== u) changed = true;
                 return v;
             }).join("\n");
-            return changed ? "data:application/vnd.apple.mpegurl;base64," + b64(out) : null;
+            // data: 주소는 무한 로딩이었음 → 재생기(mpv)의 memory:// (주소 뒤 글을 그대로 재생 목록으로 씀)로 시험
+            return changed ? "memory://" + out : null;
         } catch (e) {
             return null;
         }
