@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.3",
+    "version": "0.1.4",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli24.js"
@@ -509,8 +509,9 @@ class DefaultExtension extends MProvider {
             const player = players[i];
             const label = i === 0 ? LABEL : `${LABEL} (대체 ${i})`;
             // .m3u8 주소를 못 받았으면 웹뷰로 플레이어가 실제로 받는 .m3u8 을 찾아 봄 (없으면 받은 주소 그대로)
-            let found = await this.firePlayer(player, pageUrl);
-            if (!found || !/\.m3u8/.test(found)) found = (await this.viaWebview(player, pageUrl)) || found;
+            const fire = await this.firePlayer(player, pageUrl);
+            let found = fire ? fire.url : null;
+            if (!fire || !fire.sure) found = (await this.viaWebview(player, pageUrl)) || found;
             if (!found) {
                 fails.push((/^https?:\/\/([^/]+)/.exec(player) || [null, player])[1]);
                 continue;
@@ -592,20 +593,23 @@ class DefaultExtension extends MProvider {
             }
             // 애니요미와 같이 응답 안의 첫 .m3u8 주소를 먼저 씀. /m3/… 주소는 앞부분 몇 초짜리 목록이라
             // 재생기가 실시간 방송처럼 몇 초마다 목록을 다시 받으며 멈춤 → .m3u8 이 없을 때만 다른 주소
-            const m3u8 = /https?:\/\/[^"'\s<>]+\.m3u8[^"'\s<>]*/.exec(text);
-            if (m3u8) return m3u8[0];
+            // 응답의 securedLink 가 영상 전체 재생 목록 (다른 애니24 확장앱도 이 칸을 씀).
+            // videoSource(/m3/…)는 앞부분 몇 초짜리라 재생기가 실시간 방송처럼 몇 초마다 멈춤
             let data = null;
             try {
                 data = JSON.parse(text);
             } catch (e) {
                 data = null;
             }
-            const pick = data && ["videoSource", "securedLink", "file", "hls", "src"].map((k) => data[k])
+            const secured = data && typeof data.securedLink === "string" && /^https?:\/\//.test(data.securedLink) ? data.securedLink : null;
+            if (secured) return { url: secured, sure: true };
+            const m3u8 = /https?:\/\/[^"'\s<>]+\.m3u8[^"'\s<>]*/.exec(text);
+            if (m3u8) return { url: m3u8[0], sure: true };
+            const pick = data && ["videoSource", "file", "hls", "src"].map((k) => data[k])
                 .find((v) => typeof v === "string" && /^https?:\/\//.test(v));
-            if (pick) return pick;
-            const v = /https?:\/\/[^"'\s<>]+(?:\/m3\/|master\.txt)[^"'\s<>]*/.exec(text);
+            const v = pick || (/https?:\/\/[^"'\s<>]+(?:\/m3\/|master\.txt)[^"'\s<>]*/.exec(text) || [])[0];
             if (!v) this.diag.push(`응답 "${text.replace(/\s+/g, " ").substring(0, 60)}"`);
-            return v ? v[0] : null;
+            return v ? { url: v, sure: false } : null;
         } catch (e) {
             this.diag.push(`요청 실패 ${String((e && e.message) || e).substring(0, 40)}`);
             return null;
