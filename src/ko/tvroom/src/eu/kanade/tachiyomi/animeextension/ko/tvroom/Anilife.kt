@@ -93,6 +93,9 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         val baseHost = baseUrl.toHttpUrlOrNull()?.host
         if (baseHost == null || req.url.host != baseHost || !autoDomain()) return chain.proceed(req)
         if (NoticeFollow.IMAGE_PATH.containsMatchIn(req.url.encodedPath)) return chain.proceed(req)
+        // 재생 주소 API 는 앱에서 부르면 원래 403 (사이트 화면 안에서만 허용) → 주소가 바뀐 신호가 아님.
+        // 여기서 주소 찾기를 돌리면 재생 시작이 최대 8초 늦어짐
+        if (req.url.encodedPath.startsWith("/api/playback/")) return chain.proceed(req)
 
         fun retryOn(found: String): Response {
             prefs()?.edit()?.putString(PREF_DOMAIN_KEY, "https://$found")?.apply()

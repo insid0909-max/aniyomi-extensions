@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.3",
+    "version": "0.1.4",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/anilife.js"
@@ -397,7 +397,8 @@ class DefaultExtension extends MProvider {
             }
         }
         const dead = !res || res.statusCode === 403 || res.statusCode === 451 || res.statusCode >= 500;
-        if (dead && this.autoOn()) {
+        // 재생 주소 API 는 앱에서 부르면 원래 403 (사이트 화면 안에서만 허용) → 주소 찾기를 돌리지 않음 (재생 시작이 늦어짐)
+        if (dead && this.autoOn() && !path.startsWith("/api/playback/")) {
             const found = await this.discover(base);
             if (found) {
                 await siteWait();
