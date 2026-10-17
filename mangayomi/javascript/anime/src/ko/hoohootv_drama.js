@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv_drama.js"
@@ -804,10 +804,11 @@ class DefaultExtension extends MProvider {
             } catch (e) {}
         }
         let found = direct && await mediaWorks(this.client, direct.media, this.videoHeaders(direct.referer)) ? direct : null;
+        this.lastDiag = "";
         if (!found) found = await this.viaWebview(player, pageUrl, playerHost);
         if (!found) found = direct;
         if (!found) {
-            const why = typeof evaluateJavascriptViaWebview !== "function" ? " [웹뷰 미지원]" : "";
+            const why = typeof evaluateJavascriptViaWebview !== "function" ? " [웹뷰 미지원]" : this.lastDiag ? ` [${this.lastDiag}]` : "";
             throw new Error(`영상 주소를 찾지 못했습니다: ${playerHost}${why}`);
         }
         const keys = Object.keys(MEDIA_CACHE);
@@ -848,12 +849,22 @@ class DefaultExtension extends MProvider {
             "if(n===" + playAt + "||n===" + (playAt + 15) + "){played=true;var v=document.querySelector('video');" +
             "if(v){v.muted=true;try{var q=v.play();if(q&&q.catch)q.catch(function(){});}catch(e){}}" +
             "var b=document.querySelector('.jw-icon-display,.jw-display-icon-container,.vjs-big-play-button,.plyr__control--overlaid,.play-button,[aria-label=Play]');if(b)b.click();}" +
+            // 19초가 지나도 못 찾으면 무엇이 보였는지 알려 줌 (제목·주소·받은 파일 수·영상 칸·마지막 요청들)
+            "if(n===63){clearInterval(t);var r=performance.getEntriesByType('resource');var last=[];" +
+            "for(var i=Math.max(0,r.length-4);i<r.length;i++){last.push(r[i].name.replace(/^https?:\\/\\//,'').substring(0,60));}" +
+            "var v=document.querySelector('video');window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:null,p:played," +
+            "d:(document.title||'제목없음').substring(0,30)+' | '+location.host+' | 파일'+r.length+' | 영상'+(v?((v.currentSrc||v.src||'').substring(0,20)||'있음'):'없음')+" +
+            "' | iframe'+document.querySelectorAll('iframe').length+' | '+last.join(' , ')}));}" +
             "},300);})();";
         try {
             const timeout = new Promise((res) => setTimeout(() => res(null), 22000));
             const res = await Promise.race([evaluateJavascriptViaWebview(player, { "Referer": pageUrl }, [script]), timeout]);
-            if (!res) return null;
+            if (!res) {
+                this.lastDiag = "웹뷰 응답 없음";
+                return null;
+            }
             const o = JSON.parse(String(res));
+            if (o && o.d) this.lastDiag = String(o.d);
             if (!o || !/^https?:\/\//.test(String(o.u || ""))) return null;
             if (o.p && playerHost && playAt > 2) this.rememberAutoplay(playerHost);
             return { media: String(o.u), referer: /^https?:\/\//.test(String(o.r || "")) ? String(o.r) : player };
