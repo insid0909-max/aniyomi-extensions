@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli24.js"
@@ -515,13 +515,57 @@ class DefaultExtension extends MProvider {
             }
             const origin = (/^(https?:\/\/[^/]+)/.exec(player) || [null, ""])[1];
             const h = { "User-Agent": UA, "Referer": `${origin}/`, "Origin": origin };
-            list = list.concat(await hlsExpand(this.client, found, label, h));
+            list = list.concat(await this.expand(found, label, h));
         }
         if (!list.length) {
             const wv = typeof evaluateJavascriptViaWebview === "function" ? "" : " · 웹뷰 미지원";
             throw new Error(`영상 주소를 찾지 못했습니다 [${fails.join(", ")}${wv} · ${this.diag.join(" · ")}]`);
         }
         return qualitySort("ohli24_quality", list);
+    }
+
+    /**
+     * 화질 나누기. 이 플레이어의 재생 목록은 주소 끝에 .m3u8 이 없으므로(/m3/…, master.txt)
+     * 주소 모양 대신 내용(#EXTM3U)을 보고 화질 목록이면 화질별로 나눔 (자동 화질 바꿈으로 자주 멈추는 것을 피하게)
+     */
+    async expand(url, label, h) {
+        if (/\.m3u8/.test(url)) return hlsExpand(this.client, url, label, h);
+        const one = [{ url, originalUrl: url, quality: label, headers: h }];
+        if (/\.mp4(\?|$)/.test(url)) return one;
+        let body = "";
+        try {
+            const res = await this.client.get(url, h);
+            if (Number(res.statusCode) >= 400) return one;
+            body = String(res.body || "").replace(/\r/g, "");
+        } catch (e) {
+            return one;
+        }
+        if (!body.trim().startsWith("#EXTM3U")) return one;
+        const origin = (/^(https?:\/\/[^/]+)/.exec(url) || [null, ""])[1];
+        const dir = url.replace(/[^/]*(?:\?.*)?$/, "");
+        const seen = {};
+        const variants = [];
+        const re = /#EXT-X-STREAM-INF:([^\n]*)\n\s*([^\s#][^\n]*)/g;
+        let m;
+        while ((m = re.exec(body))) {
+            const hh = /RESOLUTION=\d+x(\d+)/.exec(m[1]);
+            const height = hh ? Number(hh[1]) : 0;
+            let u = m[2].trim();
+            if (!/^https?:\/\//.test(u)) u = u.startsWith("/") ? origin + u : dir + u;
+            const key = height || u;
+            if (seen[key]) continue;
+            seen[key] = true;
+            variants.push({ h: height, u });
+        }
+        if (!variants.length) {
+            // 화질이 하나뿐인 재생 목록: 조각 주소의 화질(예: /720p/)을 이름에 붙임
+            const r = /\/(2160|1440|1080|720|480|360)p\//.exec(body);
+            return [{ url, originalUrl: url, quality: r ? `${label} ${r[1]}p` : label, headers: h }];
+        }
+        variants.sort((a, b) => b.h - a.h);
+        if (variants.length === 1) return [{ url: variants[0].u, originalUrl: variants[0].u, quality: variants[0].h ? `${label} ${variants[0].h}p` : label, headers: h }];
+        return variants.map((v) => ({ url: v.u, originalUrl: v.u, quality: v.h ? `${label} ${v.h}p` : label, headers: h }))
+            .concat([{ url, originalUrl: url, quality: `${label} 자동 (최대 ${variants[0].h}p)`, headers: h }]);
     }
 
     /**
