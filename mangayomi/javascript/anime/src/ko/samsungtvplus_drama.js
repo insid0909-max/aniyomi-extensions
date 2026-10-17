@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/samsungtvplus_drama.js"
@@ -119,6 +119,20 @@ function compact(s) {
 function hhmm(sec) {
     const d = new Date(sec * 1000 + 9 * 3600000).toISOString();
     return d.substring(11, 16);
+}
+
+// 망가요미 재생기는 재생용 주소(originalUrl) 모양으로 HLS 를 알아봄 → 확장자가 .m3u8 이 아닌 HLS 주소(.txt·jmp2 등)는
+// 끝에 "#download.m3u8" 를 붙여 알려 줌. # 뒤는 서버로 보내지지 않아 실제 요청은 그대로 (애니24에서 효과 확인)
+function hlsHint(list) {
+    for (const v of list || []) {
+        if (!v || !v.url) continue;
+        const plain = String(v.url).replace(/#.*$/, "");
+        const path = plain.split("?")[0];
+        // 확장자 없는 주소 중 HLS 로 보이는 것만 (mp4 등 다른 영상에 붙이면 재생이 안 됨)
+        const hlsLike = /\.txt$|\/hls\/|\/m3\/|master|playlist|jmp2\.uk\/stvp-/i.test(path);
+        if (/^https?:\/\//.test(plain) && hlsLike && !/\.(?:m3u8?|mp4|mkv|webm|mov|m4v|ts|flv|avi|mp3|aac)$/i.test(path)) v.originalUrl = plain + "#download.m3u8";
+    }
+    return list;
 }
 
 class DefaultExtension extends MProvider {
@@ -306,6 +320,10 @@ class DefaultExtension extends MProvider {
 
     // ---------- 재생: jmp2.uk 가 삼성 공식 영상 주소로 넘겨 줌 ----------
     async getVideoList(url) {
+        return hlsHint(await this.videoListInner(url));
+    }
+
+    async videoListInner(url) {
         const id = qParam(url, "id");
         if (!id) throw new Error("잘못된 채널 주소");
         const h = { "User-Agent": UA };

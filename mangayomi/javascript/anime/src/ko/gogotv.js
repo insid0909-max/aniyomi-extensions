@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.26",
+    "version": "0.1.27",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -233,6 +233,20 @@ async function noticeTarget(ext, body, base, marker) {
         } catch (e) {}
     }
     return null;
+}
+
+// 망가요미 재생기는 재생용 주소(originalUrl) 모양으로 HLS 를 알아봄 → 확장자가 .m3u8 이 아닌 HLS 주소(.txt·jmp2 등)는
+// 끝에 "#download.m3u8" 를 붙여 알려 줌. # 뒤는 서버로 보내지지 않아 실제 요청은 그대로 (애니24에서 효과 확인)
+function hlsHint(list) {
+    for (const v of list || []) {
+        if (!v || !v.url) continue;
+        const plain = String(v.url).replace(/#.*$/, "");
+        const path = plain.split("?")[0];
+        // 확장자 없는 주소 중 HLS 로 보이는 것만 (mp4 등 다른 영상에 붙이면 재생이 안 됨)
+        const hlsLike = /\.txt$|\/hls\/|\/m3\/|master|playlist|jmp2\.uk\/stvp-/i.test(path);
+        if (/^https?:\/\//.test(plain) && hlsLike && !/\.(?:m3u8?|mp4|mkv|webm|mov|m4v|ts|flv|avi|mp3|aac)$/i.test(path)) v.originalUrl = plain + "#download.m3u8";
+    }
+    return list;
 }
 
 class DefaultExtension extends MProvider {
@@ -535,6 +549,10 @@ class DefaultExtension extends MProvider {
     // 회차 링크(외부 영상 사이트)에서 시작해 새로고침 태그·스크립트 이동·iframe을 따라가며
     // 각 페이지 글자 안에서 영상 주소를 찾는다 (망가요미에는 숨은 브라우저가 없음)
     async getVideoList(url) {
+        return hlsHint(await this.videoListInner(url));
+    }
+
+    async videoListInner(url) {
         const base = this.getBaseUrl();
         const trail = [];
         const found = await this.crawl(url, `${base}/`, 0, {}, trail);
@@ -817,6 +835,7 @@ class DefaultExtension extends MProvider {
 // 망가요미 변형 앱(Mangayomi Glitch 등)은 User-Agent 를 넣어 주지 않아, 빼고 보내면 사이트가 연결을 끊거나 403 을 줌
 // → 그런 응답이면 User-Agent 를 넣어 다시 보내고, 그 뒤로는 처음부터 넣음 (원래 망가요미는 첫 요청이 성공해 그대로)
 let APP_NO_UA = false;
+let APP_ALT = null;
 function appClient(raw) {
     const media = /\.(?:m3u8|mp4|ts|m4s|jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
     const fallbackUa = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
@@ -831,24 +850,49 @@ function appClient(raw) {
         if (!Object.keys(out).some((k) => k.toLowerCase() === "user-agent")) out["User-Agent"] = fallbackUa;
         return out;
     };
+    // 망가요미 기본 통신이 끊기면 연결을 재사용하지 않는 별도 통신으로 한 번 더 (애니24에서 효과 확인, DC 확장과 같은 방법)
+    const alt = () => {
+        if (!APP_ALT) {
+            try {
+                APP_ALT = new Client({ persistentConnection: false, noProxy: true, timeout: 25, connectTimeout: 10 });
+            } catch (e) {
+                APP_ALT = null;
+            }
+        }
+        return APP_ALT;
+    };
     const send = async (call, url, headers) => {
-        if (APP_NO_UA || media.test(String(url || ""))) return call(url, APP_NO_UA ? withUa(headers) : headers || {});
+        if (APP_NO_UA || media.test(String(url || ""))) {
+            try {
+                return await call(raw, url, APP_NO_UA ? withUa(headers) : headers || {});
+            } catch (e) {
+                const c = alt();
+                if (!c) throw e;
+                return call(c, url, withUa(headers));
+            }
+        }
         let res;
         try {
-            res = await call(url, strip(url, headers));
+            res = await call(raw, url, strip(url, headers));
         } catch (e) {
             res = null;
             try {
-                const again = await call(url, withUa(headers));
+                const again = await call(raw, url, withUa(headers));
                 APP_NO_UA = true;
                 return again;
             } catch (e2) {
-                throw e;
+                const c = alt();
+                if (!c) throw e;
+                try {
+                    return await call(c, url, withUa(headers));
+                } catch (e3) {
+                    throw e;
+                }
             }
         }
         if (res && res.statusCode === 403) {
             try {
-                const again = await call(url, withUa(headers));
+                const again = await call(raw, url, withUa(headers));
                 if (again && again.statusCode && again.statusCode < 400) {
                     APP_NO_UA = true;
                     return again;
@@ -858,8 +902,8 @@ function appClient(raw) {
         return res;
     };
     return {
-        get: (url, headers) => send((u, h) => raw.get(u, h), url, headers),
-        post: (url, headers, body) => send((u, h) => raw.post(u, h, body), url, headers),
+        get: (url, headers) => send((c, u, h) => c.get(u, h), url, headers),
+        post: (url, headers, body) => send((c, u, h) => c.post(u, h, body), url, headers),
     };
 }
 
