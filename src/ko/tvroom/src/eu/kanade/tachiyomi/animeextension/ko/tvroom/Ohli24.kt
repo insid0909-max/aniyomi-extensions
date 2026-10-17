@@ -329,17 +329,21 @@ class Ohli24 : AnimeHttpSource(), ConfigurableAnimeSource {
         val u = player.toHttpUrlOrNull() ?: return null
         val vid = u.pathSegments.lastOrNull { it.isNotEmpty() } ?: return null
         val origin = "${u.scheme}://${u.host}"
-        val body = FormBody.Builder().add("hash", vid).add("r", pageUrl).build()
+        // 다른 애니24 확장앱(DC 애니24)과 같은 요청: Referer·Origin 은 플레이어 주소 앞부분, r 은 빈 값
+        val body = FormBody.Builder().add("hash", vid).add("r", "").build()
         val headers = Headers.Builder()
             .set("User-Agent", USER_AGENT)
-            .set("Referer", player)
+            .set("Referer", origin)
             .set("Origin", origin)
             .set("X-Requested-With", "XMLHttpRequest")
             .build()
         return client.newCall(POST("$origin/player/index.php?data=$vid&do=getVideo", headers, body)).execute().use { res ->
             if (!res.isSuccessful) return null
-            val text = res.body.string().replace("\\/", "/")
-            val media = M3U8_REGEX.find(text)?.value ?: return null
+            val text = res.body.string()
+            // securedLink = 영상 전체 재생 목록 (videoSource 의 /m3/… 는 앞부분 몇 초짜리)
+            val secured = runCatching { JSONObject(text).optString("securedLink") }.getOrNull()
+                ?.takeIf { it.startsWith("http") }
+            val media = secured ?: M3U8_REGEX.find(text.replace("\\/", "/"))?.value ?: return null
             media to player
         }
     }
@@ -349,6 +353,8 @@ class Ohli24 : AnimeHttpSource(), ConfigurableAnimeSource {
         return Headers.Builder()
             .set("User-Agent", USER_AGENT)
             .set("Referer", origin?.let { "$it/" } ?: referer)
+            .set("X-Requested-With", "XMLHttpRequest")
+            .set("Accept", "*/*")
             .apply { if (origin != null) set("Origin", origin) }
             .build()
     }
