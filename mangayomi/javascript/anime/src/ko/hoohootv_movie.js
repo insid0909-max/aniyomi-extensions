@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv_movie.js"
@@ -870,7 +870,8 @@ class DefaultExtension extends MProvider {
             // 옮기기 전 바깥 화면 코드 앞부분을 window.name 에 남겨 둠 (옮긴 화면의 진단에서 같이 보여 줌)
             "if(n>=12&&n<=40){var s=inner();if(s){clearInterval(t);try{var fr=document.querySelector('iframe');window.name='hh:'+location.host+' iframe['+" +
             "(fr?['allow','sandbox','referrerpolicy'].map(function(a){return a+'='+(fr.getAttribute(a)||'');}).join(' '):'')+'] '+" +
-            "[].slice.call(document.scripts).filter(function(e){return !e.src;}).map(function(e){return e.text.replace(/\\s+/g,' ');}).join(' ;; ').substring(0,900);}catch(e){}location.href=s;return;}}" +
+            "(function(){var c=[].slice.call(document.scripts).filter(function(e){return !e.src;}).map(function(e){return e.text.replace(/\\s+/g,' ');}).join(' ;; ');" +
+            "var k=c.indexOf('player_iframe');return c.substring(Math.max(0,k-200),k+2600);})();}catch(e){}location.href=s;return;}}" +
             "if(n===" + playAt + "||n===" + (playAt + 15) + "){played=true;var v=document.querySelector('video');" +
             "if(v){v.muted=true;try{var q=v.play();if(q&&q.catch)q.catch(function(){});}catch(e){}}" +
             "try{var j=window.jwplayer&&window.jwplayer();if(j&&j.play){if(j.setMute)j.setMute(true);j.play();}}catch(e){}" +
@@ -887,8 +888,8 @@ class DefaultExtension extends MProvider {
             "' | 글자 '+((document.body&&document.body.innerText)||'').replace(/\\s+/g,' ').substring(0,40)," +
             // 설정 화면에 보여 줄 자세한 내용: 안에 든 화면인지, 앞 화면 주소, 스크립트 주소, 페이지 코드 앞부분
             "x:'top '+(window.top===window)+' | ref '+(document.referrer||'없음').substring(0,60)+' | src '+[].slice.call(document.scripts).map(function(e){return (e.src||'').replace(/^https?:\\/\\/[^/]+/,'');}).filter(function(e){return e;}).join(',').substring(0,250)+" +
-            "' | inline '+[].slice.call(document.scripts).filter(function(e){return !e.src;}).map(function(e){return e.text.replace(/\\s+/g,' ');}).join(' ;; ').substring(0,1500)+" +
-            "' | body '+(document.body?document.body.innerHTML.replace(/\\s+/g,' ').substring(0,400):'없음')+' | outer '+(/^hh:/.test(window.name)?window.name.substring(3):'없음')}));}" +
+            "' | inline '+[].slice.call(document.scripts).filter(function(e){return !e.src;}).map(function(e){return e.text.replace(/\\s+/g,' ');}).join(' ;; ').substring(0,300)+" +
+            "' | body '+(document.body?document.body.innerHTML.replace(/\\s+/g,' ').substring(0,100):'없음')+' | outer '+(/^hh:/.test(window.name)?window.name.substring(3):'없음')}));}" +
             "},300);})();";
         try {
             // 망가요미 웹뷰는 화면을 다 불러온 뒤(보안 확인 화면이 있으면 그다음 화면에서도) 스크립트를 넣음 → 넉넉히 36초
@@ -901,7 +902,7 @@ class DefaultExtension extends MProvider {
             }
             const o = JSON.parse(String(res));
             if (o && o.d) this.lastDiag = String(o.d);
-            if (o && o.x) this.setPref("hoohootv_last_diag", `${new Date(Date.now() + 9 * 3600000).toISOString().substring(5, 16)} ${o.d} || ${o.x}`.substring(0, 3500));
+            if (o && o.x) this.setPref("hoohootv_last_diag", `${new Date(Date.now() + 9 * 3600000).toISOString().substring(5, 16)} ${o.d} || ${o.x}`.substring(0, 4000));
             if (!o || !/^https?:\/\//.test(String(o.u || ""))) return null;
             if (o.p && playerHost && playAt > 2) this.rememberAutoplay(playerHost);
             return { media: String(o.u), referer: /^https?:\/\//.test(String(o.r || "")) ? String(o.r) : player };
