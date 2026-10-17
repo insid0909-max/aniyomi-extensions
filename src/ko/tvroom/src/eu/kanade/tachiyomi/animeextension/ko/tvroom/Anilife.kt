@@ -24,6 +24,8 @@ import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -436,8 +438,10 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         val subs = if (sub.isNotEmpty()) listOf(Track(abs(sub), "한국어")) else emptyList()
         // 기본 주소가 안 열리면 대체 주소를 먼저
         val servers = listOf(abs(main) to LABEL, abs(backup) to "$LABEL (대체 1)").filter { it.first.isNotEmpty() }.distinctBy { it.first }
-        val ordered = if (servers.size > 1 && !HlsQuality.works(client, servers[0].first, vh)) servers.reversed() else servers
-        val expanded = ordered.flatMap { (u, label) -> HlsQuality.expand(client, u, label, vh) }
+        // 서버별 화질 목록을 동시에 받고, 기본 주소의 화질 목록을 받았으면 열리는지 따로 확인하지 않음
+        val lists = servers.map { (u, label) -> async { HlsQuality.expand(client, u, label, vh) } }.awaitAll()
+        val mainOk = lists.size < 2 || lists[0].size > 1 || HlsQuality.works(client, servers[0].first, vh)
+        val expanded = (if (mainOk) lists else lists.reversed()).flatten()
         lap("화질", t3)
         lap("합계", t0)
         val tag = " [${times.joinToString("·")}초]"
