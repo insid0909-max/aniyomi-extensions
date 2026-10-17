@@ -25,7 +25,7 @@
 ### Mangayomi (JS, mangayomi/javascript/anime/src/ko + anime_index.json)
 - 위와 같은 기능 동일 적용(도메인 자동 찾기, 날짜/연도 표시, 화질 라벨·정렬, 대체 서버)
 - 회차 이름은 회차 번호로 시작(맨 앞 숫자를 회차로 인식), 시즌은 `scanlator`에
-- `selectFirst`는 비어도 truthy → `select().length` 사용; appClient는 UA 제거됨; followRedirects 옵션 무시됨
+- `selectFirst`는 비어도 truthy → `select().length` 사용; appClient는 UA 제거됨(원래 망가요미가 웹뷰 UA를 넣어 줌. 변형 앱 Mangayomi Glitch는 안 넣어 줘서 연결 끊김/403 → appClient가 UA 넣어 한 번 다시 보내고 이후 계속 넣음); followRedirects 옵션 무시됨
 - 파일 버전과 anime_index.json 버전 같이 올리기, `node --check` 통과
 
 ## 지금까지 고친 것·배운 것 (다시 같은 실수 하지 않기)
