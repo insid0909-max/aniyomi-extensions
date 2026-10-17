@@ -297,6 +297,10 @@ class Ohli24 : AnimeHttpSource(), ConfigurableAnimeSource {
     // ================= 영상 =================
     override suspend fun getVideoList(episode: SEpisode): List<Video> = withContext(Dispatchers.IO) {
         val pageUrl = baseUrl + episode.url
+        // [임시 측정] 단계별 걸린 시간 (화질 이름 뒤에 표시, 원인 찾으면 뺄 것)
+        val t0 = System.currentTimeMillis()
+        val times = mutableListOf<String>()
+        fun lap(name: String, since: Long) = times.add("$name ${"%.1f".format((System.currentTimeMillis() - since) / 1000.0)}")
         val doc = client.newCall(GET(pageUrl, h())).execute().use { res ->
             if (!res.isSuccessful) throw Exception("회차 화면을 열지 못했습니다 (HTTP ${res.code})")
             Jsoup.parse(res.body.string(), res.request.url.toString())
@@ -304,21 +308,29 @@ class Ohli24 : AnimeHttpSource(), ConfigurableAnimeSource {
         val players = doc.select("iframe#video[src], .play-box iframe[src]").map { it.attr("abs:src") }
             .filter { it.startsWith("http") }.distinct()
         if (players.isEmpty()) throw Exception("이 회차에는 재생 화면이 없습니다")
+        lap("회차화면", t0)
         val errors = mutableListOf<String>()
         val out = mutableListOf<Video>()
         players.forEachIndexed { i, player ->
             val label = if (i == 0) LABEL else "$LABEL (대체 $i)"
-            val found = runCatching { firePlayer(player, pageUrl) }.getOrNull()
-                ?: sniffWithWebView(player, pageUrl)
+            val t1 = System.currentTimeMillis()
+            val fired = runCatching { firePlayer(player, pageUrl) }.getOrNull()
+            lap("플레이어$i", t1)
+            val t2 = System.currentTimeMillis()
+            val found = fired ?: sniffWithWebView(player, pageUrl)?.also { lap("웹뷰$i", t2) }
             if (found == null) {
                 errors.add(player.toHttpUrlOrNull()?.host ?: player)
                 return@forEachIndexed
             }
             val vh = videoHeaders(found.second)
+            val t3 = System.currentTimeMillis()
             out += HlsQuality.expand(client, found.first, label, vh)
+            lap("화질$i", t3)
         }
+        lap("합계", t0)
+        val tag = " [${times.joinToString("·")}초]"
         if (out.isEmpty()) throw Exception("영상 주소를 찾지 못했습니다 [${errors.joinToString()}]")
-        HlsQuality.sort(prefs(), out)
+        HlsQuality.sort(prefs(), out.map { Video(it.url, it.quality + tag, it.videoUrl, it.headers) })
     }
 
     /**
