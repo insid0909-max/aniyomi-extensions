@@ -50,6 +50,11 @@ class TVroomFactory : AnimeSourceFactory {
         } catch (e: Throwable) {
             list.add(ErrorSource("애니라이프 오류", e))
         }
+        try {
+            list.add(Ohli24()) // 애니24
+        } catch (e: Throwable) {
+            list.add(ErrorSource("애니24 오류", e))
+        }
         return list
     }
 }
