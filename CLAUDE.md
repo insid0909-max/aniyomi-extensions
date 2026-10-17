@@ -45,4 +45,5 @@
 - 후후티비 영화·드라마: 설정(주소·자동 찾기·화질)을 기본 후후티비와 공유하며 각 화면에도 표시.
 - 후후티비 회차 날짜는 사이트가 대부분 안 줌(앱이 받은 날로 표시) — 확장으로 채울 수 없음.
 - 고고티비: go.php 회차 링크는 만료됨 → 작품 페이지에서 재생 시 다시 찾음.
+- 삼성 TV 플러스(LiveSports 모듈 SamsungTvPlus.kt + samsungtvplus.js): 삼성 공식 무료 채널. 목록·편성은 i.mjh.nz/SamsungTVPlus/.channels.json 의 regions.kr(안 되면 dc-toki-aniyomi-media.pages.dev m3u 사본), 영상은 jmp2.uk/stvp-{ID} → 삼성 공식 akamaized/mediatailor HLS(DRM 없음). 분류별 카드, 회차=채널, scanlator에 지금·다음 편성. 망가요미는 넘어간 최종 주소를 모르므로 자동 화질은 jmp2 주소 그대로.
 - 성능 변경은 한 번에 하나씩, 측정이 필요하면 임시 표시를 넣고 끝나면 반드시 뺄 것.
