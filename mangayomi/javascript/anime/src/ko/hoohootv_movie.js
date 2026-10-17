@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.10",
+    "version": "0.1.11",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv_movie.js"
@@ -772,19 +772,11 @@ class DefaultExtension extends MProvider {
             name: this.titleWithAir(raw, latest),
             imageUrl: poster ? this.abs(poster) : "",
             link: this.getBaseUrl() + path,
-            description: [this.recentDiag(), head, ov ? ov.text.trim() : ""].filter((x) => x).join("\n\n"),
+            description: [head, ov ? ov.text.trim() : ""].filter((x) => x).join("\n\n"),
             genre,
             status: !eps.length ? 1 : latest > 0 ? (ongoing ? 0 : 1) : 5,
             episodes,
         };
-    }
-
-    /** 2시간 안에 재생이 안 됐으면 그 진단을 작품 설명 맨 위에 보여 줌 (망가요미 설정 화면 글은 새로 안 바뀜) */
-    recentDiag() {
-        const at = Number(this.pref("hoohootv_last_diag_at", "0")) || 0;
-        if (Date.now() - at > 7200000) return "";
-        const d = this.pref("hoohootv_last_diag", "");
-        return d ? `🩺 재생 진단 (재생이 안 되면 이 글을 캡처해 주세요)\n${d}` : "";
     }
 
     // ================= 영상 =================
@@ -812,6 +804,11 @@ class DefaultExtension extends MProvider {
         const player = f ? this.abs(f.attr("data-src") || f.attr("src") || "", this.getBaseUrl()) : "";
         if (!/^https?:\/\//.test(player)) throw new Error("플레이어를 찾지 못했습니다 (로그인이 필요하거나 영상이 없는 회차일 수 있습니다)");
         const playerHost = (/^https?:\/\/([^/?#]+)/.exec(player) || [null, ""])[1];
+        // jwpcdn 플레이어는 바깥 화면과 숨긴 신호를 주고받아야 영상이 시작되고, 망가요미 웹뷰는 안쪽 화면의 요청을 볼 수 없어 재생 불가
+        // (그 신호를 흉내 내는 것은 사이트의 보호 장치를 우회하는 것이라 하지 않음)
+        if (/jwpcdn\./.test(playerHost)) {
+            throw new Error("이 회차의 플레이어(vid.jwpcdn.net)는 망가요미에서 재생할 수 없습니다. 애니요미 후후티비(TVroom)로 재생해 주세요.");
+        }
         // jwpcdn 플레이어(보안 확인이 걸림)와 재생해야 주소를 내는 것으로 기억된 플레이어는 글자 읽기를 건너뜀
         const needsWebview = player.includes("jwpcdn") || this.autoplayHosts().includes(playerHost);
         let direct = null;
@@ -828,7 +825,7 @@ class DefaultExtension extends MProvider {
         if (!found) found = direct;
         if (!found) {
             const why = typeof evaluateJavascriptViaWebview !== "function" ? " [웹뷰 미지원]" : this.lastDiag ? ` [${this.lastDiag}]` : "";
-            throw new Error(why ? `영상 못 찾음 (자세한 내용은 작품 설명 맨 위)${why}` : `영상 주소를 찾지 못했습니다: ${playerHost}`);
+            throw new Error(`영상 주소를 찾지 못했습니다: ${playerHost}${why}`);
         }
         const keys = Object.keys(MEDIA_CACHE);
         if (keys.length >= 30) delete MEDIA_CACHE[keys[0]];
@@ -861,9 +858,7 @@ class DefaultExtension extends MProvider {
         // 플레이어 안에 또 다른 화면(iframe)이 있으면 그 안의 요청은 바깥에서 안 보여서(애니요미는 모든 화면의 요청이 보임),
         // 같은 주소 계열이면 안쪽 기록도 보고, 3.6초가 지나도 영상이 없으면 안쪽 화면 주소로 옮겨 감 (옮긴 화면에서 이 스크립트가 다시 돎).
         // Cloudflare 확인 화면(challenges.cloudflare.com)은 건드리지 않음
-        const script = "(function(){var n=0,played=false,rx=[];" +
-            // 안쪽 플레이어가 바깥 화면으로 보내는 신호도 모아 둠 (진단용)
-            "window.addEventListener('message',function(e){try{rx.push((e.origin||'').replace(/^https?:\\/\\//,'')+' '+(typeof e.data==='string'?e.data:JSON.stringify(e.data)).substring(0,200));}catch(x){}});" +
+        const script = "(function(){var n=0,played=false;" +
             "function mute(){document.querySelectorAll('video,audio').forEach(function(v){v.muted=true;v.volume=0;});}" +
             "function scan(w){try{var r=w.performance.getEntriesByType('resource');for(var i=0;i<r.length;i++){" +
             "if(/\\.(m3u8|mp4)(\\?|$)/i.test(r[i].name))return r[i].name;}" +
@@ -877,63 +872,25 @@ class DefaultExtension extends MProvider {
             "if(/^https?:/.test(s)&&!/challenges\\.cloudflare\\.com|google|facebook|doubleclick/.test(s)&&s!==location.href)return s;}return null;}" +
             "var t=setInterval(function(){n++;mute();var u=find();" +
             "if(u){clearInterval(t);window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:u,p:played,r:location.href}));return;}" +
-            // 옮기기 전 바깥 화면 코드 앞부분을 window.name 에 남겨 둠 (옮긴 화면의 진단에서 같이 보여 줌)
-            // 안쪽 플레이어는 바깥 화면이 iframe 을 다 불러온 뒤 보내는 신호(postMessage)를 받아야 시작함.
-            // 바깥 화면의 iframe load 처리기를 가짜 iframe 으로 한 번 더 불러 그 신호 내용을 받아 두고(window.name 에 담아 옮김),
-            // 안쪽 화면으로 옮긴 뒤 같은 신호를 바깥 화면 주소에서 온 것으로 넣어 줌 (바깥 화면이 원래 보내는 것과 같은 내용)
-            "if(n>=12&&n<=40){var s=inner();if(s){clearInterval(t);var cap=[];var fake={id:'player_iframe',src:s,contentWindow:{postMessage:function(d){cap.push(d);}}};" +
-            "try{var real=document.getElementById('player_iframe')||document.querySelector('iframe');window.the_iframe=fake;" +
-            "var ev=window.jQuery&&jQuery._data&&real&&jQuery._data(real,'events');" +
-            // 처리기가 진짜 iframe 을 직접 가리켜도 받도록, 잠깐 iframe 의 contentWindow 를 가짜로 바꿔 진짜 iframe 으로도 한 번 부름
-            "var pd=Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,'contentWindow');" +
-            "if(ev&&ev.load)ev.load.forEach(function(h){try{h.handler.call(fake,{type:'load',target:fake,currentTarget:fake,delegateTarget:fake});}catch(e){}" +
-            "if(!cap.length&&pd&&real){try{Object.defineProperty(HTMLIFrameElement.prototype,'contentWindow',{configurable:true,get:function(){return fake.contentWindow;}});" +
-            "h.handler.call(real,{type:'load',target:real,currentTarget:real,delegateTarget:real});}catch(e){}try{Object.defineProperty(HTMLIFrameElement.prototype,'contentWindow',pd);}catch(e){}}});" +
-            "if(real&&real.onload)try{real.onload.call(fake,{type:'load',target:fake});}catch(e){}}catch(e){}" +
-            "setTimeout(function(){var code='';try{var c=[].slice.call(document.scripts).filter(function(e){return !e.src;}).map(function(e){return e.text.replace(/\\s+/g,' ');}).join(' ;; ');" +
-            "var k=c.indexOf('player_iframe');code=c.substring(Math.max(0,k-100),k+1500);}catch(e){}" +
-            "var m=[];cap.forEach(function(d){try{JSON.stringify(d);m.push(d);}catch(e){m.push(String(d));}});" +
-            "try{window.name='hh:'+JSON.stringify({o:location.origin,m:m,c:code,rx:rx.slice(-6)});}catch(e){}location.href=s;},1500);return;}}" +
-            // 바깥 화면에서 받아 온 신호가 있으면 한 번(그래도 시작 안 하면 6초 뒤 한 번 더) 넣어 줌
-            "if((n===2||n===22)&&/^hh:/.test(window.name)){try{var hh=JSON.parse(window.name.substring(3));var j0=window.jwplayer&&window.jwplayer();" +
-            "if(n===2||!(j0&&j0.getState)){(hh.m||[]).forEach(function(d){window.dispatchEvent(new MessageEvent('message',{data:d,origin:hh.o}));});}}catch(e){}}" +
+            "if(n>=12&&n<=40){var s=inner();if(s){clearInterval(t);location.href=s;return;}}" +
             "if(n===" + playAt + "||n===" + (playAt + 15) + "){played=true;var v=document.querySelector('video');" +
             "if(v){v.muted=true;try{var q=v.play();if(q&&q.catch)q.catch(function(){});}catch(e){}}" +
             "try{var j=window.jwplayer&&window.jwplayer();if(j&&j.play){if(j.setMute)j.setMute(true);j.play();}}catch(e){}" +
             "var b=document.querySelector('.jw-icon-display,.jw-display-icon-container,.vjs-big-play-button,.plyr__control--overlaid,.play-button,[aria-label=Play]');if(b)b.click();}" +
-            // 19초가 지나도 못 찾으면 무엇이 보였는지 알려 줌 (제목·주소·받은 파일 수·영상 칸·안쪽 화면 주소·글자·마지막 요청들)
-            "if(n===63){clearInterval(t);var r=performance.getEntriesByType('resource');var last=[];" +
-            "for(var i=0;i<r.length;i++){var nm=r[i].name;if(r[i].initiatorType==='script'||r[i].initiatorType==='link'||/\\.(svg|css|js|woff2?|png|gif|ico)(\\?|$)|cdn-cgi|beacon|cloudflareinsights/i.test(nm))continue;" +
-            "last.push(r[i].initiatorType.substring(0,3)+':'+nm.replace(/^https?:\\/\\//,'').substring(0,60));}" +
-            "var js='없음';try{var j=window.jwplayer&&window.jwplayer();if(window.jwplayer)js=(j&&j.getState?j.getState():'설정전')+(j&&j.getPlaylist?' 목록'+(j.getPlaylist()||[]).length:'');}catch(e){js='오류 '+String(e).substring(0,30);}" +
-            "var v=document.querySelector('video');var f=document.querySelector('iframe');" +
-            "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:null,p:played," +
-            "d:location.host+' | 신호 '+(function(){try{var hh=JSON.parse(window.name.substring(3));return (hh.m||[]).length+'개 '+JSON.stringify(hh.m||[]).substring(0,160);}catch(e){return '없음';}})()+' | jw '+js+' | 영상'+(v?'있음':'없음')+' | 요청 '+(last.slice(-4).join(' , ')||'없음')+' | 파일'+r.length+" +
-            "' | iframe '+(f?((f.src||'주소없음').replace(/^https?:\\/\\//,'').substring(0,40)):'없음')+" +
-            "' | 글자 '+((document.body&&document.body.innerText)||'').replace(/\\s+/g,' ').substring(0,40)," +
-            // 설정 화면에 보여 줄 자세한 내용: 안에 든 화면인지, 앞 화면 주소, 스크립트 주소, 페이지 코드 앞부분
-            "x:'top '+(window.top===window)+' | ref '+(document.referrer||'없음').substring(0,60)+' | src '+[].slice.call(document.scripts).map(function(e){return (e.src||'').replace(/^https?:\\/\\/[^/]+/,'');}).filter(function(e){return e;}).join(',').substring(0,250)+" +
-            "' | inline '+[].slice.call(document.scripts).filter(function(e){return !e.src;}).map(function(e){return e.text.replace(/\\s+/g,' ');}).join(' ;; ').substring(0,300)+" +
-            "' | body '+(document.body?document.body.innerHTML.replace(/\\s+/g,' ').substring(0,100):'없음')+' | 바깥이 받은 신호 '+(function(){try{return JSON.stringify(JSON.parse(window.name.substring(3)).rx||[]);}catch(e){return '없음';}})()+' | outer '+(function(){try{return JSON.parse(window.name.substring(3)).c;}catch(e){return '없음';}})()}));}" +
+            // 19초가 지나도 못 찾으면 어디까지 갔는지만 짧게 알려 줌
+            "if(n===63){clearInterval(t);var v=document.querySelector('video');" +
+            "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:null,p:played,d:location.host+' | 영상'+(v?'있음':'없음')}));}" +
             "},300);})();";
         try {
             // 망가요미 웹뷰는 화면을 다 불러온 뒤(보안 확인 화면이 있으면 그다음 화면에서도) 스크립트를 넣음 → 넉넉히 36초
-            const started = Date.now();
             const timeout = new Promise((res) => setTimeout(() => res(null), 36000));
             const res = await Promise.race([evaluateJavascriptViaWebview(player, { "Referer": pageUrl }, [script], 35), timeout]);
             if (!res) {
-                this.lastDiag = `웹뷰 응답 없음 ${Math.round((Date.now() - started) / 1000)}초 (화면을 다 불러오지 못했거나 스크립트가 안 돌았음)`;
+                this.lastDiag = "웹뷰 응답 없음";
                 return null;
             }
             const o = JSON.parse(String(res));
             if (o && o.d) this.lastDiag = String(o.d);
-            if (o && o.x) {
-                const text = `${new Date(Date.now() + 9 * 3600000).toISOString().substring(5, 16)} ${o.d} || ${o.x}`.substring(0, 4000);
-                this.setPref("hoohootv_last_diag", text);
-                // 망가요미는 설정 화면 설명을 설치할 때 한 번만 만들어 두는 듯 → 항목을 누르면 나오는 입력칸 값에도 넣어 둠 (늘 최신)
-                this.setPref("hoohootv_diag_view", text);
-                this.setPref("hoohootv_last_diag_at", String(Date.now()));
-            }
             if (!o || !/^https?:\/\//.test(String(o.u || ""))) return null;
             if (o.p && playerHost && playAt > 2) this.rememberAutoplay(playerHost);
             return { media: String(o.u), referer: /^https?:\/\//.test(String(o.r || "")) ? String(o.r) : player };
@@ -975,15 +932,6 @@ class DefaultExtension extends MProvider {
                 summary: "접속이 안 되면 바로, 접속돼도 1시간마다 주소 안내 사이트(hoohootv1.com)에 적힌 새 주소를 먼저 확인합니다. 못 찾으면 다음 글자·번호 주소를 짐작해 찾습니다.",
                 value: true,
             },
-        }, qualityPreference("hoohootv_quality"), {
-            key: "hoohootv_diag_view",
-            editTextPreference: {
-                title: "마지막 재생 진단 (눌러서 나오는 칸의 내용을 캡처해 주세요)",
-                summary: this.pref("hoohootv_last_diag", "") || "아직 없음",
-                value: "",
-                dialogTitle: "마지막 재생 진단",
-                dialogMessage: this.pref("hoohootv_last_diag", "") || "아직 없음",
-            },
-        }];
+        }, qualityPreference("hoohootv_quality")];
     }
 }
