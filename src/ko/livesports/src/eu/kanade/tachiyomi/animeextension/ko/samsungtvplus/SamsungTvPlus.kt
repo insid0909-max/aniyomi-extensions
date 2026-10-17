@@ -2,8 +2,8 @@ package eu.kanade.tachiyomi.animeextension.ko.samsungtvplus
 
 import eu.kanade.tachiyomi.animeextension.ko.livesports.LiveQuality
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
+import eu.kanade.tachiyomi.animesource.model.AnimeFilter
 import eu.kanade.tachiyomi.animesource.model.AnimeFilterList
-import eu.kanade.tachiyomi.animesource.model.AnimeUpdateStrategy
 import eu.kanade.tachiyomi.animesource.model.AnimesPage
 import eu.kanade.tachiyomi.animesource.model.SAnime
 import eu.kanade.tachiyomi.animesource.model.SEpisode
@@ -28,7 +28,7 @@ import java.util.TimeZone
  * - 채널 목록·편성: i.mjh.nz 가 삼성 공개 정보를 모아 둔 .channels.json 의 regions.kr
  *   (안 되면 같은 목록의 m3u 사본 dc-toki-aniyomi-media.pages.dev)
  * - 영상: jmp2.uk/stvp-{채널ID} 가 삼성 공식 영상 서버(akamaized·mediatailor) 주소로 넘겨 줌. 복사 방지(DRM) 없음
- * 분류(뉴스·예능·드라마 …)마다 카드 하나, 회차 = 채널. 회차 옆에 지금·다음 프로그램을 보여 준다.
+ * 채널마다 카드 하나(로고), 분류는 필터. 카드를 열면 설명에 지금·다음 편성, 회차는 "실시간" 하나.
  */
 class SamsungTvPlus : AnimeHttpSource(), ConfigurableAnimeSource {
 
@@ -131,70 +131,78 @@ class SamsungTvPlus : AnimeHttpSource(), ConfigurableAnimeSource {
         return parts.joinToString(" · ").ifEmpty { null }
     }
 
-    // ================= 카드 (분류 묶음) =================
-    private fun groups(): List<String> {
-        val all = channels()
-        return all.map { it.group }.distinct()
-    }
+    // ================= 카드 (채널마다 하나, 고고티비처럼) =================
+    private fun findChannel(id: String): Ch? = channels().firstOrNull { it.id == id }
+
+    private fun idOf(url: String): String =
+        "https://local.invalid$url".toHttpUrlOrNull()?.queryParameter("id").orEmpty()
 
     private fun matches(ch: Ch, q: String): Boolean {
         val k = q.replace(" ", "")
         return ch.name.replace(" ", "").contains(k, true) || (nowNext(ch).first?.replace(" ", "")?.contains(k, true) == true)
     }
 
-    private fun pick(group: String, q: String): List<Ch> =
-        channels().filter { (group == ALL || it.group == group) && (q.isEmpty() || matches(it, q)) }
-
-    private fun card(group: String, q: String = ""): SAnime = SAnime.create().apply {
-        val list = pick(group, q)
-        title = (if (q.isNotEmpty()) "🔎 \"$q\"" else if (group == ALL) "📺 전체 채널" else "📺 $group") + " · ${list.size}채널"
-        thumbnail_url = list.firstOrNull { it.logo.isNotEmpty() }?.logo ?: THUMB
+    private fun card(ch: Ch): SAnime = SAnime.create().apply {
+        // 애니요미는 서재 제목을 바꾸지 않으므로 제목은 채널 이름만 (편성은 설명에)
+        title = ch.name
+        thumbnail_url = ch.logo.ifEmpty { THUMB }
         status = SAnime.ONGOING
-        update_strategy = AnimeUpdateStrategy.ONLY_FETCH_ONCE
-        url = "/g?g=" + URLEncoder.encode(group, "UTF-8") + if (q.isNotEmpty()) "&q=" + URLEncoder.encode(q, "UTF-8") else ""
+        url = "/ch?id=" + URLEncoder.encode(ch.id, "UTF-8")
     }
 
-    private fun params(url: String): Pair<String, String> {
-        val u = "https://local.invalid$url".toHttpUrlOrNull()
-        return (u?.queryParameter("g") ?: ALL) to u?.queryParameter("q").orEmpty()
-    }
+    private fun page(group: String, q: String): AnimesPage =
+        AnimesPage(channels().filter { (group == ALL || it.group == group) && (q.isEmpty() || matches(it, q)) }.map { card(it) }, false)
 
-    override fun fetchPopularAnime(page: Int): Observable<AnimesPage> = Observable.fromCallable {
-        AnimesPage(groups().map { card(it) } + card(ALL), false)
-    }
+    override fun fetchPopularAnime(page: Int): Observable<AnimesPage> = Observable.fromCallable { page(ALL, "") }
 
-    // 검색: 채널 이름이나 지금 방송 중인 프로그램 이름
+    // 검색: 채널 이름이나 지금 방송 중인 프로그램 이름 + 분류 필터
     override fun fetchSearchAnime(page: Int, query: String, filters: AnimeFilterList): Observable<AnimesPage> {
-        val q = query.trim()
-        if (q.isEmpty()) return fetchPopularAnime(page)
-        return Observable.fromCallable { AnimesPage(listOf(card(ALL, q)), false) }
+        val sel = filters.filterIsInstance<GroupFilter>().firstOrNull()?.let { f -> f.values.getOrNull(f.state) } ?: ALL
+        return Observable.fromCallable { page(sel, query.trim()) }
     }
 
     override suspend fun getAnimeDetails(anime: SAnime): SAnime = withContext(Dispatchers.IO) {
-        val (g, q) = params(anime.url)
-        val c = card(g, q)
+        val ch = findChannel(idOf(anime.url))
         SAnime.create().apply {
-            title = c.title
-            thumbnail_url = c.thumbnail_url
+            title = ch?.name ?: anime.title
+            thumbnail_url = ch?.logo?.ifEmpty { null } ?: THUMB
             status = SAnime.ONGOING
-            update_strategy = AnimeUpdateStrategy.ONLY_FETCH_ONCE
-            description = "삼성 TV 플러스: 삼성이 광고를 넣어 무료로 제공하는 공식 실시간 채널입니다.\n" +
-                "회차(채널) 옆에 지금·다음 프로그램이 나옵니다. 편성은 목록을 다시 불러오면 새로 바뀝니다.\n" +
-                "한국에서만 나오는 채널이 있을 수 있습니다."
+            genre = ch?.group
+            description = if (ch == null) {
+                "채널 정보를 찾지 못했습니다. 목록에서 다시 열어 주세요."
+            } else {
+                listOfNotNull(
+                    scheduleLine(ch)?.replace(" · 다음", "\n다음")?.let { "📡 $it" },
+                    ch.description.ifEmpty { null },
+                    "${ch.group} · 채널 ${ch.chno}\n삼성 TV 플러스: 삼성이 광고를 넣어 무료로 제공하는 공식 실시간 채널입니다. 한국에서만 나오는 채널이 있을 수 있습니다.",
+                ).joinToString("\n\n")
+            }
         }
     }
 
+    // 회차 = "실시간" 하나 (옆에 지금·다음 편성)
     override suspend fun getEpisodeList(anime: SAnime): List<SEpisode> = withContext(Dispatchers.IO) {
-        val (g, q) = params(anime.url)
-        val list = pick(g, q)
-        list.mapIndexed { i, ch ->
+        val ch = findChannel(idOf(anime.url)) ?: throw Exception("채널 정보를 찾지 못했습니다. 목록에서 다시 열어 주세요.")
+        listOf(
             SEpisode.create().apply {
-                name = ch.name
+                name = "🔴 실시간"
                 url = "/ch?id=" + URLEncoder.encode(ch.id, "UTF-8")
-                episode_number = (list.size - i).toFloat()
-                scanlator = listOfNotNull(if (g == ALL) ch.group else null, scheduleLine(ch)).joinToString(" · ").ifEmpty { null }
-            }
-        }
+                episode_number = 1f
+                scanlator = scheduleLine(ch)
+            },
+        )
+    }
+
+    // ================= 필터 (분류) =================
+    private class GroupFilter(groups: Array<String>) : AnimeFilter.Select<String>("분류", groups)
+
+    override fun getFilterList(): AnimeFilterList {
+        // 화면을 그릴 때 인터넷을 쓰지 않도록, 받아 둔 목록이 있으면 그 분류, 없으면 기본 분류
+        val known = cache.map { it.group }.distinct().ifEmpty { DEFAULT_GROUPS }
+        return AnimeFilterList(
+            AnimeFilter.Header("검색어는 채널 이름이나 지금 방송 중인 프로그램 이름"),
+            GroupFilter((listOf(ALL) + known).toTypedArray()),
+        )
     }
 
     // ================= 재생 =================
@@ -240,5 +248,6 @@ class SamsungTvPlus : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val STREAM = "https://jmp2.uk/stvp-"
         private const val ALL = "전체"
         private const val CACHE_MS = 30 * 60 * 1000L
+        private val DEFAULT_GROUPS = listOf("뉴스", "예능", "드라마", "시사/교양", "영화", "실시간", "어린이", "음악", "라이프스타일", "쇼핑", "스포츠")
     }
 }
