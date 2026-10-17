@@ -232,7 +232,7 @@
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/mangayomi/javascript/anime/src/ko/anilife.js",
     "apiUrl": "",
-    "version": "0.1.4",
+    "version": "0.1.5",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
