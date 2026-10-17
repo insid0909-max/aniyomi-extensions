@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv_movie.js"
@@ -839,22 +839,32 @@ class DefaultExtension extends MProvider {
     async viaWebview(player, pageUrl, playerHost) {
         if (typeof evaluateJavascriptViaWebview !== "function") return null;
         const playAt = this.autoplayHosts().includes(playerHost) ? 2 : 15;
+        // 플레이어 안에 또 다른 화면(iframe)이 있으면 그 안의 요청은 바깥에서 안 보여서(애니요미는 모든 화면의 요청이 보임),
+        // 같은 주소 계열이면 안쪽 기록도 보고, 3.6초가 지나도 영상이 없으면 안쪽 화면 주소로 옮겨 감 (옮긴 화면에서 이 스크립트가 다시 돎).
+        // Cloudflare 확인 화면(challenges.cloudflare.com)은 건드리지 않음
         const script = "(function(){var n=0,played=false;" +
             "function mute(){document.querySelectorAll('video,audio').forEach(function(v){v.muted=true;v.volume=0;});}" +
-            "function find(){var r=performance.getEntriesByType('resource');for(var i=0;i<r.length;i++){" +
+            "function scan(w){try{var r=w.performance.getEntriesByType('resource');for(var i=0;i<r.length;i++){" +
             "if(/\\.(m3u8|mp4)(\\?|$)/i.test(r[i].name))return r[i].name;}" +
-            "var v=document.querySelector('video');var s=v&&(v.currentSrc||v.src);return s&&/^https?:/.test(s)&&/\\.(m3u8|mp4)/i.test(s)?s:null;}" +
+            "var v=w.document.querySelector('video');var s=v&&(v.currentSrc||v.src);if(s&&/^https?:/.test(s)&&/\\.(m3u8|mp4)/i.test(s))return s;}catch(e){}return null;}" +
+            "function find(){var u=scan(window);if(u)return u;var f=document.querySelectorAll('iframe');" +
+            "for(var i=0;i<f.length;i++){try{u=scan(f[i].contentWindow);if(u)return u;}catch(e){}}return null;}" +
+            "function inner(){var f=document.querySelectorAll('iframe');for(var i=0;i<f.length;i++){var s=f[i].src||f[i].getAttribute('data-src')||'';" +
+            "if(/^https?:/.test(s)&&!/challenges\\.cloudflare\\.com|google|facebook|doubleclick/.test(s)&&s!==location.href)return s;}return null;}" +
             "var t=setInterval(function(){n++;mute();var u=find();" +
             "if(u){clearInterval(t);window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:u,p:played,r:location.href}));return;}" +
+            "if(n>=12&&n<=40){var s=inner();if(s){clearInterval(t);location.href=s;return;}}" +
             "if(n===" + playAt + "||n===" + (playAt + 15) + "){played=true;var v=document.querySelector('video');" +
             "if(v){v.muted=true;try{var q=v.play();if(q&&q.catch)q.catch(function(){});}catch(e){}}" +
             "var b=document.querySelector('.jw-icon-display,.jw-display-icon-container,.vjs-big-play-button,.plyr__control--overlaid,.play-button,[aria-label=Play]');if(b)b.click();}" +
-            // 19초가 지나도 못 찾으면 무엇이 보였는지 알려 줌 (제목·주소·받은 파일 수·영상 칸·마지막 요청들)
+            // 19초가 지나도 못 찾으면 무엇이 보였는지 알려 줌 (제목·주소·받은 파일 수·영상 칸·안쪽 화면 주소·글자·마지막 요청들)
             "if(n===63){clearInterval(t);var r=performance.getEntriesByType('resource');var last=[];" +
-            "for(var i=Math.max(0,r.length-4);i<r.length;i++){last.push(r[i].name.replace(/^https?:\\/\\//,'').substring(0,60));}" +
-            "var v=document.querySelector('video');window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:null,p:played," +
+            "for(var i=Math.max(0,r.length-3);i<r.length;i++){last.push(r[i].name.replace(/^https?:\\/\\//,'').substring(0,50));}" +
+            "var v=document.querySelector('video');var f=document.querySelector('iframe');" +
+            "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:null,p:played," +
             "d:(document.title||'제목없음').substring(0,30)+' | '+location.host+' | 파일'+r.length+' | 영상'+(v?((v.currentSrc||v.src||'').substring(0,20)||'있음'):'없음')+" +
-            "' | iframe'+document.querySelectorAll('iframe').length+' | '+last.join(' , ')}));}" +
+            "' | iframe '+(f?((f.src||f.getAttribute('data-src')||'주소없음').replace(/^https?:\\/\\//,'').substring(0,70)):'없음')+" +
+            "' | 글자 '+((document.body&&document.body.innerText)||'').replace(/\\s+/g,' ').substring(0,40)+' | '+last.join(' , ')}));}" +
             "},300);})();";
         try {
             // 망가요미 웹뷰는 화면을 다 불러온 뒤(보안 확인 화면이 있으면 그다음 화면에서도) 스크립트를 넣음 → 넉넉히 36초
