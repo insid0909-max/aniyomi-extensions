@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.9",
+    "version": "0.1.10",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli24.js"
@@ -539,12 +539,19 @@ class DefaultExtension extends MProvider {
                 continue;
             }
             const origin = (/^(https?:\/\/[^/]+)/.exec(player) || [null, ""])[1];
-            // DC 애니24와 같은 영상 요청 정보 (X-Requested-With 가 없으면 영상 조각이 제대로 안 오는 듯)
-            const h = { "X-Requested-With": "XMLHttpRequest", "Referer": origin, "Origin": origin, "Accept": "*/*" };
+            // DC 애니24(망가요미판)와 같은 영상 요청 정보
+            const h = { "User-Agent": UA, "Referer": `${origin}/`, "Origin": origin };
             const got = await this.expand(found, label, h);
             list = list.concat(got);
             // 화질이 하나뿐이면 원래 목록 주소도 함께 (재생기에 따라 이쪽이 잘 될 수 있음)
             if (got.length === 1 && got[0].url !== found) list.push({ url: found, originalUrl: found, quality: `${label} 원본 목록`, headers: h });
+        }
+        // 재생 목록 주소가 .m3u8 로 끝나지 않으면(master.txt 등) 망가요미 재생기가 HLS 로 알아보지 못하고
+        // 조각을 하나씩 따로 재생함(10초짜리로 끊김) → 재생용 주소(originalUrl) 끝에 "#download.m3u8" 를 붙여 HLS 로 알림.
+        // # 뒤는 서버로 보내지지 않아 실제 요청은 그대로 (DC 애니24 망가요미판과 같은 방법)
+        for (const v of list) {
+            const plain = String(v.url || "").replace(/#.*$/, "");
+            v.originalUrl = /\.m3u8?$/i.test(plain.split("?")[0]) ? plain : plain + "#download.m3u8";
         }
         if (!list.length) {
             const wv = typeof evaluateJavascriptViaWebview === "function" ? "" : " · 웹뷰 미지원";
