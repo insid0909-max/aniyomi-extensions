@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.7",
+    "version": "0.1.8",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -902,7 +902,12 @@ class DefaultExtension extends MProvider {
             }
             const o = JSON.parse(String(res));
             if (o && o.d) this.lastDiag = String(o.d);
-            if (o && o.x) this.setPref("hoohootv_last_diag", `${new Date(Date.now() + 9 * 3600000).toISOString().substring(5, 16)} ${o.d} || ${o.x}`.substring(0, 4000));
+            if (o && o.x) {
+                const text = `${new Date(Date.now() + 9 * 3600000).toISOString().substring(5, 16)} ${o.d} || ${o.x}`.substring(0, 4000);
+                this.setPref("hoohootv_last_diag", text);
+                // 망가요미는 설정 화면 설명을 설치할 때 한 번만 만들어 두는 듯 → 항목을 누르면 나오는 입력칸 값에도 넣어 둠 (늘 최신)
+                this.setPref("hoohootv_diag_view", text);
+            }
             if (!o || !/^https?:\/\//.test(String(o.u || ""))) return null;
             if (o.p && playerHost && playAt > 2) this.rememberAutoplay(playerHost);
             return { media: String(o.u), referer: /^https?:\/\//.test(String(o.r || "")) ? String(o.r) : player };
@@ -947,7 +952,7 @@ class DefaultExtension extends MProvider {
         }, qualityPreference("hoohootv_quality"), {
             key: "hoohootv_diag_view",
             editTextPreference: {
-                title: "마지막 재생 진단 (재생이 안 될 때 이 화면을 캡처해 주세요)",
+                title: "마지막 재생 진단 (눌러서 나오는 칸의 내용을 캡처해 주세요)",
                 summary: this.pref("hoohootv_last_diag", "") || "아직 없음",
                 value: "",
                 dialogTitle: "마지막 재생 진단",
