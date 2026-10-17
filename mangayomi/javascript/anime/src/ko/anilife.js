@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.4",
+    "version": "0.1.5",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/anilife.js"
@@ -23,6 +23,7 @@ const HOST_NUM = /anilife(\d+)\.tv/;
 const SITE_MARKER = "애니라이프";
 const SIGNAL_URL = "https://wankyo83.github.io/tokki-traffic-light/domains.json";
 const LABEL = "애니라이프";
+const DIRECT_FAIL_KEY = "anilife_direct_fail_until";
 const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
     "Chrome/124.0.0.0 Mobile Safari/537.36";
 
@@ -607,27 +608,34 @@ class DefaultExtension extends MProvider {
         let backup = "";
         let sub = "";
         let apiError = "";
-        try {
-            // 사이트 재생 화면(/content/작품/회차)에서 부르는 것처럼 그 화면 주소를 Referer 로
-            const d = await this.api(`/api/playback/${m[1]}/${m[2]}?request=${Date.now()}-0`, `/content/${m[1]}/${m[2]}`);
-            main = str(d, "videoUrl");
-            backup = str(d, "backupUrl");
-            sub = str(d, "subtitleUrl");
-            if (!main && !backup) apiError = "빈 응답 " + JSON.stringify(d).substring(0, 80);
-        } catch (e) {
-            apiError = String((e && e.message) || e);
-        }
-        if (!main && !backup) {
+        // 앱에서 바로 부르는 재생 API·작품 정보 (휴대폰에서는 대개 403 이라 웹뷰로 넘어감)
+        const direct = async () => {
             try {
-                const d = await this.api(`/api/anime/${m[1]}?v=playback-url-v1`);
-                const e = ((d.item || {}).episodes || []).find((x) => str(x, "key") === m[2] || str(x, "number") === m[2]);
-                if (e) {
-                    main = str(e, "videoUrl");
-                    backup = str(e, "backupUrl");
-                    sub = sub || str(e, "subtitleUrl");
-                }
-            } catch (e) {}
-        }
+                // 사이트 재생 화면(/content/작품/회차)에서 부르는 것처럼 그 화면 주소를 Referer 로
+                const d = await this.api(`/api/playback/${m[1]}/${m[2]}?request=${Date.now()}-0`, `/content/${m[1]}/${m[2]}`);
+                main = str(d, "videoUrl");
+                backup = str(d, "backupUrl");
+                sub = str(d, "subtitleUrl");
+                if (!main && !backup) apiError = "빈 응답 " + JSON.stringify(d).substring(0, 80);
+            } catch (e) {
+                apiError = String((e && e.message) || e);
+            }
+            if (!main && !backup) {
+                try {
+                    const d = await this.api(`/api/anime/${m[1]}?v=playback-url-v1`);
+                    const e = ((d.item || {}).episodes || []).find((x) => str(x, "key") === m[2] || str(x, "number") === m[2]);
+                    if (e) {
+                        main = str(e, "videoUrl");
+                        backup = str(e, "backupUrl");
+                        sub = sub || str(e, "subtitleUrl");
+                    }
+                } catch (e) {}
+            }
+        };
+        // 바로 부르기가 최근에 실패했으면 건너뛰고 웹뷰부터 (6시간 기억)
+        const prefs = new SharedPreferences();
+        const skipDirect = Number(prefs.getString(DIRECT_FAIL_KEY, "0") || 0) > Date.now();
+        if (!skipDirect) await direct();
         // 그래도 없으면 숨은 웹뷰로 사이트 재생 화면을 열어, 그 화면이 받는 재생 주소를 씀
         if (!main && !backup) {
             const w = await this.viaWebview(`${this.getBaseUrl()}/content/${m[1]}/${m[2]}`, `/api/playback/${m[1]}/${m[2]}`);
@@ -635,11 +643,13 @@ class DefaultExtension extends MProvider {
                 main = w.videoUrl || "";
                 backup = w.backupUrl || "";
                 sub = sub || w.subtitleUrl || "";
-            } else if (typeof evaluateJavascriptViaWebview !== "function") {
-                apiError += " · 웹뷰 미지원";
-            } else {
-                apiError += " · 웹뷰에서도 못 찾음";
+                if (!skipDirect) prefs.setString(DIRECT_FAIL_KEY, String(Date.now() + 6 * 3600 * 1000));
+            } else if (skipDirect) {
+                // 웹뷰가 안 되면 건너뛴 바로 부르기를 다시 해 봄
+                prefs.setString(DIRECT_FAIL_KEY, "0");
+                await direct();
             }
+            if (!main && !backup) apiError += typeof evaluateJavascriptViaWebview !== "function" ? " · 웹뷰 미지원" : " · 웹뷰에서도 못 찾음";
         }
         if (!main && !backup) throw new Error("재생 주소를 받지 못했습니다. 잠시 뒤 다시 시도해 주세요" + (apiError ? ` [${apiError}]` : ""));
         const base = this.getBaseUrl();
@@ -647,10 +657,12 @@ class DefaultExtension extends MProvider {
         const subtitles = sub ? [{ file: this.abs(sub), label: "한국어" }] : [];
         let servers = [[this.abs(main), LABEL], [this.abs(backup), `${LABEL} (대체 1)`]].filter((s) => s[0]);
         servers = servers.filter((s, i) => servers.findIndex((x) => x[0] === s[0]) === i);
-        // 기본 주소가 안 열리면 대체 주소를 먼저
-        if (servers.length > 1 && !(await mediaWorks(this.client, servers[0][0], h))) servers.reverse();
-        let list = [];
-        for (const [u, label] of servers) list = list.concat(await hlsExpand(this.client, u, label, h));
+        // 기본 주소가 안 열리면 대체 주소를 먼저 (열리는지 확인과 서버별 화질 목록은 동시에 받음)
+        const [ok, ...lists] = await Promise.all([
+            servers.length > 1 ? mediaWorks(this.client, servers[0][0], h) : Promise.resolve(true),
+            ...servers.map(([u, label]) => hlsExpand(this.client, u, label, h)),
+        ]);
+        let list = [].concat(...(ok ? lists : lists.reverse()));
         return qualitySort("anilife_quality", list.map((v) => Object.assign(v, { subtitles, audios: [] })));
     }
 
