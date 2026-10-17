@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.10",
+    "version": "0.1.11",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli24.js"
@@ -526,8 +526,14 @@ class DefaultExtension extends MProvider {
         for (let i = 0; i < players.length; i++) {
             const player = players[i];
             const label = i === 0 ? LABEL : `${LABEL} (대체 ${i})`;
-            // .m3u8 주소를 못 받았으면 웹뷰로 플레이어가 실제로 받는 .m3u8 을 찾아 봄 (없으면 받은 주소 그대로)
-            // 다른 애니24 확장앱(DC 애니24, 망가요미에서 잘 됨)과 같은 순서: 플레이어 POST 의 securedLink → 플레이어 화면 → 웹뷰
+            const origin = (/^(https?:\/\/[^/]+)/.exec(player) || [null, ""])[1];
+            // 1) DC 애니24(망가요미판)와 똑같은 방법 (망가요미에서 재생 확인된 방법)
+            const dc = await this.dcVideos(player, origin, label);
+            if (dc.length) {
+                list = list.concat(dc);
+                continue;
+            }
+            // 2) 안 되면 기존 방법: 플레이어 POST → 플레이어 화면 → 웹뷰
             const fire = (await this.firePlayer(player, pageUrl)) || (await this.playerPage(player, pageUrl));
             let found = fire ? fire.url : null;
             if (!fire || !fire.sure) {
@@ -538,13 +544,12 @@ class DefaultExtension extends MProvider {
                 fails.push((/^https?:\/\/([^/]+)/.exec(player) || [null, player])[1]);
                 continue;
             }
-            const origin = (/^(https?:\/\/[^/]+)/.exec(player) || [null, ""])[1];
             // DC 애니24(망가요미판)와 같은 영상 요청 정보
             const h = { "User-Agent": UA, "Referer": `${origin}/`, "Origin": origin };
-            const got = await this.expand(found, label, h);
+            // DC 방법이 실패해서 예비 방법으로 찾은 영상은 이름에 표시 (실패 이유는 이름 끝 [ ])
+            const got = (await this.expand(found, label, h)).map((g) => Object.assign(g, { quality: `${g.quality} (예비) [${this.diag.join(" · ").substring(0, 60)}]` }));
             list = list.concat(got);
             // 화질이 하나뿐이면 원래 목록 주소도 함께 (재생기에 따라 이쪽이 잘 될 수 있음)
-            if (got.length === 1 && got[0].url !== found) list.push({ url: found, originalUrl: found, quality: `${label} 원본 목록`, headers: h });
         }
         // 재생 목록 주소가 .m3u8 로 끝나지 않으면(master.txt 등) 망가요미 재생기가 HLS 로 알아보지 못하고
         // 조각을 하나씩 따로 재생함(10초짜리로 끊김) → 재생용 주소(originalUrl) 끝에 "#download.m3u8" 를 붙여 HLS 로 알림.
@@ -564,6 +569,72 @@ class DefaultExtension extends MProvider {
      * 화질 나누기. 이 플레이어의 재생 목록은 주소 끝에 .m3u8 이 없으므로(/m3/…, master.txt)
      * 주소 모양 대신 내용(#EXTM3U)을 보고 화질 목록이면 화질별로 나눔 (자동 화질 바꿈으로 자주 멈추는 것을 피하게)
      */
+    /** DC 애니24(망가요미판)의 재생 부분을 그대로 옮김: 별도 통신(Client 옵션)으로 POST → securedLink → 화질 목록 */
+    async dcVideos(player, origin, label) {
+        const transports = [
+            { persistentConnection: false, noProxy: true, timeout: 25, connectTimeout: 10 },
+            { useDartHttpClient: true, persistentConnection: false },
+        ];
+        const req = async (fn) => {
+            let last = null;
+            for (const opt of transports) {
+                try {
+                    const r = await fn(new Client(opt));
+                    if (r && r.statusCode >= 200 && r.statusCode < 300) return String(r.body || "");
+                    last = `HTTP${r ? r.statusCode : "?"}`;
+                } catch (e) {
+                    last = String((e && e.message) || e).substring(0, 40);
+                }
+            }
+            throw new Error(last || "실패");
+        };
+        try {
+            let id = player.split(/[?#]/)[0].split("/").filter(Boolean).pop() || "";
+            if (!/^[a-f0-9]{16,}$/i.test(id)) {
+                const embedded = await req((c) => c.get(player, { "User-Agent": UA, "Referer": this.getBaseUrl() + "/" }));
+                const fm = embedded.match(/FirePlayer\s*\(\s*["']([^"']+)/i);
+                if (fm) id = fm[1];
+            }
+            if (!id) return [];
+            const body = await req((c) => c.post(`${origin}/player/index.php?data=${encodeURIComponent(id)}&do=getVideo`, {
+                "User-Agent": UA,
+                "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+                "Referer": player,
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "X-Requested-With": "XMLHttpRequest",
+                "Origin": origin,
+            }, { hash: id, r: "" }));
+            const data = JSON.parse(body);
+            let masterUrl = String(data.securedLink || data.link || "").replace(/\\\//g, "/");
+            if (!masterUrl) return [];
+            if (masterUrl.startsWith("//")) masterUrl = "https:" + masterUrl;
+            else if (masterUrl.startsWith("/")) masterUrl = origin + masterUrl;
+            const master = await req((c) => c.get(masterUrl, { "User-Agent": UA, "Accept": "*/*", "Referer": player }));
+            const headers = { "User-Agent": UA, "Referer": `${origin}/`, "Origin": origin };
+            const out = [];
+            const lines = master.split(/\r?\n/);
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].indexOf("#EXT-X-STREAM-INF:") !== 0) continue;
+                let next = "";
+                for (let j = i + 1; j < lines.length; j++) {
+                    if (lines[j].trim() && lines[j].indexOf("#") !== 0) {
+                        next = lines[j].trim();
+                        break;
+                    }
+                }
+                if (!next) continue;
+                const height = (lines[i].match(/RESOLUTION=\d+x(\d+)/i) || [])[1];
+                const u = /^https?:\/\//.test(next) ? next : next.startsWith("/") ? (/^(https?:\/\/[^/]+)/.exec(masterUrl) || [null, ""])[1] + next : masterUrl.replace(/[?#].*$/, "").replace(/[^/]*$/, "") + next;
+                out.push({ url: u, originalUrl: u, quality: height ? `${label} ${height}p` : label, headers, subtitles: [] });
+            }
+            if (!out.length) out.push({ url: masterUrl, originalUrl: masterUrl, quality: `${label} 자동`, headers, subtitles: [] });
+            return out;
+        } catch (e) {
+            this.diag.push(`DC방식 ${String((e && e.message) || e).substring(0, 50)}`);
+            return [];
+        }
+    }
+
     /** 플레이어 화면(cdndania.com/video/…)의 스크립트에서 securedLink 를 찾음 (압축된 스크립트는 풀어서) */
     async playerPage(player, pageUrl) {
         try {
