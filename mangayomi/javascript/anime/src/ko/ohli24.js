@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.4",
+    "version": "0.1.5",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli24.js"
@@ -511,14 +511,24 @@ class DefaultExtension extends MProvider {
             // .m3u8 주소를 못 받았으면 웹뷰로 플레이어가 실제로 받는 .m3u8 을 찾아 봄 (없으면 받은 주소 그대로)
             const fire = await this.firePlayer(player, pageUrl);
             let found = fire ? fire.url : null;
-            if (!fire || !fire.sure) found = (await this.viaWebview(player, pageUrl)) || found;
+            let src = fire ? fire.src : "";
+            if (!fire || !fire.sure) {
+                const w = await this.viaWebview(player, pageUrl);
+                if (w) {
+                    found = w;
+                    src = "W";
+                }
+            }
             if (!found) {
                 fails.push((/^https?:\/\/([^/]+)/.exec(player) || [null, player])[1]);
                 continue;
             }
             const origin = (/^(https?:\/\/[^/]+)/.exec(player) || [null, ""])[1];
             const h = { "User-Agent": UA, "Referer": `${origin}/`, "Origin": origin };
-            list = list.concat(await this.expand(found, label, h));
+            const got = await this.expand(found, label, h);
+            // [임시 진단] 어느 주소를 썼는지(S=securedLink, M=.m3u8, W=웹뷰, V=videoSource)와 재생 목록 길이를 이름에 표시
+            for (const g of got) g.quality += ` [${src}${await this.playlistInfo(g.url, h)}]`;
+            list = list.concat(got);
         }
         if (!list.length) {
             const wv = typeof evaluateJavascriptViaWebview === "function" ? "" : " · 웹뷰 미지원";
@@ -531,6 +541,26 @@ class DefaultExtension extends MProvider {
      * 화질 나누기. 이 플레이어의 재생 목록은 주소 끝에 .m3u8 이 없으므로(/m3/…, master.txt)
      * 주소 모양 대신 내용(#EXTM3U)을 보고 화질 목록이면 화질별로 나눔 (자동 화질 바꿈으로 자주 멈추는 것을 피하게)
      */
+    /** [임시 진단] 재생 목록의 조각 수 · 끝 표시(ENDLIST) · 전체 길이 */
+    async playlistInfo(url, h) {
+        try {
+            let res = await this.client.get(url, h);
+            let body = String(res.body || "").replace(/\r/g, "");
+            const v = /#EXT-X-STREAM-INF:[^\n]*\n\s*([^\s#][^\n]*)/.exec(body);
+            if (v) {
+                let u = v[1].trim();
+                if (!/^https?:\/\//.test(u)) u = u.startsWith("/") ? (/^(https?:\/\/[^/]+)/.exec(url) || [null, ""])[1] + u : url.replace(/[^/]*(?:\?.*)?$/, "") + u;
+                res = await this.client.get(u, h);
+                body = String(res.body || "").replace(/\r/g, "");
+            }
+            const durs = (body.match(/#EXTINF:([\d.]+)/g) || []).map((x) => parseFloat(x.substring(8)) || 0);
+            const total = Math.round(durs.reduce((a, b) => a + b, 0));
+            return ` · 조각${durs.length} · ${body.includes("#EXT-X-ENDLIST") ? "끝O" : "끝X"} · ${Math.floor(total / 60)}분${total % 60}초 · ${res.statusCode}`;
+        } catch (e) {
+            return " · 목록 못 읽음";
+        }
+    }
+
     async expand(url, label, h) {
         if (/\.m3u8/.test(url)) return hlsExpand(this.client, url, label, h);
         const one = [{ url, originalUrl: url, quality: label, headers: h }];
@@ -602,14 +632,14 @@ class DefaultExtension extends MProvider {
                 data = null;
             }
             const secured = data && typeof data.securedLink === "string" && /^https?:\/\//.test(data.securedLink) ? data.securedLink : null;
-            if (secured) return { url: secured, sure: true };
+            if (secured) return { url: secured, sure: true, src: "S" };
             const m3u8 = /https?:\/\/[^"'\s<>]+\.m3u8[^"'\s<>]*/.exec(text);
-            if (m3u8) return { url: m3u8[0], sure: true };
+            if (m3u8) return { url: m3u8[0], sure: true, src: "M" };
             const pick = data && ["videoSource", "file", "hls", "src"].map((k) => data[k])
                 .find((v) => typeof v === "string" && /^https?:\/\//.test(v));
             const v = pick || (/https?:\/\/[^"'\s<>]+(?:\/m3\/|master\.txt)[^"'\s<>]*/.exec(text) || [])[0];
             if (!v) this.diag.push(`응답 "${text.replace(/\s+/g, " ").substring(0, 60)}"`);
-            return v ? { url: v, sure: false } : null;
+            return v ? { url: v, sure: false, src: "V" } : null;
         } catch (e) {
             this.diag.push(`요청 실패 ${String((e && e.message) || e).substring(0, 40)}`);
             return null;
