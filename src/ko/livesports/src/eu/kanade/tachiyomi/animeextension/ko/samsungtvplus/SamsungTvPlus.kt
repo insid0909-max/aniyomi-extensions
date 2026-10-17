@@ -30,17 +30,18 @@ import java.util.TimeZone
  * - 영상: jmp2.uk/stvp-{채널ID} 가 삼성 공식 영상 서버(akamaized·mediatailor) 주소로 넘겨 줌. 복사 방지(DRM) 없음
  * 채널마다 카드 하나(로고), 분류는 필터. 카드를 열면 설명에 지금·다음 편성, 회차는 "실시간" 하나.
  */
-class SamsungTvPlus : AnimeHttpSource(), ConfigurableAnimeSource {
+class SamsungTvPlus(private val fixedGroup: String? = null) : AnimeHttpSource(), ConfigurableAnimeSource {
 
-    override val name = "삼성 TV 플러스"
+    // 분류별 소스("삼성 TV 플러스 · 드라마" 등)는 그 분류 채널만 보여 주고, 설정은 기본 소스와 같이 씀
+    override val name = if (fixedGroup == null) BASE_NAME else "$BASE_NAME · $fixedGroup"
     override val lang = "ko"
-    override val supportsLatest = false
+    override val supportsLatest = fixedGroup == null
     override val baseUrl = "https://www.samsungtvplus.com"
 
     private fun prefs(): android.content.SharedPreferences? = runCatching {
         val app = Class.forName("android.app.ActivityThread")
             .getMethod("currentApplication").invoke(null) as android.app.Application
-        app.getSharedPreferences("source_$id", 0)
+        app.getSharedPreferences("source_${generateId(BASE_NAME, lang, versionId)}", 0)
     }.getOrNull()
 
     private class Ch(
@@ -53,12 +54,18 @@ class SamsungTvPlus : AnimeHttpSource(), ConfigurableAnimeSource {
         val programs: List<Pair<Long, String>>,
     )
 
-    // ================= 채널 목록 (30분 동안 기억) =================
-    @Volatile
-    private var cache: List<Ch> = emptyList()
+    // ================= 채널 목록 (30분 동안 기억, 분류별 소스와 함께 씀) =================
+    private var cache: List<Ch>
+        get() = sharedCache
+        set(v) {
+            sharedCache = v
+        }
 
-    @Volatile
-    private var cacheAt = 0L
+    private var cacheAt: Long
+        get() = sharedCacheAt
+        set(v) {
+            sharedCacheAt = v
+        }
 
     private fun channels(): List<Ch> {
         val now = System.currentTimeMillis()
@@ -153,11 +160,33 @@ class SamsungTvPlus : AnimeHttpSource(), ConfigurableAnimeSource {
     private fun page(group: String, q: String): AnimesPage =
         AnimesPage(channels().filter { (group == ALL || it.group == group) && (q.isEmpty() || matches(it, q)) }.map { card(it) }, false)
 
-    override fun fetchPopularAnime(page: Int): Observable<AnimesPage> = Observable.fromCallable { page(ALL, "") }
+    // ================= 인기·최신 탭 (탭 규칙으로 분류 지정) =================
+    private fun tabGroup(key: String, default: String): String =
+        prefs()?.getString(key, null)?.takeIf { it.isNotEmpty() } ?: default
 
-    // 검색: 채널 이름이나 지금 방송 중인 프로그램 이름 + 분류 필터
+    private fun latestDefault(): String = if (cache.any { it.group == LIVE_GROUP } || cache.isEmpty()) LIVE_GROUP else ALL
+
+    override fun fetchPopularAnime(page: Int): Observable<AnimesPage> =
+        Observable.fromCallable { page(fixedGroup ?: tabGroup(KEY_TAB_POPULAR, ALL), "") }
+
+    override fun fetchLatestUpdates(page: Int): Observable<AnimesPage> =
+        Observable.fromCallable { channels(); page(tabGroup(KEY_TAB_LATEST, latestDefault()), "") }
+
+    // 검색: 채널 이름이나 지금 방송 중인 프로그램 이름 + 분류 필터 (+ 탭 규칙 저장)
     override fun fetchSearchAnime(page: Int, query: String, filters: AnimeFilterList): Observable<AnimesPage> {
-        val sel = filters.filterIsInstance<GroupFilter>().firstOrNull()?.let { f -> f.values.getOrNull(f.state) } ?: ALL
+        val sel = fixedGroup ?: filters.filterIsInstance<GroupFilter>().firstOrNull()?.let { f -> f.values.getOrNull(f.state) } ?: ALL
+        if (fixedGroup == null) {
+            val rule = filters.filterIsInstance<TabRuleFilter>().firstOrNull()?.state ?: 0
+            prefs()?.edit()?.apply {
+                when (rule) {
+                    1 -> putString(KEY_TAB_POPULAR, sel)
+                    2 -> putString(KEY_TAB_LATEST, sel)
+                    3 -> remove(KEY_TAB_POPULAR)
+                    4 -> remove(KEY_TAB_LATEST)
+                    5 -> remove(KEY_TAB_POPULAR).remove(KEY_TAB_LATEST)
+                }
+            }?.apply()
+        }
         return Observable.fromCallable { page(sel, query.trim()) }
     }
 
@@ -195,13 +224,19 @@ class SamsungTvPlus : AnimeHttpSource(), ConfigurableAnimeSource {
 
     // ================= 필터 (분류) =================
     private class GroupFilter(groups: Array<String>) : AnimeFilter.Select<String>("분류", groups)
+    private class TabRuleFilter : AnimeFilter.Select<String>("인기/최신 탭 규칙", TAB_RULES)
 
     override fun getFilterList(): AnimeFilterList {
+        if (fixedGroup != null) return AnimeFilterList(AnimeFilter.Header("검색어는 채널 이름이나 지금 방송 중인 프로그램 이름 ($fixedGroup 채널 안에서)"))
         // 화면을 그릴 때 인터넷을 쓰지 않도록, 받아 둔 목록이 있으면 그 분류, 없으면 기본 분류
         val known = cache.map { it.group }.distinct().ifEmpty { DEFAULT_GROUPS }
         return AnimeFilterList(
             AnimeFilter.Header("검색어는 채널 이름이나 지금 방송 중인 프로그램 이름"),
             GroupFilter((listOf(ALL) + known).toTypedArray()),
+            AnimeFilter.Separator(),
+            AnimeFilter.Header("분류를 고르고 아래 규칙을 고른 뒤 필터를 누르면 탭에 저장됩니다"),
+            AnimeFilter.Header("현재 인기 탭: ${tabGroup(KEY_TAB_POPULAR, ALL)} · 최신 탭: ${tabGroup(KEY_TAB_LATEST, latestDefault())}"),
+            TabRuleFilter(),
         )
     }
 
@@ -236,8 +271,21 @@ class SamsungTvPlus : AnimeHttpSource(), ConfigurableAnimeSource {
     // 웹뷰 버튼: 삼성 TV 플러스 홈페이지
     override fun getAnimeUrl(anime: SAnime): String = baseUrl
 
+    // 선호 화질: 분류별 소스에서 바꿔도 기본 소스 저장소에 같이 써서 모든 삼성 TV 플러스 소스가 같이 씀
     override fun setupPreferenceScreen(screen: androidx.preference.PreferenceScreen) {
-        LiveQuality.addPreference(screen)
+        val shared = prefs()
+        androidx.preference.ListPreference(screen.context).apply {
+            key = KEY_QUALITY
+            title = "선호 화질" + if (fixedGroup != null) " ($BASE_NAME 와 같이 씀)" else ""
+            entries = QUALITIES
+            entryValues = QUALITIES
+            setDefaultValue(shared?.getString(KEY_QUALITY, null) ?: QUALITIES[0])
+            summary = "%s\n채널이 여러 화질을 제공할 때 이 화질을 먼저 재생합니다."
+            setOnPreferenceChangeListener { _, v ->
+                shared?.edit()?.putString(KEY_QUALITY, v as String)?.apply()
+                true
+            }
+        }.also(screen::addPreference)
     }
 
     companion object {
@@ -248,6 +296,31 @@ class SamsungTvPlus : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val STREAM = "https://jmp2.uk/stvp-"
         private const val ALL = "전체"
         private const val CACHE_MS = 30 * 60 * 1000L
+        const val BASE_NAME = "삼성 TV 플러스"
+        private const val LIVE_GROUP = "실시간"
+
+        /** 분류별 소스로 따로 띄우는 분류 */
+        val SOURCE_GROUPS = listOf("실시간", "드라마", "영화", "뉴스", "예능")
+        private const val KEY_TAB_POPULAR = "stv_tab_popular"
+        private const val KEY_TAB_LATEST = "stv_tab_latest"
+
+        // LiveQuality 와 같은 키 (LiveQuality.sort 가 이 값을 읽음)
+        private const val KEY_QUALITY = "pref_live_quality"
+        private val QUALITIES = arrayOf<CharSequence>("자동", "1080p", "720p", "480p", "360p")
+        private val TAB_RULES = arrayOf(
+            "저장하지 않음 (필터 결과만 보기)",
+            "고른 분류를 인기 탭에 저장",
+            "고른 분류를 최신 탭에 저장",
+            "인기 탭을 기본값(전체)으로",
+            "최신 탭을 기본값(실시간)으로",
+            "두 탭 모두 기본값으로",
+        )
+
+        @Volatile
+        private var sharedCache: List<Ch> = emptyList()
+
+        @Volatile
+        private var sharedCacheAt = 0L
         private val DEFAULT_GROUPS = listOf("뉴스", "예능", "드라마", "시사/교양", "영화", "실시간", "어린이", "음악", "라이프스타일", "쇼핑", "스포츠")
     }
 }
