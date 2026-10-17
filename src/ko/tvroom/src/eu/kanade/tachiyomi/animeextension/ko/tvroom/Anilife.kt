@@ -371,10 +371,6 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         var backup = ""
         var sub = ""
         var apiError = ""
-        // [임시 측정] 단계별 걸린 시간 (화질 이름 뒤에 표시, 원인 찾으면 뺄 것)
-        val t0 = System.currentTimeMillis()
-        val times = mutableListOf<String>()
-        fun lap(name: String, since: Long) = times.add("$name ${"%.1f".format((System.currentTimeMillis() - since) / 1000.0)}")
         // 사이트 재생 화면(/content/작품/회차)에서 부르는 것처럼 그 화면 주소를 Referer 로
         val page = "$baseUrl/content/$animeId/$key"
 
@@ -412,10 +408,8 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         // 바로 부르기가 최근에 실패했으면 건너뛰고 웹뷰부터 (6시간 기억)
         val skipDirect = (prefs()?.getLong(PREF_DIRECT_FAIL_UNTIL, 0L) ?: 0L) > System.currentTimeMillis()
         if (!skipDirect) direct()
-        lap(if (skipDirect) "API 건너뜀" else "API·상세", t0)
         var vh = videoHeaders()
         // 그래도 없으면 숨은 화면(WebView)으로 사이트 재생 화면을 열어 영상 주소를 받음
-        val t2 = System.currentTimeMillis()
         if (main.isEmpty() && backup.isEmpty()) {
             val found = sniffWithWebView(page, "$baseUrl/")
             if (found != null) {
@@ -423,7 +417,6 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
                 if (backup.isEmpty()) backup = found.backup
                 if (sub.isEmpty()) sub = found.sub
                 vh = videoHeaders(found.referer)
-                lap("웹뷰(${found.via})", t2)
                 if (!skipDirect) prefs()?.edit()?.putLong(PREF_DIRECT_FAIL_UNTIL, System.currentTimeMillis() + DIRECT_SKIP_MS)?.apply()
             } else if (skipDirect) {
                 // 웹뷰가 안 되면 건너뛴 바로 부르기를 다시 해 봄
@@ -434,7 +427,6 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
                 throw Exception("재생 주소를 받지 못했습니다. 잠시 뒤 다시 시도해 주세요 [$apiError]".replace(" []", ""))
             }
         }
-        val t3 = System.currentTimeMillis()
         val subs = if (sub.isNotEmpty()) listOf(Track(abs(sub), "한국어")) else emptyList()
         // 기본 주소가 안 열리면 대체 주소를 먼저
         val servers = listOf(abs(main) to LABEL, abs(backup) to "$LABEL (대체 1)").filter { it.first.isNotEmpty() }.distinctBy { it.first }
@@ -442,10 +434,7 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         val lists = servers.map { (u, label) -> async { HlsQuality.expand(client, u, label, vh) } }.awaitAll()
         val mainOk = lists.size < 2 || lists[0].size > 1 || HlsQuality.works(client, servers[0].first, vh)
         val expanded = (if (mainOk) lists else lists.reversed()).flatten()
-        lap("화질", t3)
-        lap("합계", t0)
-        val tag = " [${times.joinToString("·")}초]"
-        val videos = expanded.map { Video(it.url, it.quality + tag, it.videoUrl, vh, subs) }
+        val videos = expanded.map { Video(it.url, it.quality, it.videoUrl, vh, subs) }
         HlsQuality.sort(prefs(), videos)
     }
 
