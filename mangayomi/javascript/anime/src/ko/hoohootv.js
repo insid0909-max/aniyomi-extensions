@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.5",
+    "version": "0.1.6",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -737,7 +737,18 @@ class DefaultExtension extends MProvider {
         const ov = first(doc, ".overview");
         const ongoing = latest > 0 && Date.now() - latest <= ONGOING_MS;
         const head = eps.length && latest > 0 ? `${ongoing ? "방영 중" : "종영"} · 최근 방영: ${fullDate(latest)}` : "";
-        const ogImg = /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']*)["']/.exec(html);
+        // 표지: og:image 는 사이트 로고(HOOHOO)라서 쓰지 않고, 작품 포스터(/media/poster_image/) 중 제목과 같은 것 → 첫 포스터
+        let poster = "";
+        for (const img of doc.select("img")) {
+            const src = img.attr("data-src") || img.attr("src") || "";
+            if (!/poster_image/.test(src)) continue;
+            if (!poster) poster = src;
+            if (raw && (img.attr("alt") || "").trim() === raw) {
+                poster = src;
+                break;
+            }
+        }
+        if (!poster) poster = (/["'(]([^"'()\s]*\/media\/poster_image\/[^"'()\s]+)/.exec(html) || [null, ""])[1];
         let episodes;
         if (!eps.length) {
             episodes = [{ name: "1 · 본편", url: path, dateUpload: null }];
@@ -759,7 +770,7 @@ class DefaultExtension extends MProvider {
         }
         return {
             name: this.titleWithAir(raw, latest),
-            imageUrl: ogImg ? this.abs(ogImg[1]) : "",
+            imageUrl: poster ? this.abs(poster) : "",
             link: this.getBaseUrl() + path,
             description: [head, ov ? ov.text.trim() : ""].filter((x) => x).join("\n\n"),
             genre,
@@ -809,7 +820,7 @@ class DefaultExtension extends MProvider {
         if (!found) found = direct;
         if (!found) {
             const why = typeof evaluateJavascriptViaWebview !== "function" ? " [웹뷰 미지원]" : this.lastDiag ? ` [${this.lastDiag}]` : "";
-            throw new Error(why ? `영상 못 찾음${why}` : `영상 주소를 찾지 못했습니다: ${playerHost}`);
+            throw new Error(why ? `영상 못 찾음 (자세한 내용은 확장 설정 맨 아래)${why}` : `영상 주소를 찾지 못했습니다: ${playerHost}`);
         }
         const keys = Object.keys(MEDIA_CACHE);
         if (keys.length >= 30) delete MEDIA_CACHE[keys[0]];
@@ -856,7 +867,10 @@ class DefaultExtension extends MProvider {
             "if(/^https?:/.test(s)&&!/challenges\\.cloudflare\\.com|google|facebook|doubleclick/.test(s)&&s!==location.href)return s;}return null;}" +
             "var t=setInterval(function(){n++;mute();var u=find();" +
             "if(u){clearInterval(t);window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:u,p:played,r:location.href}));return;}" +
-            "if(n>=12&&n<=40){var s=inner();if(s){clearInterval(t);location.href=s;return;}}" +
+            // 옮기기 전 바깥 화면 코드 앞부분을 window.name 에 남겨 둠 (옮긴 화면의 진단에서 같이 보여 줌)
+            "if(n>=12&&n<=40){var s=inner();if(s){clearInterval(t);try{var fr=document.querySelector('iframe');window.name='hh:'+location.host+' iframe['+" +
+            "(fr?['allow','sandbox','referrerpolicy'].map(function(a){return a+'='+(fr.getAttribute(a)||'');}).join(' '):'')+'] '+" +
+            "[].slice.call(document.scripts).filter(function(e){return !e.src;}).map(function(e){return e.text.replace(/\\s+/g,' ');}).join(' ;; ').substring(0,900);}catch(e){}location.href=s;return;}}" +
             "if(n===" + playAt + "||n===" + (playAt + 15) + "){played=true;var v=document.querySelector('video');" +
             "if(v){v.muted=true;try{var q=v.play();if(q&&q.catch)q.catch(function(){});}catch(e){}}" +
             "try{var j=window.jwplayer&&window.jwplayer();if(j&&j.play){if(j.setMute)j.setMute(true);j.play();}}catch(e){}" +
@@ -870,7 +884,11 @@ class DefaultExtension extends MProvider {
             "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:null,p:played," +
             "d:location.host+' | jw '+js+' | 영상'+(v?'있음':'없음')+' | 요청 '+(last.slice(-4).join(' , ')||'없음')+' | 파일'+r.length+" +
             "' | iframe '+(f?((f.src||'주소없음').replace(/^https?:\\/\\//,'').substring(0,40)):'없음')+" +
-            "' | 글자 '+((document.body&&document.body.innerText)||'').replace(/\\s+/g,' ').substring(0,40)}));}" +
+            "' | 글자 '+((document.body&&document.body.innerText)||'').replace(/\\s+/g,' ').substring(0,40)," +
+            // 설정 화면에 보여 줄 자세한 내용: 안에 든 화면인지, 앞 화면 주소, 스크립트 주소, 페이지 코드 앞부분
+            "x:'top '+(window.top===window)+' | ref '+(document.referrer||'없음').substring(0,60)+' | src '+[].slice.call(document.scripts).map(function(e){return (e.src||'').replace(/^https?:\\/\\/[^/]+/,'');}).filter(function(e){return e;}).join(',').substring(0,250)+" +
+            "' | inline '+[].slice.call(document.scripts).filter(function(e){return !e.src;}).map(function(e){return e.text.replace(/\\s+/g,' ');}).join(' ;; ').substring(0,1500)+" +
+            "' | body '+(document.body?document.body.innerHTML.replace(/\\s+/g,' ').substring(0,400):'없음')+' | outer '+(/^hh:/.test(window.name)?window.name.substring(3):'없음')}));}" +
             "},300);})();";
         try {
             // 망가요미 웹뷰는 화면을 다 불러온 뒤(보안 확인 화면이 있으면 그다음 화면에서도) 스크립트를 넣음 → 넉넉히 36초
@@ -883,6 +901,7 @@ class DefaultExtension extends MProvider {
             }
             const o = JSON.parse(String(res));
             if (o && o.d) this.lastDiag = String(o.d);
+            if (o && o.x) this.setPref("hoohootv_last_diag", `${new Date(Date.now() + 9 * 3600000).toISOString().substring(5, 16)} ${o.d} || ${o.x}`.substring(0, 3500));
             if (!o || !/^https?:\/\//.test(String(o.u || ""))) return null;
             if (o.p && playerHost && playAt > 2) this.rememberAutoplay(playerHost);
             return { media: String(o.u), referer: /^https?:\/\//.test(String(o.r || "")) ? String(o.r) : player };
@@ -924,6 +943,15 @@ class DefaultExtension extends MProvider {
                 summary: "접속이 안 되면 바로, 접속돼도 1시간마다 주소 안내 사이트(hoohootv1.com)에 적힌 새 주소를 먼저 확인합니다. 못 찾으면 다음 글자·번호 주소를 짐작해 찾습니다.",
                 value: true,
             },
-        }, qualityPreference("hoohootv_quality")];
+        }, qualityPreference("hoohootv_quality"), {
+            key: "hoohootv_diag_view",
+            editTextPreference: {
+                title: "마지막 재생 진단 (재생이 안 될 때 이 화면을 캡처해 주세요)",
+                summary: this.pref("hoohootv_last_diag", "") || "아직 없음",
+                value: "",
+                dialogTitle: "마지막 재생 진단",
+                dialogMessage: this.pref("hoohootv_last_diag", "") || "아직 없음",
+            },
+        }];
     }
 }
