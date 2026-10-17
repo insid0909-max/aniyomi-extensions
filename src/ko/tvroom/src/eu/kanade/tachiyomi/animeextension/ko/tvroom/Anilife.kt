@@ -375,48 +375,62 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         fun lap(name: String, since: Long) = times.add("$name ${"%.1f".format((System.currentTimeMillis() - since) / 1000.0)}")
         // 사이트 재생 화면(/content/작품/회차)에서 부르는 것처럼 그 화면 주소를 Referer 로
         val page = "$baseUrl/content/$animeId/$key"
-        try {
-            val url = "$baseUrl${episode.url.substringBefore('?')}?request=${System.currentTimeMillis()}-0"
-            val hh = apiHeaders().newBuilder().set("Referer", page).set("Cache-Control", "no-store").build()
-            client.newCall(GET(url, hh)).execute().use { res ->
-                val o = json(res)
-                main = str(o, "videoUrl")
-                backup = str(o, "backupUrl")
-                sub = str(o, "subtitleUrl")
-                if (main.isEmpty() && backup.isEmpty()) apiError = "빈 응답 ${o.toString().take(80)}"
+
+        // 앱에서 바로 부르는 재생 API·작품 정보 (휴대폰에서는 대개 403 이라 웹뷰로 넘어감)
+        fun direct() {
+            try {
+                val url = "$baseUrl${episode.url.substringBefore('?')}?request=${System.currentTimeMillis()}-0"
+                val hh = apiHeaders().newBuilder().set("Referer", page).set("Cache-Control", "no-store").build()
+                client.newCall(GET(url, hh)).execute().use { res ->
+                    val o = json(res)
+                    main = str(o, "videoUrl")
+                    backup = str(o, "backupUrl")
+                    sub = str(o, "subtitleUrl")
+                    if (main.isEmpty() && backup.isEmpty()) apiError = "빈 응답 ${o.toString().take(80)}"
+                }
+            } catch (e: Exception) {
+                apiError = e.message.orEmpty()
             }
-        } catch (e: Exception) {
-            apiError = e.message.orEmpty()
-        }
-        lap("API", t0)
-        // 재생 주소를 못 받으면 작품 정보에 적힌 주소를 씀
-        val t1 = System.currentTimeMillis()
-        if (main.isEmpty() && backup.isEmpty()) {
-            runCatching {
-                client.newCall(GET(detailUrl(animeId), apiHeaders())).execute().use { res ->
-                    val arr = itemOf(res)?.optJSONArray("episodes")
-                    val e = (0 until (arr?.length() ?: 0)).mapNotNull { arr!!.optJSONObject(it) }
-                        .firstOrNull { str(it, "key") == key || str(it, "number") == key }
-                    if (e != null) {
-                        main = str(e, "videoUrl")
-                        backup = str(e, "backupUrl")
-                        if (sub.isEmpty()) sub = str(e, "subtitleUrl")
+            // 재생 주소를 못 받으면 작품 정보에 적힌 주소를 씀
+            if (main.isEmpty() && backup.isEmpty()) {
+                runCatching {
+                    client.newCall(GET(detailUrl(animeId), apiHeaders())).execute().use { res ->
+                        val arr = itemOf(res)?.optJSONArray("episodes")
+                        val e = (0 until (arr?.length() ?: 0)).mapNotNull { arr!!.optJSONObject(it) }
+                            .firstOrNull { str(it, "key") == key || str(it, "number") == key }
+                        if (e != null) {
+                            main = str(e, "videoUrl")
+                            backup = str(e, "backupUrl")
+                            if (sub.isEmpty()) sub = str(e, "subtitleUrl")
+                        }
                     }
                 }
             }
         }
-        lap("상세", t1)
+        // 바로 부르기가 최근에 실패했으면 건너뛰고 웹뷰부터 (6시간 기억)
+        val skipDirect = (prefs()?.getLong(PREF_DIRECT_FAIL_UNTIL, 0L) ?: 0L) > System.currentTimeMillis()
+        if (!skipDirect) direct()
+        lap(if (skipDirect) "API 건너뜀" else "API·상세", t0)
         var vh = videoHeaders()
         // 그래도 없으면 숨은 화면(WebView)으로 사이트 재생 화면을 열어 영상 주소를 받음
         val t2 = System.currentTimeMillis()
         if (main.isEmpty() && backup.isEmpty()) {
             val found = sniffWithWebView(page, "$baseUrl/")
-                ?: throw Exception("재생 주소를 받지 못했습니다. 잠시 뒤 다시 시도해 주세요 [$apiError]".replace(" []", ""))
-            main = found.url
-            if (backup.isEmpty()) backup = found.backup
-            if (sub.isEmpty()) sub = found.sub
-            vh = videoHeaders(found.referer)
-            lap("웹뷰(${found.via})", t2)
+            if (found != null) {
+                main = found.url
+                if (backup.isEmpty()) backup = found.backup
+                if (sub.isEmpty()) sub = found.sub
+                vh = videoHeaders(found.referer)
+                lap("웹뷰(${found.via})", t2)
+                if (!skipDirect) prefs()?.edit()?.putLong(PREF_DIRECT_FAIL_UNTIL, System.currentTimeMillis() + DIRECT_SKIP_MS)?.apply()
+            } else if (skipDirect) {
+                // 웹뷰가 안 되면 건너뛴 바로 부르기를 다시 해 봄
+                prefs()?.edit()?.remove(PREF_DIRECT_FAIL_UNTIL)?.apply()
+                direct()
+            }
+            if (main.isEmpty() && backup.isEmpty()) {
+                throw Exception("재생 주소를 받지 못했습니다. 잠시 뒤 다시 시도해 주세요 [$apiError]".replace(" []", ""))
+            }
         }
         val t3 = System.currentTimeMillis()
         val subs = if (sub.isNotEmpty()) listOf(Track(abs(sub), "한국어")) else emptyList()
@@ -630,6 +644,8 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
         private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
+        private const val PREF_DIRECT_FAIL_UNTIL = "pref_direct_fail_until"
+        private const val DIRECT_SKIP_MS = 6 * 60 * 60 * 1000L
         private val DISCOVER_LOCK = Any()
         private const val DEFAULT_BASE_URL = "https://anilife01.tv"
         private const val RATE_GAP_MS = 250L
