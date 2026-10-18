@@ -1,14 +1,14 @@
 const mangayomiSources = [{
     "name": "후후티비 영화",
     "lang": "ko",
-    "baseUrl": "https://dv.hoohootv461.xyz",
+    "baseUrl": "https://dw.hoohootv461.xyz",
     "apiUrl": "",
     "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
     "typeSource": "single",
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.15",
+    "version": "0.1.16",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv_movie.js"
@@ -20,7 +20,7 @@ const mangayomiSources = [{
 // 영상: 회차 화면의 플레이어(iframe)에서 찾고, 없으면 숨은 웹뷰로 플레이어를 열어 영상 요청 주소를 받음.
 // jwpcdn 회차: creatorofvideo.com HLS / JW ping 의 mu= 파라미터를 우선 추출.
 const HH_KIND = 1; // 0 = 전체, 1 = 영화, 2 = 드라마
-const DEFAULT_BASE_URL = "https://dv.hoohootv461.xyz";
+const DEFAULT_BASE_URL = "https://dw.hoohootv461.xyz";
 const SUB_RE = /^([a-z])([a-z])\.hoohootv(\d+)\.([a-z]{2,6})$/;
 const DOMAIN_RE = /^https:\/\/(?:[a-z0-9-]+\.)*hoohootv\d*\.[a-z]{2,6}$/;
 const HOST_RE = /^https?:\/\/(?:[a-z0-9-]+\.)*hoohootv\d*\.[a-z]{2,6}(?=\/|$)/;
@@ -766,7 +766,6 @@ class DefaultExtension extends MProvider {
             throw new Error("플레이어를 찾지 못했습니다 (로그인이 필요하거나 영상이 없는 회차일 수 있습니다)");
         }
         const playerHost = (/^https?:\/\/([^/?#]+)/.exec(player) || [null, ""])[1];
-        const needsWebview = /jwpcdn/i.test(playerHost) || this.autoplayHosts().includes(playerHost);
 
         // 1) 플레이어 HTML / 본문에서 creatorofvideo · mu= · m3u8 직접 추출
         let direct = null;
