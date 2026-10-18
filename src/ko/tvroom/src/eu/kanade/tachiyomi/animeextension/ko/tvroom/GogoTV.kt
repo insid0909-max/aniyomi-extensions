@@ -424,6 +424,17 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
     override fun videoListParse(response: Response): List<Video> {
         var pageUrl = response.request.url.toString()
         var html = response.body.string()
+        // [임시 측정] 단계별 걸린 시간 (화질 이름 뒤에 표시, 원인 찾으면 뺄 것). 첫 페이지(작품/회차) 받는 시간은 앱이 하므로 "첫페이지"로 따로
+        val t0 = System.currentTimeMillis()
+        val times = mutableListOf<String>()
+        val firstMs = response.receivedResponseAtMillis - response.sentRequestAtMillis
+        times.add("첫페이지 ${"%.1f".format(firstMs / 1000.0)}")
+        fun lap(name: String, since: Long) = times.add("$name ${"%.1f".format((System.currentTimeMillis() - since) / 1000.0)}")
+        fun tagged(list: List<Video>): List<Video> {
+            lap("합계", t0)
+            val tag = " [${times.joinToString("·")}초]"
+            return list.map { Video(it.url, it.quality + tag, it.videoUrl, it.headers) }
+        }
         response.request.tag(String::class.java)?.let { label ->
             // 작품 페이지에서 같은 이름(없으면 같은 회차 번호)의 지금 주소를 찾아 열기
             val links = episodeLinks(Jsoup.parse(html, pageUrl))
@@ -436,6 +447,7 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
                 pageUrl = r.request.url.toString()
                 html = r.body.string()
             }
+            lap("회차주소", t0)
         }
 
         val pageHeaders = headersBuilder().set("Referer", pageUrl).build()
@@ -449,15 +461,22 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         // (나머지 후보는 열지 않아 재생이 빨리 시작됨)
         if (!(prefs()?.getBoolean(PREF_OTHER_SERVERS, false) ?: false)) {
             val tried = ArrayList<Pair<String, String>>()
+            val t1 = System.currentTimeMillis()
             // 회차 주소가 중간 페이지(send5video go.php → 자동 제출 폼 → 플레이어)면 망가요미처럼 직접 따라가서 찾음
             val first = sequence {
                 yieldAll(findAllMedia(html).map { it to pageUrl })
                 yieldAll(crawlMedia(html, pageUrl))
             }.distinctBy { it.first }.take(4).onEach { tried.add(it) }
                 .firstOrNull { (m, r) -> HlsQuality.works(client, m, videoHeaders(r)) }
-            val (m, r) = first ?: sniffWithWebView(pageUrl) ?: tried.firstOrNull()
+            lap("찾기(후보${tried.size}·페이지$crawlPages)", t1)
+            val t2 = System.currentTimeMillis()
+            val web = if (first == null) sniffWithWebView(pageUrl)?.also { lap("웹뷰", t2) } else null
+            val (m, r) = first ?: web ?: tried.firstOrNull()
                 ?: throw Exception("영상 주소를 찾지 못했습니다: $pageUrl")
-            return HlsQuality.sort(prefs(), HlsQuality.expand(client, m, qualityOf(m), videoHeaders(r)))
+            val t3 = System.currentTimeMillis()
+            val out = HlsQuality.sort(prefs(), HlsQuality.expand(client, m, qualityOf(m), videoHeaders(r)))
+            lap("화질", t3)
+            return tagged(out)
         }
 
         // 1) 페이지와 그 안 iframe 들에 들어 있는 영상 주소 후보를 모두 모음 (최대 4개)
@@ -493,13 +512,18 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
      * 중간 페이지를 따라가며 영상 주소를 찾음 (망가요미 고고티비와 같은 방식): 자동 제출 폼(숨은 값을 붙인 주소),
      * meta refresh, location.href, iframe(data-src·src). 최대 3단계·10페이지. (영상 주소, 그 영상을 찾은 페이지) 를 차례로 내놓음
      */
+    // [임시 측정] 중간 페이지를 몇 개 열었는지
+    @Volatile private var crawlPages = 0
+
     private fun crawlMedia(startHtml: String, startUrl: String): Sequence<Pair<String, String>> = sequence {
+        crawlPages = 0
         val visited = HashSet<String>().apply { add(startUrl) }
         val queue = ArrayDeque<Triple<String, String, Int>>()
         nextTargets(startHtml, startUrl).forEach { queue.add(Triple(it, startUrl, 1)) }
         while (queue.isNotEmpty() && visited.size < 10) {
             val (url, referer, depth) = queue.removeFirst()
             if (!visited.add(url)) continue
+            crawlPages++
             val body = runCatching {
                 client.newCall(GET(url, headersBuilder().set("Referer", referer).build())).execute()
                     .use { it.body.string() }
