@@ -149,6 +149,25 @@ jobs:
           apk_files = glob.glob("src/**/build/outputs/apk/release/*.apk", recursive=True)
           extensions = []
 
+          # 망가요미는 APK 안을 보지 않고 이 목록으로 소스를 만듦 → 확장 안의 실제 소스 이름·주소·id 를 적어 줌
+          # (id 는 애니요미 AnimeHttpSource.generateId 와 같은 계산: MD5("이름소문자/언어/1") 앞 8바이트 & Long.MAX)
+          import hashlib
+          source_list = json.load(open(os.path.join(os.environ.get("GITHUB_WORKSPACE", "."), ".github", "source-list.json"), encoding="utf-8"))
+
+          def aniyomi_id(name, lang="ko", version_id=1):
+              b = hashlib.md5(f"{name.lower()}/{lang}/{version_id}".encode("utf-8")).digest()
+              v = 0
+              for i in range(8):
+                  v |= b[i] << (8 * (7 - i))
+              return v & 0x7FFFFFFFFFFFFFFF
+
+          def sources_for(pkg, fallback_name):
+              base_pkg = pkg.rsplit(".", 1)[0]
+              rows = source_list.get(base_pkg) or source_list.get(pkg)
+              if not rows:
+                  return [{"name": fallback_name, "lang": "ko", "id": str(abs(hash(pkg))), "baseUrl": "", "versionId": 1}]
+              return [{"name": n, "lang": "ko", "id": str(aniyomi_id(n)), "baseUrl": u, "versionId": 1} for n, u in rows]
+
           for apk in apk_files:
               badging = subprocess.check_output(["aapt", "dump", "badging", apk]).decode("utf-8", errors="ignore")
               pkg = None
@@ -204,15 +223,7 @@ jobs:
                   "hasChangelog": 0,
                   "size": apk_size,
                   "icon": icon_file,
-                  "sources": [
-                      {
-                          "name": source_name,
-                          "lang": "ko",
-                          "id": str(abs(hash(pkg))),
-                          "baseUrl": "",
-                          "versionId": 1
-                      }
-                  ]
+                  "sources": sources_for(pkg, source_name)
               })
 
           for p in [os.path.join(repo_dir, "index.min.json"), os.path.join(repo_dir, "anime", "index.min.json")]:
