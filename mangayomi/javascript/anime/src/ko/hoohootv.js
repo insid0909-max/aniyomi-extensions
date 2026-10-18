@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.17",
+    "version": "0.1.18",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -821,8 +821,13 @@ class DefaultExtension extends MProvider {
             if (media) direct = { media, referer: pageUrl };
         }
         if (direct && await mediaWorks(this.client, direct.media, this.videoHeaders(direct.referer))) return direct;
-        // jwpcdn 은 바깥 화면을 그대로 둬야 안쪽 플레이어가 시작됨 → 안쪽 화면으로 옮기지 않고, 안쪽이 바깥으로 보내는 신호를 지켜봄
-        return (await this.viaWebview(player, pageUrl, playerHost, /jwpcdn/i.test(playerHost))) || direct;
+        // jwpcdn 은 끝까지 시도해 봐도 망가요미에서 영상 주소를 받을 수 없었음(0.1.17 휴대폰 확인: 서버 1개, 안쪽 신호는 contentChecked 뿐)
+        // → 30초씩 기다리지 않고 바로 안내
+        if (/jwpcdn/i.test(playerHost)) {
+            this.lastDiag = "망가요미에서 재생할 수 없는 플레이어입니다. 애니요미 후후티비(TVroom)로 재생해 주세요";
+            return direct;
+        }
+        return (await this.viaWebview(player, pageUrl, playerHost, false)) || direct;
     }
 
     async toVideos(media, referer) {
