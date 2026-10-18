@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.14",
+    "version": "0.1.15",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv_drama.js"
@@ -899,7 +899,8 @@ class DefaultExtension extends MProvider {
             key: "hoohootv_domain",
             editTextPreference: {
                 title: "후후티비 주소 직접 지정 (선택)",
-                summary: `직접 넣은 주소는 접속되는 동안 계속 씁니다. 끊기면 자동 찾기로 찾은 새 주소를 씁니다. 지금 주소: ${this.getBaseUrl()}`,
+                // 설정 화면을 만드는 동안 저장된 설정을 읽으면 앱이 가끔 꺼져서(후후티비만 그랬음) 고정 글만 씀. 지금 주소는 필터 맨 위 📡 줄에 표시
+                summary: "직접 넣은 주소는 접속되는 동안 계속 씁니다. 끊기면 자동 찾기로 찾은 새 주소를 씁니다. 지금 쓰는 주소는 필터 맨 위에 보입니다.",
                 value: "",
                 dialogTitle: "후후티비 주소",
                 dialogMessage: `https:// 로 시작하는 후후티비 주소 (기본: ${DEFAULT_BASE_URL})`,
