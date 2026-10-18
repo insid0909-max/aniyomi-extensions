@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.3",
+    "version": "0.1.4",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/samsungtvplus_news.js"
@@ -42,6 +42,62 @@ const STV_RULES = [
     "두 탭 모두 기본값으로",
 ];
 const STV_CACHE_MS = 30 * 60 * 1000;
+// 지상파 채널 (방송사 홈페이지의 공식 무료 실시간, 라이브TV(livetv.js)와 같은 주소). [id, 이름, 재생 방식:값]
+const BC_CHANNELS = [
+    ["bc-kbs1", "KBS1", "kbs:11"],
+    ["bc-kbs2", "KBS2", "kbs:12"],
+    ["bc-mbc", "MBC", "mbcmain:"],
+    ["bc-sbs", "SBS", "sbsmain:S01"],
+];
+const BC_LIST = BC_CHANNELS.map((c, i) => ({
+    id: c[0], name: c[1], uri: c[2], chno: -10 + i, logo: "", group: "실시간", programs: [],
+    description: "방송사 홈페이지에서 무료로 제공하는 공식 실시간 방송입니다 (라이브TV 와 같은 주소). 대부분 한국에서만 재생됩니다.",
+}));
+const BC_LABELS = { kbs: "KBS 공식", mbcmain: "MBC 공식", sbsmain: "SBS 공식" };
+const BC_MEDIA_RE = /https?:\/\/[^\s"'<>\\]+?\.m3u8[^\s"'<>\\]*/g;
+
+// 방송사 공식 웹 플레이어가 쓰는 주소 (livetv.js 와 같음)
+function bcApiUrl(kind, arg) {
+    switch (kind) {
+        case "mbcmain": return `https://mediaapi.imbc.com/Player/OnAirURLUtil?type=m&t=${Date.now()}`;
+        case "sbsmain": return `https://apis.sbs.co.kr/play-api/1.0/onair/channel/${arg}` +
+            "?v_type=2&platform=pcweb&protocol=hls&ssl=Y&rscuse=&jwt-token=&sbsmain=";
+        case "kbs": return `https://cfpwwwapi.kbs.co.kr/api/v1/landing/live/channel_code/${arg}`;
+        default: return "";
+    }
+}
+
+function bcHeaders(kind) {
+    const h = { "User-Agent": UA };
+    if (kind === "mbcmain") {
+        h["Referer"] = "https://onair.imbc.com/MbicLive";
+        h["Origin"] = "https://onair.imbc.com";
+    } else if (kind === "sbsmain") {
+        h["Referer"] = "https://www.sbs.co.kr/live/";
+        h["Origin"] = "https://www.sbs.co.kr";
+    } else if (kind === "kbs") {
+        h["Referer"] = "https://onair.kbs.co.kr/";
+    }
+    return h;
+}
+
+// 응답 안에서 재생 주소 찾기. KBS 는 미리보기(preview) 주소도 함께 주므로 그것은 뒤로 미룬다.
+function bcFindMedia(body) {
+    const text = String(body || "").replace(/\\\//g, "/").replace(/\\u0026/g, "&");
+    const all = text.match(BC_MEDIA_RE) || [];
+    return all.find((u) => !/preview/i.test(u)) || all[0] || "";
+}
+
+// 재생 주소가 없을 때 방송사가 준 안내문 (해외 차단·저작권 등)
+function bcReason(body) {
+    const re = /"(?:overseas_text|onair_text|msg|message|Message)"\s*:\s*"([^"]{2,120})"/g;
+    const msg = [];
+    let m;
+    while ((m = re.exec(String(body || "")))) {
+        if (m[1] !== "OK" && !msg.includes(m[1])) msg.push(m[1]);
+    }
+    return "재생 주소를 받지 못했습니다" + (msg.length ? ` (${msg.join(" / ")})` : " (한국에서만 재생되는 방송일 수 있습니다)");
+}
 const STV_GROUPS = ["뉴스", "예능", "드라마", "시사/교양", "영화", "실시간", "어린이", "음악", "라이프스타일", "쇼핑", "스포츠"];
 
 // ---------- 화질 나누기 · 선호 화질 ----------
@@ -166,9 +222,12 @@ class DefaultExtension extends MProvider {
         }
         if (!list.length) {
             if (this._cache.length) return this._cache;
-            throw new Error("삼성 TV 플러스 채널 목록을 받지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
+            // 삼성 목록을 못 받아도 지상파(방송사 공식) 채널은 보여 줌
+            return BC_LIST;
         }
         list.sort((a, b) => a.chno - b.chno);
+        // "실시간" 맨 앞에 지상파 채널
+        list = BC_LIST.concat(list);
         this._cache = list;
         this._cacheAt = now;
         return list;
@@ -289,7 +348,7 @@ class DefaultExtension extends MProvider {
             imageUrl: ch.logo || THUMB,
             link: url,
             description: [line ? "📡 " + line.replace(" · 다음", "\n다음") : "", ch.description || "",
-                `${ch.group} · 채널 ${ch.chno}\n삼성 TV 플러스: 삼성이 광고를 넣어 무료로 제공하는 공식 실시간 채널입니다. 한국에서만 나오는 채널이 있을 수 있습니다.`]
+                ch.uri ? "" : `${ch.group} · 채널 ${ch.chno}\n삼성 TV 플러스: 삼성이 광고를 넣어 무료로 제공하는 공식 실시간 채널입니다. 한국에서만 나오는 채널이 있을 수 있습니다.`]
                 .filter((x) => x).join("\n\n"),
             status: 0,
             genre: [ch.group],
@@ -326,6 +385,8 @@ class DefaultExtension extends MProvider {
     async videoListInner(url) {
         const id = qParam(url, "id");
         if (!id) throw new Error("잘못된 채널 주소");
+        const bc = BC_LIST.find((c) => c.id === id);
+        if (bc) return this.broadcastVideos(bc.uri);
         const h = { "User-Agent": UA };
         const res = await this.client.get(STV_STREAM + id, h);
         if (res.statusCode !== 200) {
@@ -335,6 +396,28 @@ class DefaultExtension extends MProvider {
         const variants = liveVariants(STV_STREAM + id, String(res.body || ""));
         const label = "삼성 공식";
         const list = [{ url: STV_STREAM + id, originalUrl: STV_STREAM + id, quality: `${label} 자동`, headers: h }]
+            .concat(variants.map((v) => ({ url: v.u, originalUrl: v.u, quality: `${label} ${v.h}p`, headers: h })));
+        return liveQualitySort(list);
+    }
+
+    // 지상파 채널: 방송사 공식 웹 플레이어 주소에서 받음 (라이브TV 와 같은 방식)
+    async broadcastVideos(uri) {
+        const kind = uri.split(":")[0];
+        const arg = uri.substring(kind.length + 1);
+        const h = bcHeaders(kind);
+        const res = await this.client.get(bcApiUrl(kind, arg), h);
+        const body = String(res.body || "");
+        const media = bcFindMedia(body);
+        if (!media) throw new Error(bcReason(body));
+        const label = BC_LABELS[kind] || "라이브";
+        let variants = [];
+        try {
+            const r = await this.client.get(media, h);
+            if (r.statusCode === 200) variants = liveVariants(media, String(r.body));
+        } catch (e) {
+            variants = [];
+        }
+        const list = [{ url: media, originalUrl: media, quality: `${label} 자동`, headers: h }]
             .concat(variants.map((v) => ({ url: v.u, originalUrl: v.u, quality: `${label} ${v.h}p`, headers: h })));
         return liveQualitySort(list);
     }

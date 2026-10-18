@@ -96,6 +96,16 @@ class LiveTv : AnimeHttpSource(), ConfigurableAnimeSource {
     // ================= 재생 =================
     override suspend fun getVideoList(episode: SEpisode): List<Video> = withContext(Dispatchers.IO) {
         val uri = "https://local.invalid${episode.url}".toHttpUrlOrNull()?.queryParameter("u").orEmpty()
+        val (media, h, label) = officialMedia(uri)
+        val qualities = LiveQuality.variants(client, media, h).map { (ht, u) -> Video(u, "$label ${ht}p", u, h) }
+        LiveQuality.sort(prefs(), listOf(Video(media, label, media, h)) + qualities)
+    }
+
+    /**
+     * "재생 방식:값"(예: kbs:11, mbcmain:, sbsmain:S01, direct:주소) → (영상 주소, 헤더, 이름표).
+     * 방송사 공식 웹 플레이어가 쓰는 주소에서 받음. 삼성 TV 플러스 "실시간"의 지상파 채널도 이것을 씀
+     */
+    internal fun officialMedia(uri: String): Triple<String, Headers, String> {
         val kind = uri.substringBefore(":")
         val arg = uri.substringAfter(":")
         val h = headersFor(kind)
@@ -106,9 +116,7 @@ class LiveTv : AnimeHttpSource(), ConfigurableAnimeSource {
             val body = client.newCall(Request.Builder().url(api).headers(h).build()).execute().use { it.body.string() }
             findMedia(body) ?: throw Exception(reason(body))
         }
-        val label = LABELS[kind] ?: "라이브"
-        val qualities = LiveQuality.variants(client, media, h).map { (ht, u) -> Video(u, "$label ${ht}p", u, h) }
-        LiveQuality.sort(prefs(), listOf(Video(media, label, media, h)) + qualities)
+        return Triple(media, h, LABELS[kind] ?: "라이브")
     }
 
     /** 방송사 공식 웹 플레이어가 쓰는 주소 */
