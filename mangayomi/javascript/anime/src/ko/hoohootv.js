@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.13",
+    "version": "0.1.14",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -17,11 +17,10 @@ const mangayomiSources = [{
 // Aniyomi HoohooTV.kt(후후티비)를 망가요미용으로 옮긴 소스.
 // 목록: /tv/분류, /movie/분류 (?page=N), 인기 /popular, 검색 /search?sfl=…&query=,
 // 작품: /detail/ID/ (회차 목록은 script#episodes-data JSON, 회차는 ?season=S&episode=E),
-// 영상: 회차 화면의 플레이어(iframe) 글자 안에서 찾고, 없으면 숨은 웹뷰로 플레이어를 열어 영상 요청 주소를 받음.
-// 후후티비 영화·드라마 소스(hoohootv_movie.js·hoohootv_drama.js)는 이 파일의 복사본 (이름·pkgPath·HH_KIND 만 다름)
+// 영상: 회차 화면의 플레이어(iframe)에서 찾고, 없으면 숨은 웹뷰로 플레이어를 열어 영상 요청 주소를 받음.
+// jwpcdn 회차: creatorofvideo.com HLS / JW ping 의 mu= 파라미터를 우선 추출.
 const HH_KIND = 0; // 0 = 전체, 1 = 영화, 2 = 드라마
 const DEFAULT_BASE_URL = "https://dv.hoohootv461.xyz";
-// 주소: 앞 두 글자 + 번호가 바뀜 (fo.hoohootv459.xyz → bd.hoohootv460.xyz → dv.hoohootv461.xyz)
 const SUB_RE = /^([a-z])([a-z])\.hoohootv(\d+)\.([a-z]{2,6})$/;
 const DOMAIN_RE = /^https:\/\/(?:[a-z0-9-]+\.)*hoohootv\d*\.[a-z]{2,6}$/;
 const HOST_RE = /^https?:\/\/(?:[a-z0-9-]+\.)*hoohootv\d*\.[a-z]{2,6}(?=\/|$)/;
@@ -35,7 +34,11 @@ const ONGOING_MS = 21 * 86400000;
 const AIR_TTL_MS = 6 * 3600000;
 const ENDED_TTL_MS = 7 * 86400000;
 const NEWER_CHECK_MS = 3600000;
-const MEDIA_RE = /https?:\/\/[^"'\s<>\\]+\.(?:m3u8|mp4)(?:\?[^"'\s<>\\]*)?/i;
+
+// m3u8/mp4 + creatorofvideo HLS
+const MEDIA_RE = /https?:\/\/[^"'\s<>\\]+(?:\.(?:m3u8|mp4)|creatorofvideo\.com\/hls\/[^"'\s<>\\]+)(?:\?[^"'\s<>\\]*)?/i;
+const CREATOR_M3U8_RE = /https?:\/\/(?:[^/]+\.)?creatorofvideo\.com\/hls\/[^\s"'<>\\]+\.m3u8(?:\?[^"'\s<>\\]*)?/i;
+const MU_RE = /[?&]mu=([^&"'\s<>\\]+)/i;
 
 const CATEGORIES = [
     ["TV 전체", "/tv/all"],
@@ -65,7 +68,6 @@ async function siteWait() {
     lastSiteRequest = Date.now();
 }
 
-/** "2026-09-29" · "2026.09.29" · "26.09.29" → 한국시간 그날 0시 (없으면 0) */
 function dateOf(s) {
     s = String(s || "");
     let m = /(\d{4})[-.](\d{1,2})[-.](\d{1,2})/.exec(s);
@@ -78,10 +80,8 @@ function yearOf(ms) {
     return new Date(ms + 9 * 3600000).toISOString().substring(0, 4);
 }
 
-// 같은 회차를 다시 열면(이어보기·재시도) 기억해 둔 영상 주소로 바로 재생 (20분)
 const MEDIA_CACHE = {};
 
-// selectFirst 는 비어도 값이 있는 것처럼 보이므로 select()[0] 사용
 function first(el, css) {
     const l = el ? el.select(css) : [];
     return l && l.length ? l[0] : null;
@@ -111,10 +111,23 @@ function fullDate(ms) {
     return d.toISOString().substring(0, 10).replace(/-/g, ".") + ` (${w})`;
 }
 
+/** 문자열에서 creatorofvideo m3u8 / JW mu= / 일반 MEDIA_RE 추출 */
+function extractMediaUrl(text) {
+    const body = String(text || "").replace(/\\\//g, "/");
+    let m = CREATOR_M3U8_RE.exec(body);
+    if (m) return m[0];
+    m = MU_RE.exec(body);
+    if (m) {
+        const dec = safeDecode(m[1].replace(/\+/g, " "));
+        const c = CREATOR_M3U8_RE.exec(dec) || MEDIA_RE.exec(dec);
+        if (c) return (c[0] || c[1] || dec).split("&")[0];
+        if (/^https?:\/\//.test(dec) && /\.m3u8/i.test(dec)) return dec.split("&")[0];
+    }
+    m = MEDIA_RE.exec(body);
+    return m ? m[0] : null;
+}
 
-// 이 헤더로 영상 주소가 실제로 열리는지 (m3u8 이면 내용까지 확인)
 async function mediaWorks(client, url, headers) {
-    // mp4 같은 영상 파일은 확인하려면 파일 전체를 받아야 해서(망가요미는 본문을 끝까지 받음) 확인하지 않음
     if (!url.includes(".m3u8")) return true;
     try {
         const res = await client.get(url, headers);
@@ -125,18 +138,13 @@ async function mediaWorks(client, url, headers) {
     }
 }
 
-
 const QUALITY_CHOICES = ["자동", "1080p", "720p", "480p", "360p"];
 
-// HLS 마스터 목록에 화질이 여러 개면 각각 따로 고를 수 있게 나눔. 하나뿐이거나 읽지 못하면 그대로
-// 주소에 "1080p" 같은 화질이 적혀 있으면 이름 뒤에 붙임 (mp4·단일 화질 영상도 지금 화질을 알 수 있게)
 function withRes(label, url) {
     let path = String(url || "").split("?")[0];
     try {
         path = decodeURIComponent(path);
-    } catch (e) {
-        // 그대로 사용
-    }
+    } catch (e) {}
     const m = /(?:^|[^0-9])(2160|1440|1080|720|576|480|360|240)[pP](?![0-9a-zA-Z])/.exec(path);
     return m && !label.includes(`${m[1]}p`) ? `${label} ${m[1]}p` : label;
 }
@@ -173,7 +181,6 @@ async function hlsExpand(client, url, label, headers) {
         .concat(variants.map((v) => ({ url: v.u, originalUrl: v.u, quality: `${label} ${v.h}p`, headers })));
 }
 
-// 설정의 선호 화질을 맨 앞으로
 function qualitySort(prefKey, list) {
     let want = "자동";
     try {
@@ -199,7 +206,6 @@ function qualityPreference(key) {
     };
 }
 
-// ---------- 인기/최신 탭 규칙 (필터 조건을 탭에 저장) ----------
 const RULE_CHOICES = [
     "저장하지 않음 (필터 결과만 보기)",
     "현재 조건을 인기 탭에 저장",
@@ -210,7 +216,6 @@ const RULE_CHOICES = [
 ];
 const RULE_NAME = "인기/최신 탭 규칙";
 
-// 저장 값은 필터 선택 번호를 쉼표로 이은 문자열. 없거나 맞지 않으면 null (= 기본값)
 function ruleRead(prefix, popular, sizes) {
     let raw = "";
     try {
@@ -238,9 +243,7 @@ function ruleApply(prefix, rule, idx) {
             p.setString(pop, "");
             p.setString(latest, "");
         }
-    } catch (e) {
-        // 저장 실패는 무시 (필터 결과는 그대로 보여 줌)
-    }
+    } catch (e) {}
 }
 
 function ruleFilters(prefix, sizes, defaults, text) {
@@ -257,18 +260,11 @@ function ruleFilters(prefix, sizes, defaults, text) {
     ];
 }
 
-
-// ---------- 앱 기본 User-Agent 사용 ----------
-// 망가요미는 내장 웹뷰에서 Cloudflare 확인을 통과하면 쿠키와 그 웹뷰의 User-Agent 를 함께 저장하고,
-// 요청에 User-Agent 가 없을 때만 그 값을 넣는다. 확장이 고정 User-Agent 를 보내면 통과 쿠키가 거부되므로
-// 사이트(문서·API) 요청에서는 확장의 User-Agent 를 빼고 앱 값을 쓰게 한다. 영상·이미지 주소 요청은 그대로 둔다.
-// 망가요미 변형 앱(Mangayomi Glitch 등)은 User-Agent 를 넣어 주지 않아, 빼고 보내면 사이트가 연결을 끊거나 403 을 줌
-// → 그런 응답이면 User-Agent 를 넣어 다시 보내고, 그 뒤로는 처음부터 넣음 (원래 망가요미는 첫 요청이 성공해 그대로)
 let APP_NO_UA = false;
 let APP_ALT = null;
 function appClient(raw) {
     const media = /\.(?:m3u8|mp4|ts|m4s|jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
-    const fallbackUa = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
+    const fallbackUa = UA;
     const strip = (url, headers) => {
         if (!headers || media.test(String(url || ""))) return headers || {};
         const out = {};
@@ -280,7 +276,6 @@ function appClient(raw) {
         if (!Object.keys(out).some((k) => k.toLowerCase() === "user-agent")) out["User-Agent"] = fallbackUa;
         return out;
     };
-    // 망가요미 기본 통신이 끊기면 연결을 재사용하지 않는 별도 통신으로 한 번 더 (애니24에서 효과 확인, DC 확장과 같은 방법)
     const alt = () => {
         if (!APP_ALT) {
             try {
@@ -337,18 +332,15 @@ function appClient(raw) {
     };
 }
 
-
-
-// 망가요미 재생기는 재생용 주소(originalUrl) 모양으로 HLS 를 알아봄 → 확장자가 .m3u8 이 아닌 HLS 주소(.txt·jmp2 등)는
-// 끝에 "#download.m3u8" 를 붙여 알려 줌. # 뒤는 서버로 보내지지 않아 실제 요청은 그대로 (애니24에서 효과 확인)
 function hlsHint(list) {
     for (const v of list || []) {
         if (!v || !v.url) continue;
         const plain = String(v.url).replace(/#.*$/, "");
         const path = plain.split("?")[0];
-        // 확장자 없는 주소 중 HLS 로 보이는 것만 (mp4 등 다른 영상에 붙이면 재생이 안 됨)
-        const hlsLike = /\.txt$|\/hls\/|\/m3\/|master|playlist|jmp2\.uk\/stvp-/i.test(path);
-        if (/^https?:\/\//.test(plain) && hlsLike && !/\.(?:m3u8?|mp4|mkv|webm|mov|m4v|ts|flv|avi|mp3|aac)$/i.test(path)) v.originalUrl = plain + "#download.m3u8";
+        const hlsLike = /\.txt$|\/hls\/|\/m3\/|master|playlist|jmp2\.uk\/stvp-|creatorofvideo\.com/i.test(path);
+        if (/^https?:\/\//.test(plain) && hlsLike && !/\.(?:m3u8?|mp4|mkv|webm|mov|m4v|ts|flv|avi|mp3|aac)$/i.test(path)) {
+            v.originalUrl = plain + "#download.m3u8";
+        }
     }
     return list;
 }
@@ -384,9 +376,6 @@ class DefaultExtension extends MProvider {
         } catch (e) {}
     }
 
-    // ================= 주소 =================
-    // 직접 넣은 주소(접속되는 동안) > 자동으로 찾은 주소 > 기본 주소.
-    // 직접 넣은 주소가 끊겨 새 주소를 찾으면 그 주소를 "끊긴 주소"로 표시해 두고 자동 주소를 씀 (지우지 않음)
     getBaseUrl() {
         let manual = "";
         try {
@@ -398,7 +387,6 @@ class DefaultExtension extends MProvider {
             const m = SUB_RE.exec(String(u).replace(/^https?:\/\//, ""));
             return m ? parseInt(m[3], 10) : 0;
         };
-        // 확장 업데이트로 바뀐 기본 주소보다 옛 번호인 주소는 쓰지 않음
         const usable = (u) => DOMAIN_RE.test(u) && !(num(u) > 0 && num(u) < num(DEFAULT_BASE_URL));
         if (usable(manual) && manual.replace(/^https:\/\//, "") !== this.pref("hoohootv_manual_dead", "")) return manual;
         const auto = this.pref("hoohootv_auto_domain", "").trim();
@@ -414,7 +402,6 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    /** 자동으로 찾은 주소 저장. 지금 쓰던 주소가 직접 넣은 주소였으면 끊긴 주소로 표시 */
     saveFound(oldHost, newHost) {
         this.setPref("hoohootv_auto_domain", `https://${newHost}`);
         let manual = "";
@@ -428,10 +415,6 @@ class DefaultExtension extends MProvider {
         return { "User-Agent": UA, "Referer": `${this.getBaseUrl()}/` };
     }
 
-    /**
-     * 사이트 페이지 받기. 접속이 안 되거나 막히면(오류·403·451·5xx, 안내 사이트로 넘어감) 새 주소를 찾아 다시 요청.
-     * 목록 끝을 넘어선 페이지(2쪽 이상)의 404 는 빈 페이지로 ("더 없음")
-     */
     async get(path) {
         const base = this.getBaseUrl();
         const baseHost = base.replace(/^https?:\/\//, "");
@@ -458,7 +441,6 @@ class DefaultExtension extends MProvider {
                 res = await this.client.get(`https://${found}` + url.substring(base.length), this.getHeaders());
             }
         } else if (res && res.statusCode < 400 && this.autoOn()) {
-            // 옛 주소가 한동안 같이 열리면 위의 자동 찾기가 안 돌아서, 1시간에 한 번은 새 주소를 가볍게 확인 (기다리지 않음)
             this.checkNewerLater(baseHost);
         }
         if (!res) throw new Error(`후후티비 접속 실패: ${base}. 설정에서 새 주소를 넣어 주세요.`);
@@ -477,9 +459,6 @@ class DefaultExtension extends MProvider {
         }).catch(() => {});
     }
 
-    // ================= 도메인 자동 찾기 =================
-    // 앞 두 글자가 통째로 바뀌면 짐작할 수 없어서, 주소 안내 사이트(hoohootv1.com)에 적힌 주소를 먼저 확인.
-    // 못 찾으면 같은 번호의 다른 글자, 번호 +1 ~ +3 의 같은 글자·모든 글자를 차례로 열어 본다
     async discover(currentHost, newerOnly) {
         if (!newerOnly) {
             const last = Number(this.pref("hoohootv_auto_at", "0")) || 0;
@@ -500,12 +479,10 @@ class DefaultExtension extends MProvider {
             const found = String(r.body || "").match(/[a-z]{2}\.hoohootv\d+\.[a-z]{2,6}/gi) || [];
             announced = [...new Set(found.map((x) => x.toLowerCase()))].filter((h) => SUB_RE.test(h)).sort((x, y) => numOf(y) - numOf(x));
         } catch (e) {}
-        // 1) 안내 사이트에 적힌 주소 (가볍게 확인할 때는 번호가 더 크거나, 같은 번호라도 지금 주소가 안내에서 빠진 경우만)
         const fromPortal = announced.filter((h) => h !== currentHost &&
             (!newerOnly || numOf(h) > n || (numOf(h) === n && !announced.includes(currentHost))));
         const hit = await this.probeHosts(fromPortal, currentHost);
         if (hit) return hit;
-        // 2) 짐작 (1시간마다 하는 가벼운 확인에서는 같은 두 글자의 다음 번호만)
         const abc = "abcdefghijklmnopqrstuvwxyz";
         const start = abc.indexOf(b);
         const newer = [];
@@ -518,7 +495,6 @@ class DefaultExtension extends MProvider {
         return this.probeHosts(guesses, currentHost);
     }
 
-    /** 후보 주소의 /home 을 열어(한 번에 16개씩) 진짜 후후티비인 주소 중 번호가 가장 큰 것 */
     async probeHosts(cands, currentHost) {
         const ok = [];
         for (let i = 0; i < cands.length; i += 16) {
@@ -549,7 +525,6 @@ class DefaultExtension extends MProvider {
         return (/\/detail\/([A-Za-z0-9_-]+)/.exec(String(url || "")) || [null, null])[1];
     }
 
-    // ================= 목록 =================
     categories() {
         if (HH_KIND === 1) return MOVIE_CATEGORIES;
         if (HH_KIND === 2) return [["드라마", DRAMA_PATH]];
@@ -560,10 +535,8 @@ class DefaultExtension extends MProvider {
         return page > 1 ? `${path}${path.includes("?") ? "&" : "?"}page=${page}` : path;
     }
 
-    /** 목록·검색 공통: 작품 링크(/detail/)가 있는 카드 */
     parseList(html, movieList) {
         const doc = new Document(html);
-        // 카드 옆 제목(.subject a)을 주소별로 모아 둠
         const subjects = {};
         for (const s of doc.select(".subject a")) {
             const id = this.idOf(s.attr("href"));
@@ -590,7 +563,6 @@ class DefaultExtension extends MProvider {
             }
             list.push({ name: this.titleWithAir(title, air.latest), imageUrl: this.abs(imageUrl), link: `/detail/${id}/` });
         }
-        // 목록에는 날짜가 없어서 작품 페이지(회차 날짜)를 뒤에서 몇 개씩 읽어 저장 → 다음 목록부터 표시 (기다리지 않음)
         if (todo.length) this.fillAir(todo.slice(0, 8));
         const pageLinks = doc.select(".pagination a[href*='page=']");
         const cur = first(doc, ".pagination .current-page");
@@ -608,7 +580,6 @@ class DefaultExtension extends MProvider {
         return [this.categories().length];
     }
 
-    // 인기 = 사이트 "인기" 메뉴, 최신 = TV 전체(최근 올라온 순). 영화·드라마 소스는 그 목록
     async getPopular(page) {
         const r = HH_KIND === 2 ? null : ruleRead("hoohootv", true, this.ruleSizes());
         if (r) return this.listPage(this.categories()[r[0]][1], page);
@@ -626,7 +597,6 @@ class DefaultExtension extends MProvider {
 
     async search(query, page, filters) {
         query = String(query || "").trim();
-        // 작품 주소를 붙여 넣으면 그 작품을 바로 열기
         const id = /hoohootv/.test(query) ? this.idOf(query) : null;
         if (id) {
             if (page > 1) return { list: [], hasNextPage: false };
@@ -634,7 +604,6 @@ class DefaultExtension extends MProvider {
             return { list: d.name ? [{ name: d.name, imageUrl: d.imageUrl, link: `/detail/${id}/` }] : [], hasNextPage: false };
         }
         if (query) {
-            // 사이트 검색창과 같은 방식: 제목·시즌 제목·태그에서 찾기
             const q = `/search?sfl=${encodeURIComponent("common_title||season_title||tag_title")}&sop=and&query=${encodeURIComponent(query)}`;
             return this.parseList(await this.get(this.listPath(q, page)), false);
         }
@@ -649,14 +618,11 @@ class DefaultExtension extends MProvider {
         return this.listPage(this.categories()[cat][1], page);
     }
 
-    // ================= 방영일·연도 =================
-    /** 저장된 (최근 방영일, 읽은 시각) */
     airOf(id) {
         const v = this.pref(`air_${id}`, "").split("|");
         return { latest: Number(v[0]) || 0, checked: Number(v[1]) || 0 };
     }
 
-    /** 방영 중이면 " · MM.dd"(최근 방영일), 끝났으면 " (yyyy)" (망가요미는 서재 제목도 새로 바뀜) */
     titleWithAir(title, latest) {
         const plain = String(title || "").replace(/\s*·\s*\d{2}\.\d{2}$/, "");
         if (!(latest > 0) || !plain) return plain;
@@ -680,7 +646,6 @@ class DefaultExtension extends MProvider {
                     ok = false;
                 }
                 if (!ok) {
-                    // 막히는 기미가 보이면 10분 쉼
                     this.setPref("air_pause_until", String(Date.now() + 600000));
                     return;
                 }
@@ -697,7 +662,6 @@ class DefaultExtension extends MProvider {
         return latest;
     }
 
-    /** episodes-data: {"시즌": [{"episode": "1", "date": …, "label": "1화"}, …]} → [{season, episode, label, date}] */
     episodesData(html) {
         const m = /<script[^>]*id=["']episodes-data["'][^>]*>([\s\S]*?)<\/script>/.exec(html);
         if (!m) return [];
@@ -719,7 +683,6 @@ class DefaultExtension extends MProvider {
         return out;
     }
 
-    // ================= 작품 정보 · 회차 =================
     async getDetail(url) {
         const id = this.idOf(url) || String(url).replace(/[^A-Za-z0-9_-]/g, "");
         const path = `/detail/${id}/`;
@@ -737,7 +700,6 @@ class DefaultExtension extends MProvider {
         const ov = first(doc, ".overview");
         const ongoing = latest > 0 && Date.now() - latest <= ONGOING_MS;
         const head = eps.length && latest > 0 ? `${ongoing ? "방영 중" : "종영"} · 최근 방영: ${fullDate(latest)}` : "";
-        // 표지: og:image 는 사이트 로고(HOOHOO)라서 쓰지 않고, 작품 포스터(/media/poster_image/) 중 제목과 같은 것 → 첫 포스터
         let poster = "";
         for (const img of doc.select("img")) {
             const src = img.attr("data-src") || img.attr("src") || "";
@@ -754,10 +716,8 @@ class DefaultExtension extends MProvider {
             episodes = [{ name: "1 · 본편", url: path, dateUpload: null }];
         } else {
             const multi = new Set(eps.map((e) => e.season)).size > 1;
-            // 오래된 회차가 앞 → 앱에는 최신 회차가 위로
             const sorted = eps.slice().sort((x, y) => x.season - y.season || (parseFloat(x.episode) || 0) - (parseFloat(y.episode) || 0));
             episodes = sorted.map((e) => {
-                // "12화 (26.09.29)" → "12화 (09.29)"
                 const base = e.label.replace(/\s*\(\d{2,4}[./-]\d{1,2}[./-]\d{1,2}\)/, "").trim();
                 const name = e.date ? `${base} (${mmdd(e.date)})` : e.label;
                 return {
@@ -802,29 +762,32 @@ class DefaultExtension extends MProvider {
         const doc = new Document(html);
         const f = first(doc, "#iframeContainer iframe") || first(doc, ".playstart iframe");
         const player = f ? this.abs(f.attr("data-src") || f.attr("src") || "", this.getBaseUrl()) : "";
-        if (!/^https?:\/\//.test(player)) throw new Error("플레이어를 찾지 못했습니다 (로그인이 필요하거나 영상이 없는 회차일 수 있습니다)");
+        if (!/^https?:\/\//.test(player)) {
+            throw new Error("플레이어를 찾지 못했습니다 (로그인이 필요하거나 영상이 없는 회차일 수 있습니다)");
+        }
         const playerHost = (/^https?:\/\/([^/?#]+)/.exec(player) || [null, ""])[1];
-        // jwpcdn 플레이어는 바깥 화면과 숨긴 신호를 주고받아야 영상이 시작되고, 망가요미 웹뷰는 안쪽 화면의 요청을 볼 수 없어 재생 불가
-        // (그 신호를 흉내 내는 것은 사이트의 보호 장치를 우회하는 것이라 하지 않음)
-        if (/jwpcdn\./.test(playerHost)) {
-            throw new Error("이 회차의 플레이어(vid.jwpcdn.net)는 망가요미에서 재생할 수 없습니다. 애니요미 후후티비(TVroom)로 재생해 주세요.");
-        }
-        // jwpcdn 플레이어(보안 확인이 걸림)와 재생해야 주소를 내는 것으로 기억된 플레이어는 글자 읽기를 건너뜀
-        const needsWebview = player.includes("jwpcdn") || this.autoplayHosts().includes(playerHost);
+        const needsWebview = /jwpcdn/i.test(playerHost) || this.autoplayHosts().includes(playerHost);
+
+        // 1) 플레이어 HTML / 본문에서 creatorofvideo · mu= · m3u8 직접 추출
         let direct = null;
-        if (!needsWebview) {
-            try {
-                const res = await this.client.get(player, { "User-Agent": UA, "Referer": pageUrl });
-                const m = MEDIA_RE.exec(String(res.body || "").replace(/\\\//g, "/"));
-                if (m) direct = { media: m[0], referer: player };
-            } catch (e) {}
+        try {
+            const res = await this.client.get(player, { "User-Agent": UA, "Referer": pageUrl });
+            const media = extractMediaUrl(String(res.body || ""));
+            if (media) direct = { media, referer: player };
+        } catch (e) {}
+        if (!direct) {
+            const media = extractMediaUrl(html);
+            if (media) direct = { media, referer: pageUrl };
         }
+
         let found = direct && await mediaWorks(this.client, direct.media, this.videoHeaders(direct.referer)) ? direct : null;
         this.lastDiag = "";
         if (!found) found = await this.viaWebview(player, pageUrl, playerHost);
         if (!found) found = direct;
         if (!found) {
-            const why = typeof evaluateJavascriptViaWebview !== "function" ? " [웹뷰 미지원]" : this.lastDiag ? ` [${this.lastDiag}]` : "";
+            const why = typeof evaluateJavascriptViaWebview !== "function"
+                ? " [웹뷰 미지원]"
+                : this.lastDiag ? ` [${this.lastDiag}]` : "";
             throw new Error(`영상 주소를 찾지 못했습니다: ${playerHost}${why}`);
         }
         const keys = Object.keys(MEDIA_CACHE);
@@ -834,7 +797,7 @@ class DefaultExtension extends MProvider {
     }
 
     async toVideos(media, referer) {
-        const label = media.includes(".m3u8") ? `${LABEL} (HLS)` : LABEL;
+        const label = media.includes(".m3u8") || /creatorofvideo\.com/i.test(media) ? `${LABEL} (HLS)` : LABEL;
         return qualitySort("hoohootv_quality", await hlsExpand(this.client, media, label, this.videoHeaders(referer)));
     }
 
@@ -848,43 +811,58 @@ class DefaultExtension extends MProvider {
     }
 
     /**
-     * 숨은 웹뷰로 플레이어를 열고, 플레이어가 부른 m3u8·mp4 주소를 돌려받음.
-     * 처음엔 소리를 끈 채 기다리고, 4.5초가 지나도 없으면 재생을 눌러 봄 (재생해야 주소를 내는 플레이어).
-     * 재생을 눌러서 찾은 플레이어는 기억해 두었다가 다음부터 바로 재생
+     * 숨은 웹뷰로 플레이어를 열고 m3u8 / creatorofvideo / JW mu= 를 찾음.
+     * jwpcdn 이중 iframe은 망가요미에서 안쪽 요청이 안 보일 수 있음.
      */
     async viaWebview(player, pageUrl, playerHost) {
         if (typeof evaluateJavascriptViaWebview !== "function") return null;
-        const playAt = this.autoplayHosts().includes(playerHost) ? 2 : 15;
-        // 플레이어 안에 또 다른 화면(iframe)이 있으면 그 안의 요청은 바깥에서 안 보여서(애니요미는 모든 화면의 요청이 보임),
-        // 같은 주소 계열이면 안쪽 기록도 보고, 3.6초가 지나도 영상이 없으면 안쪽 화면 주소로 옮겨 감 (옮긴 화면에서 이 스크립트가 다시 돎).
-        // Cloudflare 확인 화면(challenges.cloudflare.com)은 건드리지 않음
+        const playAt = this.autoplayHosts().includes(playerHost) ? 2 : 12;
         const script = "(function(){var n=0,played=false;" +
             "function mute(){document.querySelectorAll('video,audio').forEach(function(v){v.muted=true;v.volume=0;});}" +
+            "function abs(u){try{return new URL(u,location.href).href;}catch(e){return u;}}" +
+            "function fromMu(u){try{var m=/[?&]mu=([^&]+)/i.exec(u);if(!m)return null;" +
+            "var d=decodeURIComponent(m[1].replace(/\\+/g,' '));" +
+            "if(/creatorofvideo\\.com.*\\.m3u8|\\.m3u8/i.test(d))return d.split('&')[0];}catch(e){}return null;}" +
+            "function pickFile(it){if(!it)return null;if(it.file)return abs(it.file);" +
+            "if(it.sources&&it.sources.length){for(var i=0;i<it.sources.length;i++){var s=it.sources[i];if(s&&s.file)return abs(s.file);}}return null;}" +
+            "function jw(){try{if(!window.jwplayer)return null;var players=[];" +
+            "try{if(jwplayer().id||jwplayer().getPlaylist)players.push(jwplayer());}catch(e){}" +
+            "document.querySelectorAll('[id]').forEach(function(el){try{var p=jwplayer(el.id);if(p&&p.getPlaylist)players.push(p);}catch(e){}});" +
+            "for(var pi=0;pi<players.length;pi++){var j=players[pi];var it=null;" +
+            "try{it=j.getPlaylistItem&&j.getPlaylistItem();}catch(e){}" +
+            "if(!it){try{var pl=j.getPlaylist&&j.getPlaylist();if(pl&&pl[0])it=pl[0];}catch(e){}}" +
+            "var f=pickFile(it);if(f)return f;" +
+            "try{var cfg=j.getConfig&&j.getConfig();if(cfg){f=pickFile(cfg)||pickFile(cfg.playlist&&cfg.playlist[0]);if(f)return f;}}catch(e){}}" +
+            "}catch(e){}return null;}" +
             "function scan(w){try{var r=w.performance.getEntriesByType('resource');for(var i=0;i<r.length;i++){" +
-            "if(/\\.(m3u8|mp4)(\\?|$)/i.test(r[i].name))return r[i].name;}" +
-            "var v=w.document.querySelector('video');var s=v&&(v.currentSrc||v.src);if(s&&/^https?:/.test(s)&&/\\.(m3u8|mp4)/i.test(s))return s;}catch(e){}return null;}" +
-            // JW Player 는 영상 칸을 만들기 전에도 설정된 영상 주소(playlist)를 알려 줌 (확장자가 없어도 그 주소를 씀)
-            "function jw(){try{var j=window.jwplayer&&window.jwplayer();if(!j||!j.getPlaylistItem)return null;var it=j.getPlaylistItem()||(j.getPlaylist&&j.getPlaylist()[0]);" +
-            "var f=it&&(it.file||(it.sources&&it.sources[0]&&it.sources[0].file));return f?new URL(f,location.href).href:null;}catch(e){return null;}}" +
-            "function find(){var u=scan(window)||jw();if(u)return u;var f=document.querySelectorAll('iframe');" +
-            "for(var i=0;i<f.length;i++){try{u=scan(f[i].contentWindow);if(u)return u;}catch(e){}}return null;}" +
-            "function inner(){var f=document.querySelectorAll('iframe');for(var i=0;i<f.length;i++){var s=f[i].src||f[i].getAttribute('data-src')||'';" +
+            "var name=r[i].name;" +
+            "if(/creatorofvideo\\.com.*\\.m3u8|\\.(m3u8|mp4)(\\?|$)/i.test(name))return name;" +
+            "var mu=fromMu(name);if(mu)return mu;}" +
+            "var v=w.document.querySelector('video');var s=v&&(v.currentSrc||v.src);" +
+            "if(s&&/^https?:/.test(s)&&(/m3u8|creatorofvideo|mp4/i.test(s)))return s;}catch(e){}return null;}" +
+            "function find(){var u=jw()||scan(window);if(u)return u;" +
+            "var f=document.querySelectorAll('iframe');for(var i=0;i<f.length;i++){try{u=scan(f[i].contentWindow);if(u)return u;}catch(e){}}return null;}" +
+            "function inner(){var f=document.querySelectorAll('iframe');for(var i=0;i<f.length;i++){" +
+            "var s=f[i].src||f[i].getAttribute('data-src')||'';" +
             "if(/^https?:/.test(s)&&!/challenges\\.cloudflare\\.com|google|facebook|doubleclick/.test(s)&&s!==location.href)return s;}return null;}" +
+            "function tryPlay(){played=true;" +
+            "try{var j=window.jwplayer&&window.jwplayer();if(j){if(j.setMute)j.setMute(true);if(j.play)j.play();}}catch(e){}" +
+            "var v=document.querySelector('video');if(v){v.muted=true;try{var q=v.play();if(q&&q.catch)q.catch(function(){});}catch(e){}}" +
+            "var b=document.querySelector('.jw-icon-display,.jw-display-icon-container,.vjs-big-play-button,[aria-label=\"Play\"],.play-button');if(b)b.click();}" +
             "var t=setInterval(function(){n++;mute();var u=find();" +
             "if(u){clearInterval(t);window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:u,p:played,r:location.href}));return;}" +
             "if(n>=12&&n<=40){var s=inner();if(s){clearInterval(t);location.href=s;return;}}" +
-            "if(n===" + playAt + "||n===" + (playAt + 15) + "){played=true;var v=document.querySelector('video');" +
-            "if(v){v.muted=true;try{var q=v.play();if(q&&q.catch)q.catch(function(){});}catch(e){}}" +
-            "try{var j=window.jwplayer&&window.jwplayer();if(j&&j.play){if(j.setMute)j.setMute(true);j.play();}}catch(e){}" +
-            "var b=document.querySelector('.jw-icon-display,.jw-display-icon-container,.vjs-big-play-button,.plyr__control--overlaid,.play-button,[aria-label=Play]');if(b)b.click();}" +
-            // 19초가 지나도 못 찾으면 어디까지 갔는지만 짧게 알려 줌
-            "if(n===63){clearInterval(t);var v=document.querySelector('video');" +
-            "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:null,p:played,d:location.host+' | 영상'+(v?'있음':'없음')}));}" +
+            "if(n===" + playAt + "||n===" + (playAt + 15) + "||n===" + (playAt + 30) + ")tryPlay();" +
+            "if(n===70){clearInterval(t);var v=document.querySelector('video');" +
+            "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:null,p:played," +
+            "d:location.host+' | jw:'+(window.jwplayer?'Y':'N')+' | video:'+(v?'Y':'N')}));}" +
             "},300);})();";
         try {
-            // 망가요미 웹뷰는 화면을 다 불러온 뒤(보안 확인 화면이 있으면 그다음 화면에서도) 스크립트를 넣음 → 넉넉히 36초
             const timeout = new Promise((res) => setTimeout(() => res(null), 36000));
-            const res = await Promise.race([evaluateJavascriptViaWebview(player, { "Referer": pageUrl }, [script], 35), timeout]);
+            const res = await Promise.race([
+                evaluateJavascriptViaWebview(player, { "Referer": pageUrl }, [script], 35),
+                timeout,
+            ]);
             if (!res) {
                 this.lastDiag = "웹뷰 응답 없음";
                 return null;
@@ -899,11 +877,12 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // ================= 필터 · 설정 =================
     getFilterList() {
         const host = this.getBaseUrl().replace(/^https?:\/\//, "");
         const head = [{ type_name: "HeaderFilter", name: `📡 주소: ${host}` }, { type_name: "SeparatorFilter" }];
-        if (HH_KIND === 2) return head.concat([{ type_name: "HeaderFilter", name: "드라마 목록입니다 (분류 선택 없음). 작품 주소를 검색창에 붙여 넣으면 바로 열기" }]);
+        if (HH_KIND === 2) {
+            return head.concat([{ type_name: "HeaderFilter", name: "드라마 목록입니다 (분류 선택 없음). 작품 주소를 검색창에 붙여 넣으면 바로 열기" }]);
+        }
         const names = this.categories().map((c) => c[0]);
         const defaults = HH_KIND === 1 ? ["영화 전체", "영화 전체"] : ["인기", "TV 전체"];
         return head.concat([
