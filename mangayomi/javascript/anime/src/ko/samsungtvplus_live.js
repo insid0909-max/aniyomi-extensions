@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.4",
+    "version": "0.1.5",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/samsungtvplus_live.js"
@@ -50,7 +50,8 @@ const BC_CHANNELS = [
     ["bc-sbs", "SBS", "sbsmain:S01"],
 ];
 const BC_LIST = BC_CHANNELS.map((c, i) => ({
-    id: c[0], name: c[1], uri: c[2], chno: -10 + i, logo: "", group: "실시간", programs: [],
+    id: c[0], name: c[1], uri: c[2], chno: -10 + i,
+    logo: `https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/thumbs/ch_${c[0].substring(3)}.png`, group: "실시간", programs: [],
     description: "방송사 홈페이지에서 무료로 제공하는 공식 실시간 방송입니다 (라이브TV 와 같은 주소). 대부분 한국에서만 재생됩니다.",
 }));
 const BC_LABELS = { kbs: "KBS 공식", mbcmain: "MBC 공식", sbsmain: "SBS 공식" };
