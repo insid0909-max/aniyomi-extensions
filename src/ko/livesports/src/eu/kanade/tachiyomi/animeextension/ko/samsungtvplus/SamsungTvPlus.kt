@@ -73,9 +73,11 @@ class SamsungTvPlus(private val fixedGroup: String? = null) : AnimeHttpSource(),
         val list = runCatching { fromJson() }.getOrDefault(emptyList()).ifEmpty { runCatching { fromM3u() }.getOrDefault(emptyList()) }
         if (list.isEmpty()) {
             if (cache.isNotEmpty()) return cache
-            throw Exception("삼성 TV 플러스 채널 목록을 받지 못했습니다. 잠시 뒤 다시 시도해 주세요.")
+            // 삼성 목록을 못 받아도 지상파(방송사 공식) 채널은 보여 줌
+            return BROADCAST
         }
-        cache = list.sortedBy { it.chno }
+        // "실시간" 맨 앞에 지상파 채널 (방송사 홈페이지의 공식 무료 실시간, 라이브TV 와 같은 주소)
+        cache = BROADCAST + list.sortedBy { it.chno }
         cacheAt = now
         return cache
     }
@@ -203,7 +205,11 @@ class SamsungTvPlus(private val fixedGroup: String? = null) : AnimeHttpSource(),
                 listOfNotNull(
                     scheduleLine(ch)?.replace(" · 다음", "\n다음")?.let { "📡 $it" },
                     ch.description.ifEmpty { null },
-                    "${ch.group} · 채널 ${ch.chno}\n삼성 TV 플러스: 삼성이 광고를 넣어 무료로 제공하는 공식 실시간 채널입니다. 한국에서만 나오는 채널이 있을 수 있습니다.",
+                    if (ch.id in BROADCAST_URI) {
+                        null
+                    } else {
+                        "${ch.group} · 채널 ${ch.chno}\n삼성 TV 플러스: 삼성이 광고를 넣어 무료로 제공하는 공식 실시간 채널입니다. 한국에서만 나오는 채널이 있을 수 있습니다."
+                    },
                 ).joinToString("\n\n")
             }
         }
@@ -246,6 +252,12 @@ class SamsungTvPlus(private val fixedGroup: String? = null) : AnimeHttpSource(),
     override suspend fun getVideoList(episode: SEpisode): List<Video> = withContext(Dispatchers.IO) {
         val id = "https://local.invalid${episode.url}".toHttpUrlOrNull()?.queryParameter("id").orEmpty()
         if (id.isEmpty()) throw Exception("잘못된 채널 주소")
+        // 지상파 채널: 방송사 공식 웹 플레이어 주소에서 받음 (라이브TV 와 같은 방식)
+        BROADCAST_URI[id]?.let { uri ->
+            val (media, bh, label) = LIVE_TV.officialMedia(uri)
+            val qualities = LiveQuality.variants(client, media, bh).map { (ht, u) -> Video(u, "$label ${ht}p", u, bh) }
+            return@withContext LiveQuality.sort(prefs(), listOf(Video(media, "$label 자동", media, bh)) + qualities)
+        }
         val h = headers()
         // jmp2.uk 가 삼성 공식 영상 주소로 넘겨 줌 → 넘어간 최종 주소를 씀
         val media = client.newCall(Request.Builder().url(STREAM + id).headers(h).build()).execute().use { res ->
@@ -315,6 +327,29 @@ class SamsungTvPlus(private val fixedGroup: String? = null) : AnimeHttpSource(),
             "최신 탭을 기본값(실시간)으로",
             "두 탭 모두 기본값으로",
         )
+
+        // 지상파 채널 (방송사 홈페이지의 공식 무료 실시간). id → 라이브TV 의 "재생 방식:값"
+        private val BROADCAST_URI = linkedMapOf(
+            "bc-kbs1" to "kbs:11",
+            "bc-kbs2" to "kbs:12",
+            "bc-mbc" to "mbcmain:",
+            "bc-sbs" to "sbsmain:S01",
+        )
+        private val BROADCAST_NAMES = mapOf("bc-kbs1" to "KBS1", "bc-kbs2" to "KBS2", "bc-mbc" to "MBC", "bc-sbs" to "SBS")
+        private val BROADCAST: List<Ch> = BROADCAST_URI.keys.mapIndexed { i, id ->
+            Ch(
+                id = id,
+                name = BROADCAST_NAMES.getValue(id),
+                chno = -10 + i,
+                logo = THUMB,
+                group = LIVE_GROUP,
+                description = "방송사 홈페이지에서 무료로 제공하는 공식 실시간 방송입니다 (라이브TV 와 같은 주소). 대부분 한국에서만 재생됩니다.",
+                programs = emptyList(),
+            )
+        }
+
+        // 지상파 채널 재생 주소는 라이브TV 소스의 방송사 공식 주소 받기를 그대로 씀
+        private val LIVE_TV by lazy { eu.kanade.tachiyomi.animeextension.ko.livetv.LiveTv() }
 
         @Volatile
         private var sharedCache: List<Ch> = emptyList()
