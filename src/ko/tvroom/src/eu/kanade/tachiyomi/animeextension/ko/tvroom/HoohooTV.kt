@@ -141,7 +141,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
     }
 
     // ================= 도메인 자동 찾기 =================
-    // 주소가 fo.hoohootv459.xyz → fp → bd.hoohootv460.xyz → dv.hoohootv461.xyz 처럼 앞 두 글자가 바뀌거나(아무 글자로) 숫자가 바뀜.
+    // 주소가 fo.hoohootv459.xyz → fp → bd.hoohootv460.xyz → dw.hoohootv461.xyz 처럼 앞 두 글자가 바뀌거나(아무 글자로) 숫자가 바뀜.
     // 두 글자가 통째로 바뀌면 짐작할 수 없어서, 주소 안내 사이트에 적힌 주소와 옛 주소가 넘겨 주는 주소를 먼저 씀.
     // 접속이 안 되거나 막히면 다음 글자·숫자 주소를 차례로 열어 보고, 진짜 후후티비인 주소를 저장해 다시 요청한다.
     private fun autoDomain(): Boolean = prefs()?.getBoolean(PREF_AUTO_DOMAIN, true) ?: true
@@ -808,7 +808,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         private const val SITE_MARKER = "HOOHOO TV"
         private val DISCOVER_LOCK = Any()
         private val SUBDOMAIN_REGEX = Regex("""^([a-z])([a-z])\.hoohootv(\d+)\.([a-z]{2,6})$""")
-        private const val DEFAULT_BASE_URL = "https://dv.hoohootv461.xyz"
+        private const val DEFAULT_BASE_URL = "https://dw.hoohootv461.xyz"
         private const val RATE_GAP_MS = 350L
         private const val POSTER_RETRY_MS = 800L
         private const val USER_AGENT =
