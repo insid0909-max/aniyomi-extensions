@@ -463,15 +463,18 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
             val tried = ArrayList<Pair<String, String>>()
             val t1 = System.currentTimeMillis()
             // 회차 주소가 중간 페이지(send5video go.php → 자동 제출 폼 → 플레이어)면 망가요미처럼 직접 따라가서 찾음
-            val first = sequence {
+            // 열리는지 확인하면서 받은 영상 목록으로 바로 화질을 나눔 (같은 목록을 두 번 받지 않음)
+            var ready: List<Video>? = null
+            sequence {
                 yieldAll(findAllMedia(html).map { it to pageUrl })
                 yieldAll(crawlMedia(html, pageUrl))
             }.distinctBy { it.first }.take(4).onEach { tried.add(it) }
-                .firstOrNull { (m, r) -> HlsQuality.works(client, m, videoHeaders(r)) }
-            lap("찾기(후보${tried.size}·페이지$crawlPages)", t1)
+                .firstOrNull { (m, r) -> HlsQuality.expandIfWorks(client, m, qualityOf(m), videoHeaders(r))?.also { ready = it } != null }
+            lap("찾기+화질(후보${tried.size}·페이지$crawlPages)", t1)
+            ready?.let { return tagged(HlsQuality.sort(prefs(), it)) }
             val t2 = System.currentTimeMillis()
-            val web = if (first == null) sniffWithWebView(pageUrl)?.also { lap("웹뷰", t2) } else null
-            val (m, r) = first ?: web ?: tried.firstOrNull()
+            val web = sniffWithWebView(pageUrl)?.also { lap("웹뷰", t2) }
+            val (m, r) = web ?: tried.firstOrNull()
                 ?: throw Exception("영상 주소를 찾지 못했습니다: $pageUrl")
             val t3 = System.currentTimeMillis()
             val out = HlsQuality.sort(prefs(), HlsQuality.expand(client, m, qualityOf(m), videoHeaders(r)))
