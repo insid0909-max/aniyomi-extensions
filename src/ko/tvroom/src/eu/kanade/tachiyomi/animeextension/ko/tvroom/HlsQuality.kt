@@ -34,25 +34,45 @@ internal object HlsQuality {
         val variants = runCatching {
             client.newCall(GET(url, headers)).execute().use { res ->
                 if (!res.isSuccessful) return@use emptyList()
-                val lines = res.body.string().lines().map { it.trim() }
-                val base = res.request.url
-                val list = mutableListOf<Pair<Int, String>>()
-
-                var currentHeight: Int? = null
-                for (line in lines) {
-                    if (line.startsWith("#EXT-X-STREAM-INF:")) {
-                        currentHeight = HEIGHT_REGEX.find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 720
-                    } else if (currentHeight != null && line.isNotEmpty() && !line.startsWith("#")) {
-                        // #EXT-X-STREAM-INF 바로 다음 줄만 화질 주소 (단일 화질 목록의 영상 조각 주소는 제외)
-                        val subUrl = base.resolve(line)?.toString() ?: line
-                        list.add(currentHeight to subUrl)
-                        currentHeight = null
-                    }
-                }
-                list.distinctBy { it.first }.sortedByDescending { it.first }
+                parseVariants(res.body.string(), res.request.url)
             }
         }.getOrDefault(emptyList())
+        return videosFrom(url, label, headers, variants)
+    }
 
+    /**
+     * works() + expand() 를 한 번에: 영상 목록(m3u8)을 한 번만 받아, 열리면 화질 목록을, 안 열리면 null.
+     * (확인할 때 한 번, 화질 나눌 때 또 한 번 받던 것을 줄여 재생 시작이 빨라짐)
+     */
+    fun expandIfWorks(client: OkHttpClient, url: String, label: String, headers: Headers): List<Video>? {
+        if (!url.contains(".m3u8")) return if (works(client, url, headers)) listOf(Video(url, withRes(label, url), url, headers)) else null
+        return runCatching {
+            client.newCall(GET(url, headers)).execute().use { res ->
+                if (!res.isSuccessful) return@use null
+                val text = res.body.string()
+                if (!text.trimStart().startsWith("#EXTM3U")) return@use null
+                videosFrom(url, label, headers, parseVariants(text, res.request.url))
+            }
+        }.getOrNull()
+    }
+
+    private fun parseVariants(text: String, base: okhttp3.HttpUrl): List<Pair<Int, String>> {
+        val list = mutableListOf<Pair<Int, String>>()
+        var currentHeight: Int? = null
+        for (line in text.lines().map { it.trim() }) {
+            if (line.startsWith("#EXT-X-STREAM-INF:")) {
+                currentHeight = HEIGHT_REGEX.find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 720
+            } else if (currentHeight != null && line.isNotEmpty() && !line.startsWith("#")) {
+                // #EXT-X-STREAM-INF 바로 다음 줄만 화질 주소 (단일 화질 목록의 영상 조각 주소는 제외)
+                val subUrl = base.resolve(line)?.toString() ?: line
+                list.add(currentHeight to subUrl)
+                currentHeight = null
+            }
+        }
+        return list.distinctBy { it.first }.sortedByDescending { it.first }
+    }
+
+    private fun videosFrom(url: String, label: String, headers: Headers, variants: List<Pair<Int, String>>): List<Video> {
         // 마스터 플레이리스트가 아닌 단일(VOD) m3u8이거나 서브 스트림을 못 찾은 경우
         if (variants.isEmpty()) {
             return listOf(Video(url, withRes(label, url), url, headers))
