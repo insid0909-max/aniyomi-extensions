@@ -1,14 +1,14 @@
 const mangayomiSources = [{
     "name": "후후티비 드라마",
     "lang": "ko",
-    "baseUrl": "https://al.hoohootv461.xyz",
+    "baseUrl": "https://dv.hoohootv461.xyz",
     "apiUrl": "",
     "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
     "typeSource": "single",
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.12",
+    "version": "0.1.13",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv_drama.js"
@@ -20,8 +20,8 @@ const mangayomiSources = [{
 // 영상: 회차 화면의 플레이어(iframe) 글자 안에서 찾고, 없으면 숨은 웹뷰로 플레이어를 열어 영상 요청 주소를 받음.
 // 후후티비 영화·드라마 소스(hoohootv_movie.js·hoohootv_drama.js)는 이 파일의 복사본 (이름·pkgPath·HH_KIND 만 다름)
 const HH_KIND = 2; // 0 = 전체, 1 = 영화, 2 = 드라마
-const DEFAULT_BASE_URL = "https://al.hoohootv461.xyz";
-// 주소: 앞 두 글자 + 번호가 바뀜 (fo.hoohootv459.xyz → bd.hoohootv460.xyz → al.hoohootv461.xyz)
+const DEFAULT_BASE_URL = "https://dv.hoohootv461.xyz";
+// 주소: 앞 두 글자 + 번호가 바뀜 (fo.hoohootv459.xyz → bd.hoohootv460.xyz → dv.hoohootv461.xyz)
 const SUB_RE = /^([a-z])([a-z])\.hoohootv(\d+)\.([a-z]{2,6})$/;
 const DOMAIN_RE = /^https:\/\/(?:[a-z0-9-]+\.)*hoohootv\d*\.[a-z]{2,6}$/;
 const HOST_RE = /^https?:\/\/(?:[a-z0-9-]+\.)*hoohootv\d*\.[a-z]{2,6}(?=\/|$)/;
