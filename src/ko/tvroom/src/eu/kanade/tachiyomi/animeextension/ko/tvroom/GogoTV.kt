@@ -85,7 +85,8 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
     // 주소 번호가 바뀌어 접속이 안 되면 gogotv 번호 주소를 찾아 자동 연결
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor(PageCache(Regex("^/player/")))
-        .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS))
+        // 포스터 그림도 사이트 주소에 있음 → 그림은 간격 제한에서 빼서 목록 그림이 한꺼번에 뜨게
+        .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS, skipImages = true))
         .addInterceptor { chain -> domainIntercept(chain) }
         .addInterceptor(NoticeFollow(HOST_REGEX, "/player/"))
         .addInterceptor(RetryOnce(HOST_REGEX))
