@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.16",
+    "version": "0.1.17",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -760,14 +760,56 @@ class DefaultExtension extends MProvider {
         }
         const html = await this.get(path);
         const doc = new Document(html);
-        const f = first(doc, "#iframeContainer iframe") || first(doc, ".playstart iframe");
-        const player = f ? this.abs(f.attr("data-src") || f.attr("src") || "", this.getBaseUrl()) : "";
-        if (!/^https?:\/\//.test(player)) {
+        // 회차 화면에 있는 플레이어(서버)를 모두 모아 차례로 시도: jwpcdn 이 아닌 서버 먼저 (jwpcdn 은 망가요미에서 막히는 경우가 많음)
+        const players = this.playerCandidates(doc, html);
+        if (!players.length) {
             throw new Error("플레이어를 찾지 못했습니다 (로그인이 필요하거나 영상이 없는 회차일 수 있습니다)");
         }
-        const playerHost = (/^https?:\/\/([^/?#]+)/.exec(player) || [null, ""])[1];
+        const diags = [];
+        let found = null;
+        for (const player of players.slice(0, 4)) {
+            const playerHost = (/^https?:\/\/([^/?#]+)/.exec(player) || [null, ""])[1];
+            found = await this.tryPlayer(player, playerHost, pageUrl, html);
+            if (found) break;
+            diags.push(`${playerHost}${this.lastDiag ? ` ${this.lastDiag}` : ""}`);
+        }
+        if (!found) {
+            const why = typeof evaluateJavascriptViaWebview !== "function" ? " [웹뷰 미지원]" : "";
+            throw new Error(`영상 주소를 찾지 못했습니다 (서버 ${players.length}개)${why} [${diags.join(" / ")}]`);
+        }
+        const keys = Object.keys(MEDIA_CACHE);
+        if (keys.length >= 30) delete MEDIA_CACHE[keys[0]];
+        MEDIA_CACHE[path] = { media: found.media, referer: found.referer, at: Date.now() };
+        return this.toVideos(found.media, found.referer);
+    }
 
-        // 1) 플레이어 HTML / 본문에서 creatorofvideo · mu= · m3u8 직접 추출
+    /** 회차 화면의 플레이어 주소들: 기본 iframe + 다른 서버 버튼(data-src·data-url·onclick 등) */
+    playerCandidates(doc, html) {
+        const out = [];
+        const add = (u) => {
+            u = this.abs(decodeHtml(String(u || "").trim()), this.getBaseUrl());
+            if (!/^https?:\/\//.test(u) || out.includes(u)) return;
+            if (/\.(?:js|css|png|jpe?g|gif|webp|svg|ico)(?:[?#]|$)/i.test(u)) return;
+            if (/google|facebook|doubleclick|cloudflare|kakao|twitter|hoohootv\d*\./i.test(u)) return;
+            out.push(u);
+        };
+        for (const css of ["#iframeContainer iframe", ".playstart iframe", "iframe"]) {
+            for (const f of doc.select(css)) add(f.attr("data-src") || f.attr("src"));
+        }
+        for (const el of doc.select("[data-src],[data-url],[data-link],[data-video],[data-player],[data-embed],[data-iframe]")) {
+            if (el.select && /^img$/i.test(el.tagName || "")) continue;
+            for (const k of ["data-src", "data-url", "data-link", "data-video", "data-player", "data-embed", "data-iframe"]) add(el.attr(k));
+        }
+        const re = /(?:onclick|value)\s*=\s*["'][^"']*?(https?:\/\/[^"'\s)]+)/gi;
+        let m;
+        while ((m = re.exec(html))) add(m[1]);
+        // jwpcdn 이 아닌 서버 먼저
+        return out.filter((u) => !/jwpcdn/i.test(u)).concat(out.filter((u) => /jwpcdn/i.test(u)));
+    }
+
+    /** 플레이어 하나: 글자에서 바로 → 숨은 웹뷰 */
+    async tryPlayer(player, playerHost, pageUrl, html) {
+        this.lastDiag = "";
         let direct = null;
         try {
             const res = await this.client.get(player, { "User-Agent": UA, "Referer": pageUrl });
@@ -778,21 +820,9 @@ class DefaultExtension extends MProvider {
             const media = extractMediaUrl(html);
             if (media) direct = { media, referer: pageUrl };
         }
-
-        let found = direct && await mediaWorks(this.client, direct.media, this.videoHeaders(direct.referer)) ? direct : null;
-        this.lastDiag = "";
-        if (!found) found = await this.viaWebview(player, pageUrl, playerHost);
-        if (!found) found = direct;
-        if (!found) {
-            const why = typeof evaluateJavascriptViaWebview !== "function"
-                ? " [웹뷰 미지원]"
-                : this.lastDiag ? ` [${this.lastDiag}]` : "";
-            throw new Error(`영상 주소를 찾지 못했습니다: ${playerHost}${why}`);
-        }
-        const keys = Object.keys(MEDIA_CACHE);
-        if (keys.length >= 30) delete MEDIA_CACHE[keys[0]];
-        MEDIA_CACHE[path] = { media: found.media, referer: found.referer, at: Date.now() };
-        return this.toVideos(found.media, found.referer);
+        if (direct && await mediaWorks(this.client, direct.media, this.videoHeaders(direct.referer))) return direct;
+        // jwpcdn 은 바깥 화면을 그대로 둬야 안쪽 플레이어가 시작됨 → 안쪽 화면으로 옮기지 않고, 안쪽이 바깥으로 보내는 신호를 지켜봄
+        return (await this.viaWebview(player, pageUrl, playerHost, /jwpcdn/i.test(playerHost))) || direct;
     }
 
     async toVideos(media, referer) {
@@ -813,10 +843,13 @@ class DefaultExtension extends MProvider {
      * 숨은 웹뷰로 플레이어를 열고 m3u8 / creatorofvideo / JW mu= 를 찾음.
      * jwpcdn 이중 iframe은 망가요미에서 안쪽 요청이 안 보일 수 있음.
      */
-    async viaWebview(player, pageUrl, playerHost) {
+    async viaWebview(player, pageUrl, playerHost, stay) {
         if (typeof evaluateJavascriptViaWebview !== "function") return null;
         const playAt = this.autoplayHosts().includes(playerHost) ? 2 : 12;
-        const script = "(function(){var n=0,played=false;" +
+        const script = "(function(){var n=0,played=false,rx=[];" +
+            // 안쪽 플레이어가 바깥 화면으로 보내는 신호(postMessage)를 모아 둠. 영상 주소가 들어 있으면 그 주소를 씀
+            "window.addEventListener('message',function(e){try{rx.push(typeof e.data==='string'?e.data:JSON.stringify(e.data));}catch(x){}});" +
+            "function fromRx(){for(var i=0;i<rx.length;i++){var m=/https?:[^\"'\\s<>]+?(?:\\.m3u8|\\.mp4|creatorofvideo\\.com\\/hls\\/[^\"'\\s<>]+)[^\"'\\s<>]*/i.exec(String(rx[i]).replace(/\\\\\\//g,'/'));if(m)return m[0];}return null;}" +
             "function mute(){document.querySelectorAll('video,audio').forEach(function(v){v.muted=true;v.volume=0;});}" +
             "function abs(u){try{return new URL(u,location.href).href;}catch(e){return u;}}" +
             "function fromMu(u){try{var m=/[?&]mu=([^&]+)/i.exec(u);if(!m)return null;" +
@@ -839,7 +872,7 @@ class DefaultExtension extends MProvider {
             "var mu=fromMu(name);if(mu)return mu;}" +
             "var v=w.document.querySelector('video');var s=v&&(v.currentSrc||v.src);" +
             "if(s&&/^https?:/.test(s)&&(/m3u8|creatorofvideo|mp4/i.test(s)))return s;}catch(e){}return null;}" +
-            "function find(){var u=jw()||scan(window);if(u)return u;" +
+            "function find(){var u=jw()||scan(window)||fromRx();if(u)return u;" +
             "var f=document.querySelectorAll('iframe');for(var i=0;i<f.length;i++){try{u=scan(f[i].contentWindow);if(u)return u;}catch(e){}}return null;}" +
             "function inner(){var f=document.querySelectorAll('iframe');for(var i=0;i<f.length;i++){" +
             "var s=f[i].src||f[i].getAttribute('data-src')||'';" +
@@ -850,11 +883,11 @@ class DefaultExtension extends MProvider {
             "var b=document.querySelector('.jw-icon-display,.jw-display-icon-container,.vjs-big-play-button,[aria-label=\"Play\"],.play-button');if(b)b.click();}" +
             "var t=setInterval(function(){n++;mute();var u=find();" +
             "if(u){clearInterval(t);window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:u,p:played,r:location.href}));return;}" +
-            "if(n>=12&&n<=40){var s=inner();if(s){clearInterval(t);location.href=s;return;}}" +
+            "if(" + (stay ? "false" : "true") + "&&n>=12&&n<=40){var s=inner();if(s){clearInterval(t);location.href=s;return;}}" +
             "if(n===" + playAt + "||n===" + (playAt + 15) + "||n===" + (playAt + 30) + ")tryPlay();" +
             "if(n===70){clearInterval(t);var v=document.querySelector('video');" +
             "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:null,p:played," +
-            "d:location.host+' | jw:'+(window.jwplayer?'Y':'N')+' | video:'+(v?'Y':'N')}));}" +
+            "d:location.host+' | jw:'+(window.jwplayer?'Y':'N')+' | video:'+(v?'Y':'N')+' | 신호'+rx.length+(rx.length?' '+rx.join(' / ').substring(0,140):'')}));}" +
             "},300);})();";
         try {
             const timeout = new Promise((res) => setTimeout(() => res(null), 36000));
