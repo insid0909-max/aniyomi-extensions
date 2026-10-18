@@ -57,4 +57,5 @@
 - 망가요미 getSourcePreferences() 안에서 SharedPreferences 를 읽으면(예: summary 에 this.getBaseUrl()) 설정 화면을 열 때 앱이 가끔 꺼짐(후후티비 0.1.14까지) → 설정 글은 고정 문자열만, 지금 주소 등은 필터 📡 줄에.
 - 망가요미에서 TVroom APK 쓰기 시도: 망가요미는 APK 를 자기가 다시 만든 애니요미 부품(m_extension_server, 안드로이드는 앱 안 Dalvik 브리지)으로 돌리고, 소스는 저장소 index.min.json 의 sources 로만 만듦(여러 소스면 id 대신 주소로 고름, 회차 오류는 숨기고 빈 목록). 실제 소스 목록을 적어 봤지만 회차·웹뷰 안 됨 → 사용자 요청으로 원래대로 되돌림. 후후티비는 애니요미로.
 - 미미티비(애니요미 TVroom MimiTV.kt): 사용자 요청으로 삭제(TVroom 8725).
+- 아이콘: TVroom·LiveSports(망가요미 애니 소스도 같은 파일) = src/ko/{tvroom,livesports}/res/mipmap-xxhdpi/tv_icon.png 360px, 사용자가 준 파란 K 그림(TVroom 8732, LiveSports 8761). 웹툰 저장소 아이콘은 만화 칸 K 그림.
 - 성능 변경은 한 번에 하나씩, 측정이 필요하면 임시 표시를 넣고 끝나면 반드시 뺄 것.
