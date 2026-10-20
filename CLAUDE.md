@@ -5,6 +5,7 @@
 - 개인정보: 기록(커밋)에 사용자 지메일을 넣지 않음. git config user.name "insid0909-max", user.email "266083559+insid0909-max@users.noreply.github.com" (세션마다 다시 설정). 합친 사람(committer) 칸은 깃허브가 계정 설정으로 정함 → 사용자가 깃허브 "Keep my email addresses private" 를 켬(2026-10-19). 합친 뒤 `git log -1 --format="%ae %ce" origin/기본가지` 로 지메일 없는지 확인.
 - LiveTv는 방송사 공식 무료 스트림만 사용.
 - 망가요미 주소 규칙: 직접 넣은 주소는 바로 씀, 자동 찾기로 번호가 더 큰 진짜 사이트 주소(…_auto_domain)가 확인되면 그 주소로 바꾸고 설정 칸도 고침(자동 찾기 켜짐일 때). anilife·gogotv·tvchak 적용(2026-10-20), 번호 없는 주소(애니24·실시간스포츠2)는 해당 없음. 잘 열리는데 새 주소를 미리 찾는 기능은 넣지 않음. 새 망가요미 소스도 같은 규칙.
+- 애니요미(Kotlin) 주소 규칙도 같음(TVroom 8735·LiveSports 8762, 2026-10-20): `DomainGuard.pick(prefs, KEY, DEFAULT, 자동찾기켜짐, valid)` 로 baseUrl, 자동으로 찾은 주소는 `DomainGuard.saveAuto` 로 KEY_auto 에 저장(직접 넣은 칸에 쓰지 않음). 처음 한 번 예전 한 칸 값을 KEY_auto 로 옮김(KEY_split 표시). 도메인 칸 기본값은 "". 고고티비·티비착·애니라이프·실시간스포츠 적용, 후후티비는 원래 칸이 나뉘어 있어 그대로, 애니24·실시간스포츠2 는 번호 없는 주소라 그대로.
 
 ## 새 확장앱(애니·드라마·스포츠 등) 체크리스트 — 요청 없어도 기본 적용
 
