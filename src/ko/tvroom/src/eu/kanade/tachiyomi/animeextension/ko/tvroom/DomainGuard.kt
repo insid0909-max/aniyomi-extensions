@@ -15,6 +15,59 @@ internal object DomainGuard {
     /** 저장된 주소가 확장 업데이트로 바뀐 기본 주소보다 옛 번호면 기본 주소를 씀 */
     fun preferDefault(saved: String, default: String): String =
         if (hostNumber(saved) in 1 until hostNumber(default)) default else saved
+
+    /**
+     * 사이트 주소 고르기. 직접 넣은 주소(key)는 바로 씀. 자동으로 찾은 주소(key_auto)가 그보다 번호가 크면
+     * (자동 찾기 켜짐일 때) 그 주소로 바꾸고 설정 칸도 고침. 직접 넣은 주소가 없으면 자동으로 찾은 주소
+     * (newerDefault 면 확장 업데이트로 바뀐 기본 주소보다 옛 번호일 때 기본 주소).
+     * 예전엔 두 주소를 한 칸에 저장했으므로 처음 한 번 그 값을 자동 칸으로 옮김
+     */
+    fun pick(
+        sp: android.content.SharedPreferences?,
+        key: String,
+        default: String,
+        autoOn: Boolean,
+        valid: (String) -> Boolean,
+        newerDefault: Boolean = true,
+    ): String {
+        sp ?: return default
+        return try {
+            split(sp, key)
+            val manual = sp.getString(key, "")?.trim()?.trimEnd('/').orEmpty()
+            val auto = sp.getString(autoKey(key), "")?.trim()?.trimEnd('/').orEmpty()
+            when {
+                valid(manual) && autoOn && valid(auto) && auto != manual && hostNumber(auto) > hostNumber(manual) -> {
+                    sp.edit().putString(key, auto).apply()
+                    auto
+                }
+                valid(manual) -> manual
+                valid(auto) -> if (newerDefault) preferDefault(auto, default) else auto
+                else -> default
+            }
+        } catch (e: Throwable) {
+            default
+        }
+    }
+
+    /** 자동으로 찾은 주소 저장 (직접 넣은 주소 칸은 pick 이 번호를 비교해 고침) */
+    fun saveAuto(sp: android.content.SharedPreferences?, key: String, url: String) {
+        try {
+            sp?.edit()?.putString(autoKey(key), url.trim().trimEnd('/'))?.apply()
+        } catch (e: Throwable) {
+            // 저장 실패는 무시
+        }
+    }
+
+    private fun autoKey(key: String) = "${key}_auto"
+
+    private fun split(sp: android.content.SharedPreferences, key: String) {
+        val flag = "${key}_split"
+        if (sp.getBoolean(flag, false)) return
+        val old = sp.getString(key, "")?.trim()?.trimEnd('/').orEmpty()
+        val e = sp.edit()
+        if (old.isNotEmpty() && sp.getString(autoKey(key), "").isNullOrEmpty()) e.putString(autoKey(key), old)
+        e.remove(key).putBoolean(flag, true).apply()
+    }
 }
 
 /**
