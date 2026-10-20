@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.27",
+    "version": "0.1.28",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -266,7 +266,19 @@ class DefaultExtension extends MProvider {
         } catch (e) {
             custom = "";
         }
-        if (DOMAIN_RE.test(custom)) return custom;
+        if (DOMAIN_RE.test(custom)) {
+            // 직접 넣은 주소는 바로 씀. 단 자동 찾기로 그보다 번호가 큰 진짜 사이트 주소가 확인되면 그 주소로 바꾸고 설정 칸도 고침
+            const num = (u) => { const x = /(\d+)(?!.*\d)/.exec(String(u).replace(/^https?:\/\/(www\.)?/, "").replace(/\.[a-z]{2,6}$/i, "")); return x ? parseInt(x[1], 10) : 0; };
+            if (DOMAIN_RE.test(auto) && auto !== custom && num(auto) > num(custom) && this.autoOn()) {
+                try {
+                    new SharedPreferences().setString("gogotv_domain", auto);
+                } catch (e) {
+                    // 저장 실패는 무시 (이번 요청은 새 주소로)
+                }
+                return auto;
+            }
+            return custom;
+        }
         // 자동으로 찾은 주소가 확장 업데이트로 바뀐 기본 주소보다 옛 번호면 기본 주소를 씀
         const n = (u) => parseInt((/(\d+)(?!.*\d)/.exec(String(u).replace(/\.[a-z]{2,6}$/i, "")) || [0, "0"])[1], 10) || 0;
         return DOMAIN_RE.test(auto) && n(auto) >= n(DEFAULT_BASE_URL) ? auto : DEFAULT_BASE_URL;
