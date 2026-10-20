@@ -60,16 +60,14 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         app?.getSharedPreferences("source_$id", 0)
     }.getOrNull()
 
+    // 직접 넣은 주소는 바로, 더 새 주소가 확인되면 자동으로 바뀜 (DomainGuard.pick)
     override val baseUrl: String
-        get() {
-            val custom = prefs()?.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/').orEmpty()
-            return if (DOMAIN_REGEX.matches(custom)) DomainGuard.preferDefault(custom, DEFAULT_BASE_URL) else DEFAULT_BASE_URL
-        }
+        get() = DomainGuard.pick(prefs(), PREF_DOMAIN_KEY, DEFAULT_BASE_URL, autoDomain(), { DOMAIN_REGEX.matches(it) })
 
     private fun autoDomain(): Boolean = prefs()?.getBoolean(PREF_AUTO_DOMAIN, true) ?: true
 
     private fun saveDomain(url: String) {
-        prefs()?.edit()?.putString(PREF_DOMAIN_KEY, url)?.apply()
+        DomainGuard.saveAuto(prefs(), PREF_DOMAIN_KEY, url)
     }
 
     override val client: OkHttpClient = network.client.newBuilder()

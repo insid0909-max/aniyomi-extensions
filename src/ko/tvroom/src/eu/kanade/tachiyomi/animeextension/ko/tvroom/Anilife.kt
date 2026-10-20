@@ -62,11 +62,9 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         app?.getSharedPreferences("source_$id", 0)
     }.getOrNull()
 
+    // 직접 넣은 주소는 바로, 더 새 주소가 확인되면 자동으로 바뀜 (DomainGuard.pick)
     override val baseUrl: String
-        get() {
-            val custom = prefs()?.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/').orEmpty()
-            return if (DOMAIN_REGEX.matches(custom)) DomainGuard.preferDefault(custom, DEFAULT_BASE_URL) else DEFAULT_BASE_URL
-        }
+        get() = DomainGuard.pick(prefs(), PREF_DOMAIN_KEY, DEFAULT_BASE_URL, autoDomain(), { DOMAIN_REGEX.matches(it) })
 
     override val client: OkHttpClient = network.client.newBuilder()
         .addInterceptor(PageCache(Regex("^/api/anime/\\d+$")))
@@ -77,7 +75,7 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
             val from = chain.request().url.host
             val to = res.request.url.host
             if (from != to && HOST_REGEX.matches(from) && HOST_REGEX.matches(to)) {
-                prefs()?.edit()?.putString(PREF_DOMAIN_KEY, "https://$to")?.apply()
+                DomainGuard.saveAuto(prefs(), PREF_DOMAIN_KEY, "https://$to")
             }
             res
         }
@@ -100,7 +98,7 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         if (req.url.encodedPath.startsWith("/api/playback/")) return chain.proceed(req)
 
         fun retryOn(found: String): Response {
-            prefs()?.edit()?.putString(PREF_DOMAIN_KEY, "https://$found")?.apply()
+            DomainGuard.saveAuto(prefs(), PREF_DOMAIN_KEY, "https://$found")
             return chain.proceed(req.newBuilder().url(req.url.newBuilder().host(found).build()).build())
         }
 

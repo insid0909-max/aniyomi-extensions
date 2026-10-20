@@ -70,16 +70,14 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         }.getOrNull()
     }
 
+    // 직접 넣은 주소는 바로, 더 새 주소가 확인되면 자동으로 바뀜 (DomainGuard.pick)
     override val baseUrl: String
-        get() {
-            val custom = sitePrefs()?.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/').orEmpty()
-            return if (DOMAIN_REGEX.matches(custom)) DomainGuard.preferDefault(custom, DEFAULT_BASE_URL) else DEFAULT_BASE_URL
-        }
+        get() = DomainGuard.pick(sitePrefs(), PREF_DOMAIN_KEY, DEFAULT_BASE_URL, autoDomain(), { DOMAIN_REGEX.matches(it) })
 
     private fun autoDomain(): Boolean = sitePrefs()?.getBoolean(PREF_AUTO_DOMAIN, true) ?: true
 
     private fun saveDomain(url: String) {
-        sitePrefs()?.edit()?.putString(PREF_DOMAIN_KEY, url)?.apply()
+        DomainGuard.saveAuto(sitePrefs(), PREF_DOMAIN_KEY, url)
     }
 
     // 주소 번호가 바뀌어 접속이 안 되면 gogotv 번호 주소를 찾아 자동 연결

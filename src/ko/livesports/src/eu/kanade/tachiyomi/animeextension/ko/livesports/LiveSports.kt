@@ -69,13 +69,9 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
     private fun pref(key: String, default: Boolean): Boolean =
         prefs()?.getBoolean(key, default) ?: default
 
-    // 설정에 올바른 주소가 있으면 그것을, 아니면 기본 주소를 사용
+    // 직접 넣은 주소는 바로, 더 새 주소가 확인되면 자동으로 바뀜 (DomainGuard.pick)
     override val baseUrl: String
-        get() {
-            val custom = prefs()?.getString(PREF_DOMAIN_KEY, "")
-                ?.trim()?.trimEnd('/').orEmpty()
-            return if (custom.isNotEmpty() && DOMAIN_REGEX.matches(custom)) DomainGuard.preferDefault(custom, DEFAULT_BASE_URL) else DEFAULT_BASE_URL
-        }
+        get() = DomainGuard.pick(prefs(), PREF_DOMAIN_KEY, DEFAULT_BASE_URL, pref(PREF_AUTO_DOMAIN, true), { DOMAIN_REGEX.matches(it) })
 
     private val livePageUrl: String
         get() = "$baseUrl/bbs/page.php?hid=livetv_a"
@@ -119,7 +115,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
 
     // ================= 0-1. 도메인 자동 찾기 =================
     private fun saveDomain(url: String) {
-        prefs()?.edit()?.putString(PREF_DOMAIN_KEY, url)?.apply()
+        DomainGuard.saveAuto(prefs(), PREF_DOMAIN_KEY, url)
         lastCaptureTime = 0L
         Log.d(tag, "도메인 자동 변경: $url")
     }
