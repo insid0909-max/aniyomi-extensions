@@ -148,7 +148,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
     }
 
     // ================= 도메인 자동 찾기 =================
-    // 주소가 fo.hoohootv459.xyz → fp → bd.hoohootv460.xyz → dw.hoohootv461.xyz 처럼 앞 두 글자가 바뀌거나(아무 글자로) 숫자가 바뀜.
+    // 주소가 fo.hoohootv459.xyz → fp → bd.hoohootv460.xyz → dw.hoohootv461.xyz → au.hoohootv462.xyz 처럼 앞 두 글자가 바뀌거나(아무 글자로) 숫자가 바뀜.
     // 두 글자가 통째로 바뀌면 짐작할 수 없어서, 주소 안내 사이트에 적힌 주소와 옛 주소가 넘겨 주는 주소를 먼저 씀.
     // 접속이 안 되거나 막히면 다음 글자·숫자 주소를 차례로 열어 보고, 진짜 후후티비인 주소를 저장해 다시 요청한다.
     private fun autoDomain(): Boolean = prefs()?.getBoolean(PREF_AUTO_DOMAIN, true) ?: true
@@ -174,7 +174,14 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         val dead = !SUBDOMAIN_REGEX.matches(res.request.url.host) || res.code == 403 || res.code == 451 || res.code >= 500 ||
             notSiteList(req, res)
         if (req.method == "GET" && dead) {
-            val found = discoverDomain(baseHost) ?: return res
+            // 옛 주소가 넘겨 준 안내 글(휴대폰에선 "후후티비 최신 주소 안내" 글)에 새 주소가 적혀 있음 → 그 글도 같이 봄
+            val hint = if (!SUBDOMAIN_REGEX.matches(res.request.url.host)) runCatching { res.peekBody(500_000).string() }.getOrNull() else null
+            val found = discoverDomain(baseHost, hint = hint)
+            if (found == null) {
+                if (!isListPath(req)) return res
+                res.close()
+                throw java.io.IOException("후후티비 주소가 바뀐 것 같아요. 웹뷰로 열어 새 주소를 확인한 뒤 그 주소(예: au.hoohootv462.xyz)를 검색창에 붙여 넣어 주세요.")
+            }
             res.close()
             return retryOn(found)
         }
@@ -257,7 +264,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
 
     @Volatile private var lastDiscover = 0L
 
-    private fun discoverDomain(currentHost: String, newerOnly: Boolean = false): String? = synchronized(DISCOVER_LOCK) {
+    private fun discoverDomain(currentHost: String, newerOnly: Boolean = false, hint: String? = null): String? = synchronized(DISCOVER_LOCK) {
         val now = System.currentTimeMillis()
         if (!newerOnly) {
             if (now - lastDiscover < 60_000) return null
@@ -274,10 +281,15 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             .callTimeout(8, TimeUnit.SECONDS)
             .build()
         // 주소 안내 사이트에 적힌 후후티비 주소들 (번호 큰 것 먼저)
-        val announced = runCatching {
-            val r = Request.Builder().url(PORTAL_URL).header("User-Agent", USER_AGENT).build()
-            plain.newCall(r).execute().use { res -> res.peekBody(500_000).string() }
-        }.getOrNull().orEmpty().let { body ->
+        // 안내 사이트 첫 화면은 이제 소개 글뿐이고, /home 이 "최신 주소 안내" 글로 넘겨 줌 (한국에서만) → 둘 다 + 옛 주소가 넘겨 준 글
+        val announced = (
+            listOf(PORTAL_URL + "home", PORTAL_URL).joinToString("\n") { u ->
+                runCatching {
+                    val r = Request.Builder().url(u).header("User-Agent", USER_AGENT).build()
+                    plain.newCall(r).execute().use { res -> res.peekBody(500_000).string() }
+                }.getOrNull().orEmpty()
+            } + "\n" + hint.orEmpty()
+            ).let { body ->
             ANNOUNCED_REGEX.findAll(body).map { it.value.lowercase() }
                 .filter { SUBDOMAIN_REGEX.matches(it) }.distinct()
                 .sortedByDescending { SUBDOMAIN_REGEX.matchEntire(it)!!.groupValues[3].toInt() }.toList()
@@ -873,7 +885,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         private const val NEWER_CHECK_MS = 600_000L
         private const val COOKIE_SCAN_MS = 30_000L
         private val LIST_PATHS = listOf("/home", "/tv", "/movie", "/popular")
-        private val PASTED_HOST_REGEX = Regex("""https?://([a-z]{2}\.hoohootv\d+\.[a-z]{2,6})""", RegexOption.IGNORE_CASE)
+        private val PASTED_HOST_REGEX = Regex("""(?:https?://)?([a-z]{2}\.hoohootv\d+\.[a-z]{2,6})""", RegexOption.IGNORE_CASE)
         private const val PREF_AUTO_FOUND = "pref_auto_found_domain"
         private const val PREF_MANUAL_DEAD = "pref_manual_dead_host"
         private const val PORTAL_URL = "https://hoohootv1.com/"
@@ -881,7 +893,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         private const val SITE_MARKER = "HOOHOO TV"
         private val DISCOVER_LOCK = Any()
         private val SUBDOMAIN_REGEX = Regex("""^([a-z])([a-z])\.hoohootv(\d+)\.([a-z]{2,6})$""")
-        private const val DEFAULT_BASE_URL = "https://dw.hoohootv461.xyz"
+        private const val DEFAULT_BASE_URL = "https://au.hoohootv462.xyz"
         private const val RATE_GAP_MS = 350L
         private const val POSTER_RETRY_MS = 800L
         private const val USER_AGENT =
