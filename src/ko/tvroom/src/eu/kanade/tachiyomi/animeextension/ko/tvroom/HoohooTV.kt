@@ -221,19 +221,24 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         }.start()
     }
 
-    private fun webViewHost(currentHost: String): String? {
-        val m = SUBDOMAIN_REGEX.matchEntire(currentHost) ?: return null
-        val n = m.groupValues[3].toIntOrNull() ?: return null
+    private fun webViewHost(currentHost: String): String? = probeHosts(cookieHosts(currentHost, sameNumber = false), currentHost)
+
+    /**
+     * 웹뷰로 들어갔던(쿠키가 남은) 후후티비 주소들. 휴대폰 안 쿠키 보관함만 보므로 인터넷 요청 없음.
+     * 지금 주소가 잘 열릴 때는 번호가 더 큰 주소만 (같은 번호의 다른 글자 주소는 예전에 쓰던 주소의 쿠키일 수 있어서 왔다 갔다 하지 않게 뺌),
+     * 지금 주소가 끊겼을 때는 같은 번호의 다른 글자 주소도 봄
+     */
+    private fun cookieHosts(currentHost: String, sameNumber: Boolean): List<String> = runCatching {
+        val m = SUBDOMAIN_REGEX.matchEntire(currentHost) ?: return emptyList()
+        val n = m.groupValues[3].toIntOrNull() ?: return emptyList()
         val tld = m.groupValues[4]
         val cm = android.webkit.CookieManager.getInstance()
         val abc = "abcdefghijklmnopqrstuvwxyz"
-        // 번호가 더 큰 주소만 (같은 번호의 다른 글자 주소는 예전에 쓰던 주소의 쿠키일 수 있어서 왔다 갔다 하지 않게 뺌)
-        val visited = (n + 3 downTo n + 1).asSequence()
+        (n + 3 downTo if (sameNumber) n else n + 1).asSequence()
             .flatMap { num -> abc.asSequence().flatMap { a -> abc.asSequence().map { b -> "$a$b.hoohootv$num.$tld" } } }
             .filter { it != currentHost && !cm.getCookie("https://$it").isNullOrEmpty() }
             .take(5).toList()
-        return probeHosts(visited, currentHost)
-    }
+    }.getOrDefault(emptyList())
 
     /** 검색창에 붙여 넣은 후후티비 주소가 지금 주소와 다르고 진짜 후후티비면 그 주소를 직접 넣은 주소로 바로 씀 */
     private fun adoptPasted(query: String): String? {
@@ -267,7 +272,8 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
     private fun discoverDomain(currentHost: String, newerOnly: Boolean = false, hint: String? = null): String? = synchronized(DISCOVER_LOCK) {
         val now = System.currentTimeMillis()
         if (!newerOnly) {
-            if (now - lastDiscover < 60_000) return null
+            // 1분 안에 이미 찾아봤으면 다시 찾지 않음. 단 그사이 웹뷰로 새 주소에 들어갔다 왔으면 그 주소는 바로 확인 (인터넷 요청 한 번)
+            if (now - lastDiscover < 60_000) return probeHosts(cookieHosts(currentHost, sameNumber = true), currentHost)
             lastDiscover = now
         }
         val m = SUBDOMAIN_REGEX.matchEntire(currentHost) ?: return null
@@ -300,7 +306,9 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         val fromPortal = announced.filter { h ->
             h != currentHost && (!newerOnly || numOf(h) > n || (numOf(h) == n && currentHost !in announced))
         }
-        probeHosts(fromPortal, currentHost)?.let { return it }
+        // 웹뷰로 새 주소에 들어갔다 왔으면 그 주소도 같이 확인 (목록이 안 열려서 웹뷰로 새 주소를 찾아 들어간 경우)
+        val fromWebView = cookieHosts(currentHost, sameNumber = !newerOnly).filter { it !in fromPortal }
+        probeHosts(fromPortal + fromWebView, currentHost)?.let { return it }
         // 2) 못 찾으면 짐작: 숫자 +1 ~ +3 에서 같은 두 글자 → 모든 둘째 글자 (가까운 글자부터), 같은 숫자의 다음 글자들.
         //    1시간마다 하는 가벼운 확인에서는 같은 두 글자의 다음 번호만
         val newer = (1..3).map { d -> "$first$second.hoohootv${n + d}.$tld" } +
