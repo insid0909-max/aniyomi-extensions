@@ -237,7 +237,11 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
     private fun cardUrl(p: Params, count: Int? = null): String {
         val b = StringBuilder("/tong?src=${p.src}&cat=${URLEncoder.encode(p.cat, "UTF-8")}&sort=${p.sort}")
         if (p.q.isNotEmpty()) b.append("&q=").append(URLEncoder.encode(p.q, "UTF-8"))
-        if (count != null) b.append("&n=").append(count)
+        if (count != null) {
+            // 만든 시각(분)도 넣어 목록을 열 때마다 새 카드가 되게 함 → 카드를 누르면 앱이 항상 지금 경기 목록을 새로 받음
+            // (앱은 처음 보는 카드만 회차를 새로 읽음. 서재에 담은 카드(주소 고정)는 카드 안에서 당겨서 새로고침)
+            b.append("&n=").append(count).append("&t=").append(System.currentTimeMillis() / 60_000)
+        }
         return b.toString()
     }
 
