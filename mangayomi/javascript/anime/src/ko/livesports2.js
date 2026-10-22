@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.12",
+    "version": "0.1.13",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/livesports2.js"
@@ -240,10 +240,14 @@ class DefaultExtension extends MProvider {
     async fetchGames(src) {
         const items = await this.fetchItems(src, "sports != \"ETC\"", 500);
         const stripN = this.pref("ls2_strip_n", true) !== false;
+        const hideEnded = this.pref("ls2_hide_ended", true) !== false;
         const games = [];
         for (const o of items) {
             const id = this.str(o, "id");
             if (!id) continue;
+            // 사이트는 끝난 경기도 한동안 방송 중 목록에 "경기종료"로 남겨 둠 → 숨김 ("전반종료"는 경기 중이라 그대로)
+            const q = this.str(o, "q_time");
+            if (hideEnded && (q.indexOf("경기종료") >= 0 || ["종료", "FT", "END", "ENDED", "FINAL", "FINISHED", "AET"].includes(q.toUpperCase()))) continue;
             const fix = (s) => (stripN ? s.replace(/\s*\(N\)/g, "").trim() : s);
             const home = fix(this.str(o, "team_name_home"));
             const away = fix(this.str(o, "team_name_away"));
@@ -742,6 +746,14 @@ class DefaultExtension extends MProvider {
             {
                 key: "ls2_score",
                 switchPreferenceCompat: { title: "점수·진행 상황 표시", summary: "방송 중인 경기 줄에 표시합니다.", value: true },
+            },
+            {
+                key: "ls2_hide_ended",
+                switchPreferenceCompat: {
+                    title: "끝난 경기 숨기기",
+                    summary: "사이트가 \"경기종료\"로 표시한 경기는 방송 중 목록에서 뺍니다.",
+                    value: true,
+                },
             },
             {
                 key: "ls2_merge",

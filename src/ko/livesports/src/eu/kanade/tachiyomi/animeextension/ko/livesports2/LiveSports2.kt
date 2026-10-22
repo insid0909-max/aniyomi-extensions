@@ -476,12 +476,15 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
 
         val stripN = pref(PREF_STRIP_N, true)
         val merge = pref(PREF_MERGE, true)
+        val hideEnded = pref(PREF_HIDE_ENDED, true)
 
         val out = ArrayList<Game>(items.length())
         for (i in 0 until items.length()) {
             val o = items.optJSONObject(i) ?: continue
             val id = str(o, "id")
             if (id.isEmpty()) continue
+            // 사이트는 끝난 경기도 한동안 방송 중 목록에 "경기종료"로 남겨 둠 → 숨김 ("전반종료"는 경기 중이라 그대로)
+            if (hideEnded && isEnded(str(o, "q_time"))) continue
 
             // 설정에 따라 팀 이름 끝의 "(N)" 표기를 지운다
             val homeRaw = str(o, "team_name_home")
@@ -1142,6 +1145,14 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         )
         screen.addPreference(
             switchPref(
+                PREF_HIDE_ENDED,
+                "[전용] 끝난 경기 숨기기",
+                "사이트가 \"경기종료\"로 표시한 경기는 방송 중 목록에서 뺍니다. 바꾼 뒤 목록을 새로고침하세요.",
+                true,
+            ),
+        )
+        screen.addPreference(
+            switchPref(
                 PREF_MERGE,
                 "[전용] 같은 경기 합치기",
                 "종목·팀·시작 시각이 같은 항목이 여러 줄로 올라오면 한 줄로 합칩니다. 재생할 때 되는 중계를 자동으로 고릅니다. 바꾼 뒤 목록을 새로고침하세요.",
@@ -1168,6 +1179,14 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val PREF_START_TIME = "pref_start_time"
         private const val PREF_SCORE = "pref_score"
         private const val PREF_MERGE = "pref_merge_dup"
+        private const val PREF_HIDE_ENDED = "pref_hide_ended"
+        private val ENDED_WORDS = setOf("종료", "FT", "END", "ENDED", "FINAL", "FINISHED", "AET")
+
+        /** "경기종료" · "종료" · "FT" 처럼 경기가 끝났다는 진행 상태 ("전반종료"·"3쿼터 종료" 등은 경기 중) */
+        fun isEnded(qTime: String): Boolean {
+            val t = qTime.trim()
+            return t.contains("경기종료") || t.uppercase() in ENDED_WORDS
+        }
         private const val PREF_STRIP_N = "pref_strip_n"
         private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
 
