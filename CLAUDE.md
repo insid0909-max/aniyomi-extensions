@@ -31,7 +31,7 @@
 - 회차 이름은 회차 번호로 시작(맨 앞 숫자를 회차로 인식), 시즌은 `scanlator`에
 - `selectFirst`는 비어도 truthy → `select().length` 사용; appClient는 UA 제거됨(원래 망가요미가 웹뷰 UA를 넣어 줌. 변형 앱 Mangayomi Glitch는 안 넣어 줘서 연결 끊김/403 → appClient가 UA 넣어 한 번 다시 보내고 이후 계속 넣음); followRedirects 옵션 무시됨
 - 영상: getVideoList 는 `hlsHint(await this.videoListInner(url))` — .m3u8 로 안 끝나는 HLS(.txt·/hls/·/m3/·master·playlist·jmp2.uk) 는 originalUrl 끝에 "#download.m3u8"(망가요미 재생기가 originalUrl 모양으로 HLS 판단; mp4 등엔 붙이지 않음)
-- appClient: 기본 client 가 연결 오류면 UA 넣어 재시도 → 그래도 실패하면 `new Client({persistentConnection:false,noProxy:true,timeout:25,connectTimeout:10})`(APP_ALT)로 한 번 더 (애니·웹툰 망가요미 15개 파일 같은 코드)
+- appClient: 기본 client 가 연결 오류면 UA 넣어 재시도 → 그래도 실패하면 `new Client({persistentConnection:false,noProxy:true,timeout:25,connectTimeout:10})`(APP_ALT)로 한 번 더 (애니·웹툰 망가요미 18개 파일 같은 코드, 웹툰 저장소에 마루마루 웹툰·만화·소설 3개 추가(2026-10-22))
 - 막히면 같은 사이트의 잘 되는 다른 망가요미 확장(예: DC 저장소 dc-toki-mangayomi-media.pages.dev/index.min.json)을 먼저 받아 비교. 단 중계 서버·영상 키 풀기는 따라 하지 않음
 - 파일 버전과 anime_index.json 버전 같이 올리기, `node --check` 통과
 
