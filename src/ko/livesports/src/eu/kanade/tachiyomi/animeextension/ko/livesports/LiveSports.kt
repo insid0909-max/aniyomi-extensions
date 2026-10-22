@@ -635,6 +635,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
     private fun parseItems(jsonText: String): List<ParsedItem> {
         val array = findArray(jsonText) ?: return emptyList()
         firstItemDebug = array.opt(0).toString().take(400)
+        val hideEnded = pref(PREF_HIDE_ENDED, true)
 
         val items = mutableListOf<ParsedItem>()
         for (i in 0 until array.length()) {
@@ -647,17 +648,36 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
             val date = item.optString("schedule_date").trim().takeIf { it != "null" }.orEmpty()
             val time = item.optString("schedule_time").trim().takeIf { it != "null" }.orEmpty()
 
-            items.add(
-                ParsedItem(
-                    title = baseTitle,
-                    streamData = streamData,
-                    league = league,
-                    label = categoryLabel(item),
-                    startKey = "$date $time".trim(),
-                ),
+            val parsed = ParsedItem(
+                title = baseTitle,
+                streamData = streamData,
+                league = league,
+                label = categoryLabel(item),
+                startKey = "$date $time".trim(),
             )
+            if (hideEnded && isEnded(item, parsed)) continue
+            items.add(parsed)
         }
         return items
+    }
+
+    /**
+     * 끝난 경기: 항목 안에 "경기종료"·"종료"·"FT" 같은 끝남 표시가 있거나,
+     * 시작 후 종목별로 넉넉히 잡은 시간(축구 3시간, 야구 5시간 등)이 지났는데도 목록에 남아 있는 경기.
+     * 시작 시각이 없는 항목(TV 채널 등)은 숨기지 않음
+     */
+    private fun isEnded(item: JSONObject, p: ParsedItem): Boolean {
+        val strings = mutableListOf<Pair<String, String>>()
+        collectStrings(item, "", strings)
+        if (strings.any { (_, v) -> v.trim().let { it.contains("경기종료") || it.uppercase() in ENDED_WORDS } }) return true
+        if (p.startKey.length < 16) return false
+        val at = runCatching {
+            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.KOREA)
+                .apply { timeZone = java.util.TimeZone.getTimeZone("Asia/Seoul") }
+                .parse(p.startKey.substring(0, 16))?.time
+        }.getOrNull() ?: return false
+        val hours = ENDED_AFTER_HOURS[p.label] ?: return false
+        return System.currentTimeMillis() - at > hours * 3_600_000L
     }
 
     // "2026-10-02 00:00" -> "시작 10-02 00:00" (날짜나 시각이 없으면 표시 안 함)
@@ -1371,6 +1391,14 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         // ---- [전용] 이 확장만 ----
         screen.addPreference(
             switchPref(
+                PREF_HIDE_ENDED,
+                "[전용] 끝난 경기 숨기기",
+                "끝남 표시가 있거나 시작 후 오래 지난 경기(축구 3시간, 농구·배구·하키 3시간, 야구 5시간 등)를 방송 중 목록에서 뺍니다. 바꾼 뒤 목록을 새로고침하세요.",
+                true,
+            ),
+        )
+        screen.addPreference(
+            switchPref(
                 PREF_HIDE_TV,
                 "[전용] TV 채널 숨기기",
                 "전체 보기에서 TV 채널 항목을 숨깁니다. 필터에서 TV를 직접 고르면 보입니다.",
@@ -1388,6 +1416,14 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val PREF_EMOJI = "pref_emoji"
         private const val PREF_START_TIME = "pref_start_time"
         private const val PREF_HIDE_TV = "pref_hide_tv"
+        private const val PREF_HIDE_ENDED = "pref_hide_ended"
+        private val ENDED_WORDS = setOf("종료", "FT", "END", "ENDED", "FINAL", "FINISHED", "AET")
+
+        // 시작 후 이 시간이 지나면 끝난 것으로 봄 (연장·지연까지 넉넉히). 없는 종목은 시간으로 거르지 않음
+        private val ENDED_AFTER_HOURS = mapOf(
+            "축구" to 3, "농구" to 3, "배구" to 3, "하키" to 3, "야구" to 5,
+            "미식축구" to 5, "테니스" to 6, "롤" to 6, "복싱" to 6,
+        )
         private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
 
         // 인기/최신 탭에 저장하는 규칙
