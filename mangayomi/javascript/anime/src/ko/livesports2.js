@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.11",
+    "version": "0.1.12",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/livesports2.js"
@@ -441,6 +441,12 @@ class DefaultExtension extends MProvider {
                 });
             }
         }
+
+        // 맨 위는 목록을 받은 시각 (한국 시간) — 예전 목록이 보이면 오래된 것인지 알 수 있게
+        const kst = new Date(Date.now() + 9 * 3600000);
+        const two = (n) => String(n).padStart(2, "0");
+        const stamp = `${two(kst.getUTCMonth() + 1)}.${two(kst.getUTCDate())} ${two(kst.getUTCHours())}:${two(kst.getUTCMinutes())}`;
+        episodes.unshift({ name: `🕒 ${stamp} 기준 · 오래됐으면 아래로 당겨 새로고침`, url: "/play?kind=header&n=time" });
 
         return {
             name: this.cardTitle(p),
