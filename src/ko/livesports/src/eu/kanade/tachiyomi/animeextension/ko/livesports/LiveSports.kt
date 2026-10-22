@@ -687,7 +687,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         // 1) 종목으로 거르기 (TV는 전체 보기에서만 숨길 수 있고, 직접 고르면 보인다)
         val filtered = items.filter { inCat(it, cat, hideTv) }
         if (filtered.isEmpty()) {
-            return listOf(infoEpisode(if (soon) "예정된 경기가 없습니다" else "현재 방송 중인 경기가 없습니다"))
+            return listOf(infoEpisode((if (soon) "예정된 경기가 없습니다" else "현재 방송 중인 경기가 없습니다") + " (${fetchedStamp()} 기준)"))
         }
 
         // 2) 정렬. 같은 값끼리는 기존처럼 목록 순서를 뒤집어 표시 (sortedWith는 순서를 유지하는 안정 정렬)
@@ -706,8 +706,8 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
         val showHeaders = headerSetting && sort == SORT_CATEGORY && (isAllCat(cat) || cat == CAT_OTHER)
         val staleTag = staleTime?.let { "이전 목록 ($it)" }
 
-        // 3) 구분 줄과 경기 줄 만들기
-        val rows = mutableListOf<Row>()
+        // 3) 구분 줄과 경기 줄 만들기 (맨 위는 목록을 받은 시각, 주소가 늘 같아 새 회차로 잡히지 않음)
+        val rows = mutableListOf(Row("🕒 ${fetchedStamp()} 기준 · 오래됐으면 아래로 당겨 새로고침", "/play?stream_data=header&n=time", null))
         var lastLabel: String? = null
         for (p in ordered) {
             val emoji = if (useEmoji) categoryEmoji(p.label) else ""
@@ -753,6 +753,12 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
             }
         }
     }
+
+    // 목록을 받은 시각 (한국 시간). 앱이 예전 목록을 먼저 보여 줄 때 오래된 목록인지 알 수 있게 맨 위에 표시
+    private fun fetchedStamp(): String =
+        java.text.SimpleDateFormat("MM.dd HH:mm", java.util.Locale.KOREA)
+            .apply { timeZone = java.util.TimeZone.getTimeZone("Asia/Seoul") }
+            .format(java.util.Date())
 
     // ================= 3. 부모 페이지를 WebView로 열어 가로채기 =================
     // 플레이어 JS가 복호화한 뒤 JSON.parse에 넘기는 문자열을 낚아챈다

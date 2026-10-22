@@ -562,7 +562,7 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
 
         val filtered = games.filter { matches(it, p) }
         if (filtered.isEmpty()) {
-            return listOf(infoEpisode(if (p.src == SRC_SOON) "예정된 경기가 없습니다" else "현재 방송 중인 경기가 없습니다"))
+            return listOf(infoEpisode((if (p.src == SRC_SOON) "예정된 경기가 없습니다" else "현재 방송 중인 경기가 없습니다") + " (${fetchedStamp()} 기준)"))
         }
 
         // 시작 시각이 없는 항목은 맨 뒤로. 같은 값끼리는 목록 순서를 유지한다(안정 정렬)
@@ -582,7 +582,8 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
         val showHeaders = headerSetting && p.sort == SORT_CATEGORY && p.q.isEmpty() &&
             (isAllCat(p.cat) || p.cat == CAT_OTHER)
 
-        val rows = mutableListOf<Row>()
+        // 맨 위는 목록을 받은 시각 (주소가 늘 같아 새 회차로 잡히지 않음)
+        val rows = mutableListOf(Row("🕒 ${fetchedStamp()} 기준 · 오래됐으면 아래로 당겨 새로고침", "/play?kind=header&n=time", null))
         var lastLabel: String? = null
         for (g in ordered) {
             val emoji = if (useEmoji) categoryEmoji(g.label) else ""
@@ -634,6 +635,12 @@ class LiveSports2 : AnimeHttpSource(), ConfigurableAnimeSource {
             }
         }
     }
+
+    // 목록을 받은 시각 (한국 시간). 앱이 예전 목록을 먼저 보여 줄 때 오래된 목록인지 알 수 있게 맨 위에 표시
+    private fun fetchedStamp(): String =
+        java.text.SimpleDateFormat("MM.dd HH:mm", java.util.Locale.KOREA)
+            .apply { timeZone = java.util.TimeZone.getTimeZone("Asia/Seoul") }
+            .format(java.util.Date())
 
     override fun episodeListParse(response: Response): List<SEpisode> {
         val p = paramsOf(response.request.url)
