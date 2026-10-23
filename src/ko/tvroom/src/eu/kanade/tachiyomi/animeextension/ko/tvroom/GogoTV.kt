@@ -136,7 +136,8 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
     private fun hostNumber(host: String): Int =
         NUMBER_REGEX.find(host)?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
-    // gogotv 번호 주소를 현재 번호 -5 ~ +30 범위에서 동시에 열어 보고, 실제 고고티비인 가장 큰 번호를 고른다
+    // gogotv 번호 주소를 현재 번호 -5 ~ +30 범위에서 동시에 열어 보고, 실제 고고티비인 가장 큰 번호를 고른다.
+    // 번호 주소가 모두 안 열리면 번호 없는 gogotv.xyz 화면에 적힌 번호 주소, 그것도 안 되면 gogotv.xyz 자체
     private fun discoverDomain(currentHost: String): String? = synchronized(DISCOVER_LOCK) {
         val now = System.currentTimeMillis()
         if (now - lastDiscover < 60_000) return null
@@ -168,10 +169,27 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
                     }
                 }
             // 지금 주소가 가장 좋은 주소면 바꾸지 않음
-            futures.mapNotNull { it.get() }.maxByOrNull { hostNumber(it) }?.takeIf { it != currentHost }
+            val best = futures.mapNotNull { it.get() }.maxByOrNull { hostNumber(it) }
+            if (best != null) return best.takeIf { it != currentHost }
+            val plainPage = realPage(plain, PLAIN_HOST) ?: return null
+            NUMBER_HOST_REGEX.findAll(plainPage).map { it.value.lowercase() }.distinct()
+                .filter { it != currentHost }.sortedByDescending { hostNumber(it) }
+                .firstOrNull { realPage(plain, it) != null }
+                ?: PLAIN_HOST.takeIf { it != currentHost }
         } finally {
             pool.shutdown()
         }
+    }
+
+    /** 그 주소가 진짜 고고티비면 첫 화면 글, 아니면 null */
+    private fun realPage(plain: OkHttpClient, host: String): String? = try {
+        val r = Request.Builder().url("https://$host/").header("User-Agent", USER_AGENT).build()
+        plain.newCall(r).execute().use { res ->
+            val body = if (res.code == 200 && HOST_REGEX.matches(res.request.url.host)) res.peekBody(300_000).string() else ""
+            body.takeIf { it.contains(SITE_MARKER, ignoreCase = true) && it.contains("/player/") }
+        }
+    } catch (e: Exception) {
+        null
     }
 
     // ================= 목록 =================
@@ -631,7 +649,7 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
             title = "고고티비 주소 직접 지정 (선택)"
             summary = summaryOf(baseUrl)
             dialogTitle = "기본값: $DEFAULT_BASE_URL"
-            dialogMessage = "gogotv숫자.xyz 형식의 HTTPS 주소만 허용됩니다."
+            dialogMessage = "gogotv숫자.xyz 또는 gogotv.xyz 형식의 HTTPS 주소만 허용됩니다."
             setDefaultValue("")
             setOnPreferenceChangeListener { _, newValue ->
                 val input = (newValue as String).trim().trimEnd('/')
@@ -656,7 +674,7 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         SwitchPreferenceCompat(ctx).apply {
             key = PREF_AUTO_DOMAIN
             title = "도메인 자동 찾기"
-            summary = "접속이 안 되거나 막히면 gogotv 번호 주소(현재 번호 -5 ~ +30)를 찾아 자동 변경합니다."
+            summary = "접속이 안 되거나 막히면 gogotv 번호 주소(현재 번호 -5 ~ +30)를 찾아 자동 변경합니다. 번호 주소가 모두 안 되면 gogotv.xyz 에 적힌 주소(없으면 gogotv.xyz)로."
             setDefaultValue(true)
         }.also(screen::addPreference)
 
@@ -688,9 +706,13 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
 
         private val DISCOVER_LOCK = Any()
 
-        private val DOMAIN_REGEX = Regex("""^https://gogotv\d+\.xyz$""")
-        private val HOST_REGEX = Regex("""^gogotv\d+\.xyz$""")
+        private val DOMAIN_REGEX = Regex("""^https://gogotv\d*\.xyz$""")
+        private val HOST_REGEX = Regex("""^gogotv\d*\.xyz$""")
         private val NUMBER_REGEX = Regex("""gogotv(\d+)\.xyz""")
+        private val NUMBER_HOST_REGEX = Regex("""gogotv\d+\.xyz""", RegexOption.IGNORE_CASE)
+
+        /** 번호 없는 고고티비 주소 (번호 주소가 모두 안 될 때 마지막으로) */
+        private const val PLAIN_HOST = "gogotv.xyz"
         private val PATH_REGEX = Regex("""^https?://[^/]+(/.*)$""")
         private val PAGE_REGEX = Regex("""[?&]page=(\d+)""")
         private val EP_REGEX = Regex("""제\s*(\d+)\s*회|E(\d+)""")
@@ -743,7 +765,7 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         private val ICON_REGEX = Regex("[\\uE000-\\uF8FF]")
         private val PERIOD_YEAR_REGEX = Regex("""((?:19|20)\d{2})년""")
         private val TITLE_YEAR_REGEX = Regex("""\s*\((?:19|20)\d{2}\)\s*$""")
-        private val URL_PLAYER_REGEX = Regex("""^https?://gogotv\d+\.xyz/player/([A-Za-z0-9]+)""")
+        private val URL_PLAYER_REGEX = Regex("""^https?://(?:www\.)?gogotv\d*\.xyz/player/([A-Za-z0-9]+)""")
         private val RULE_SIZES = intArrayOf(CATEGORIES.size, SORTS.size, COUNTRIES.size)
     }
 }
