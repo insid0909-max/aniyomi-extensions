@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.29",
+    "version": "0.1.30",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -16,7 +16,9 @@ const mangayomiSources = [{
 
 // Aniyomi GogoTV.kt(고고티비)를 망가요미용으로 옮긴 소스
 const DEFAULT_BASE_URL = "https://gogotv2.xyz";
-const DOMAIN_RE = /^https:\/\/gogotv\d+\.xyz$/;
+const DOMAIN_RE = /^https:\/\/gogotv\d*\.xyz$/;
+// 번호 없는 고고티비 주소 (번호 주소가 모두 안 될 때 마지막으로)
+const PLAIN_BASE = "https://gogotv.xyz";
 const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
     "Chrome/124.0.0.0 Mobile Safari/537.36";
 const PLAYER_HINT = /(?:mode\.php|player|embed|\/v\/|\/e\/|[?&]key=)/i;
@@ -250,7 +252,7 @@ function hlsHint(list) {
 }
 
 // 주소 바뀜 대응 설정: 사이트 주소 모양, 진짜 사이트 표시 글자, User-Agent, 직접 넣은 주소 설정 키
-const ADDR_HOST = /^gogotv\d+\.xyz$/;
+const ADDR_HOST = /^gogotv\d*\.xyz$/;
 const ADDR_MARK = "/player/";
 const ADDR_UA = UA;
 const ADDR_PREF = "gogotv_domain";
@@ -348,7 +350,7 @@ class DefaultExtension extends MProvider {
         }
         // 자동으로 찾은 주소가 확장 업데이트로 바뀐 기본 주소보다 옛 번호면 기본 주소를 씀
         const n = (u) => parseInt((/(\d+)(?!.*\d)/.exec(String(u).replace(/\.[a-z]{2,6}$/i, "")) || [0, "0"])[1], 10) || 0;
-        return DOMAIN_RE.test(auto) && n(auto) >= n(DEFAULT_BASE_URL) ? auto : DEFAULT_BASE_URL;
+        return DOMAIN_RE.test(auto) && (n(auto) >= n(DEFAULT_BASE_URL) || n(auto) === 0) ? auto : DEFAULT_BASE_URL;
     }
 
     autoOn() {
@@ -360,7 +362,8 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // gogotv 번호 주소를 현재 번호 -5 ~ +30 범위에서 동시에 열어 보고, 실제 고고티비인 가장 큰 번호를 고른다 (1분에 한 번만)
+    // gogotv 번호 주소를 현재 번호 -5 ~ +30 범위에서 동시에 열어 보고, 실제 고고티비인 가장 큰 번호를 고른다 (1분에 한 번만).
+    // 번호 주소가 모두 안 열리면 번호 없는 gogotv.xyz 화면에 적힌 번호 주소, 그것도 안 되면 gogotv.xyz 자체
     async discover(current) {
         const p = new SharedPreferences();
         const last = Number(p.getString("gogotv_auto_at", "0")) || 0;
@@ -383,8 +386,34 @@ class DefaultExtension extends MProvider {
             }
         }));
         const ok = hits.filter((x) => x).sort((a, b) => num(b) - num(a));
-        if (ok[0]) p.setString("gogotv_auto_domain", ok[0]);
-        return ok[0] || null;
+        let found = ok[0] || null;
+        if (!found) {
+            const page = async (c) => {
+                try {
+                    const r = await this.client.get(c + "/", { "User-Agent": UA });
+                    const body = String(r.body || "");
+                    return r.statusCode === 200 && body.indexOf("/player/") >= 0 ? body : null;
+                } catch (e) {
+                    return null;
+                }
+            };
+            // 지금 주소가 사실 열리면 바꾸지 않음
+            if (await page(current)) return null;
+            const plain = await page(PLAIN_BASE);
+            if (plain) {
+                const listed = [...new Set((plain.match(/gogotv\d+\.xyz/gi) || []).map((x) => "https://" + x.toLowerCase()))]
+                    .filter((c) => c !== current).sort((a, b) => num(b) - num(a));
+                for (const c of listed) {
+                    if (await page(c)) {
+                        found = c;
+                        break;
+                    }
+                }
+                if (!found && PLAIN_BASE !== current) found = PLAIN_BASE;
+            }
+        }
+        if (found) p.setString("gogotv_auto_domain", found);
+        return found;
     }
 
     headers(referer) {
@@ -458,7 +487,7 @@ class DefaultExtension extends MProvider {
 
     async searchBase(query, page, filters) {
         // 사이트 작품 주소를 붙여 넣으면 그 작품을 바로 보여 줌 (주소 번호가 달라도 됨)
-        const byUrl = /^https?:\/\/gogotv\d+\.xyz\/player\/([A-Za-z0-9]+)/.exec((query || "").trim());
+        const byUrl = /^https?:\/\/(?:www\.)?gogotv\d*\.xyz\/player\/([A-Za-z0-9]+)/.exec((query || "").trim());
         if (byUrl) {
             const link = `/player/${byUrl[1]}`;
             const d = await this.getDetail(link);
@@ -879,13 +908,13 @@ class DefaultExtension extends MProvider {
                 summary: "비워 두면 자동으로 찾은 주소나 기본 주소(https://gogotv2.xyz)를 사용합니다.",
                 value: "",
                 dialogTitle: "고고티비 주소",
-                dialogMessage: "gogotv숫자.xyz 형식의 HTTPS 주소만 사용됩니다.",
+                dialogMessage: "gogotv숫자.xyz 또는 gogotv.xyz 형식의 HTTPS 주소만 사용됩니다.",
             },
         }, {
             key: "gogotv_auto_on",
             switchPreferenceCompat: {
                 title: "도메인 자동 찾기",
-                summary: "접속이 안 되면 gogotv 번호 주소(현재 번호 -5 ~ +30)를 찾아 자동 변경",
+                summary: "접속이 안 되면 gogotv 번호 주소(현재 번호 -5 ~ +30)를 찾아 자동 변경, 모두 안 되면 gogotv.xyz 로",
                 value: true,
             },
         }, {
