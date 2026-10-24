@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.12",
+    "version": "0.1.13",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli24.js"
@@ -459,6 +459,7 @@ class DefaultExtension extends MProvider {
     }
 
     async getPopular(page) {
+        await notesRefresh(this.client);
         return this.listPage(ruleRead("ohli24", true, RULE_SIZES) || DEFAULT_POPULAR, page);
     }
 
@@ -810,6 +811,7 @@ class DefaultExtension extends MProvider {
         const host = this.getBaseUrl().replace(/^https?:\/\//, "");
         return [
             { type_name: "HeaderFilter", name: `📡 주소: ${host}` },
+            ...notesFilters("ohli24"),
             { type_name: "SeparatorFilter" },
             { type_name: "HeaderFilter", name: "검색어가 없을 때만 적용 (작품 주소를 붙여 넣으면 바로 열기)" },
         ].concat(FILTER_DEFS.map(([name, param, values]) => ({
@@ -830,4 +832,38 @@ class DefaultExtension extends MProvider {
             },
         }, qualityPreference("ohli24_quality")];
     }
+}
+
+// ---------- 업데이트 내역 (필터 맨 위 📝 줄) ----------
+// 저장소의 changelog.json 을 1시간에 한 번 받아 두었다가 그 소스의 최근 3개를 보여 줌 (필터 화면을 열 때 기다리지 않음)
+const NOTES_URL = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/changelog.json";
+
+async function notesRefresh(client) {
+    let p;
+    try {
+        p = new SharedPreferences();
+    } catch (e) {
+        return;
+    }
+    const last = Number(p.getString("notes_at", "0")) || 0;
+    if (Date.now() - last < 60 * 60000) return;
+    p.setString("notes_at", String(Date.now()));
+    try {
+        const r = await client.get(NOTES_URL, {});
+        const body = String(r.body || "");
+        if (r.statusCode === 200 && body.trim().startsWith("{")) p.setString("notes_json", body);
+    } catch (e) {
+        // 다음 기회에 다시 받음
+    }
+}
+
+function notesFilters(key) {
+    let list = [];
+    try {
+        list = (JSON.parse(new SharedPreferences().getString("notes_json", "") || "{}").items || {})[key] || [];
+    } catch (e) {
+        list = [];
+    }
+    return list.filter((n) => n && n.t).slice(0, 3)
+        .map((n) => ({ type_name: "HeaderFilter", name: `📝 ${String(n.d || "").substring(5).replace("-", ".")} ${n.t}`, _status: true }));
 }

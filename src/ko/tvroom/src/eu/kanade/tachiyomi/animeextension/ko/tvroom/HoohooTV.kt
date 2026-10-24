@@ -801,7 +801,10 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         else -> CATEGORIES
     }
 
-    override fun getFilterList(): AnimeFilterList = if (kind == KIND_DRAMA) {
+    // 맨 위에 최근 업데이트 내역(📝)
+    override fun getFilterList(): AnimeFilterList = ExtStatus.withNotes("hoohootv", baseFilters())
+
+    private fun baseFilters(): AnimeFilterList = if (kind == KIND_DRAMA) {
         AnimeFilterList(AnimeFilter.Header("드라마 목록입니다 (분류 선택 없음)"))
     } else {
         val names = categories().map { it.first }
