@@ -6,9 +6,9 @@
    "since": "2026-10-03T17:30:22.767Z"
   },
   "고고티비": {
-   "origin": "https://gogotv2.xyz",
+   "origin": "https://gogotv3.xyz",
    "status": "alive",
-   "since": "2026-10-03T17:30:23.048Z"
+   "since": "2026-10-24T01:57:21.573Z"
   },
   "실시간스포츠": {
    "origin": "https://njtv-01.com",
@@ -25,14 +25,14 @@
   },
   "고고티비 (망가요미)": {
    "ok": true,
-   "msg": "목록 24개, 회차 4개, 연재",
-   "at": "2026-10-23T01:56:43.570Z",
+   "msg": "목록 24개, 회차 5개, 연재",
+   "at": "2026-10-24T01:57:24.294Z",
    "since": "2026-10-03T17:30:32.035Z"
   },
   "실시간스포츠2 (망가요미)": {
    "ok": true,
    "msg": "목록 5개",
-   "at": "2026-10-23T01:56:44.043Z",
+   "at": "2026-10-24T01:57:24.856Z",
    "since": "2026-10-03T17:30:32.662Z"
   }
  },
@@ -44,18 +44,18 @@
    "status_json": "{\n \"items\": {\n  \"tvwiki\": {\n   \"origin\": \"https://tvwiki51.net\",\n   \"domain\": \"alive\",\n   \"domainSince\": \"2026-10-03T17:30:22.767Z\",\n   \"ok\": true,\n   \"msg\": \"목록 30개, 회차 818개, 영상 1개, 상태 미확인\",\n   \"checkedAt\": \"2026-10-04T02:24:07.034Z\"\n  },\n  \"gogotv\": {\n   \"origin\": \"https://gogotv2.xyz\",\n   \"domain\": \"alive\",\n   \"domainSince\": \"2026-10-03T17:30:23.048Z\",\n   \"ok\": true,\n   \"msg\": \"목록 24개, 회차 8개, 상태 미확인\",\n   \"checkedAt\": \"2026-10-04T02:24:07.836Z\"\n  },\n  \"livesports\": {\n   \"origin\": \"https://njtv-01.com\",\n   \"domain\": \"dead\",\n   \"domainSince\": \"2026-10-03T17:30:25.871Z\"\n  },\n  \"livesports2\": {\n   \"ok\": true,\n   \"msg\": \"목록 5개\",\n   \"checkedAt\": \"2026-10-04T02:24:08.435Z\"\n  }\n }\n}\n"
   },
   "고고티비 (망가요미)": {
-   "status_at": "1792720601585",
-   "status_json": "{\n \"items\": {\n  \"gogotv\": {\n   \"origin\": \"https://gogotv2.xyz\",\n   \"domain\": \"alive\",\n   \"domainSince\": \"2026-10-03T17:30:23.048Z\",\n   \"ok\": true,\n   \"msg\": \"목록 24개, 회차 4개, 연재\",\n   \"checkedAt\": \"2026-10-22T01:50:43.823Z\"\n  },\n  \"livesports\": {\n   \"origin\": \"https://njtv-01.com\",\n   \"domain\": \"dead\",\n   \"domainSince\": \"2026-10-03T17:30:25.871Z\"\n  },\n  \"livesports2\": {\n   \"ok\": true,\n   \"msg\": \"목록 4개\",\n   \"checkedAt\": \"2026-10-22T01:50:44.406Z\"\n  }\n }\n}\n"
+   "status_at": "1792807043535",
+   "status_json": "{\n \"items\": {\n  \"gogotv\": {\n   \"origin\": \"https://gogotv2.xyz\",\n   \"domain\": \"alive\",\n   \"domainSince\": \"2026-10-03T17:30:23.048Z\",\n   \"ok\": true,\n   \"msg\": \"목록 24개, 회차 4개, 연재\",\n   \"checkedAt\": \"2026-10-23T01:56:43.570Z\"\n  },\n  \"livesports\": {\n   \"origin\": \"https://njtv-01.com\",\n   \"domain\": \"dead\",\n   \"domainSince\": \"2026-10-03T17:30:25.871Z\"\n  },\n  \"livesports2\": {\n   \"ok\": true,\n   \"msg\": \"목록 5개\",\n   \"checkedAt\": \"2026-10-23T01:56:44.043Z\"\n  }\n }\n}\n"
   },
   "실시간스포츠2 (망가요미)": {
-   "status_at": "1792720603572",
-   "status_json": "{\n \"items\": {\n  \"gogotv\": {\n   \"origin\": \"https://gogotv2.xyz\",\n   \"domain\": \"alive\",\n   \"domainSince\": \"2026-10-03T17:30:23.048Z\",\n   \"ok\": true,\n   \"msg\": \"목록 24개, 회차 4개, 연재\",\n   \"checkedAt\": \"2026-10-22T01:50:43.823Z\"\n  },\n  \"livesports\": {\n   \"origin\": \"https://njtv-01.com\",\n   \"domain\": \"dead\",\n   \"domainSince\": \"2026-10-03T17:30:25.871Z\"\n  },\n  \"livesports2\": {\n   \"ok\": true,\n   \"msg\": \"목록 4개\",\n   \"checkedAt\": \"2026-10-22T01:50:44.406Z\"\n  }\n }\n}\n"
+   "status_at": "1792807044296",
+   "status_json": "{\n \"items\": {\n  \"gogotv\": {\n   \"origin\": \"https://gogotv2.xyz\",\n   \"domain\": \"alive\",\n   \"domainSince\": \"2026-10-03T17:30:23.048Z\",\n   \"ok\": true,\n   \"msg\": \"목록 24개, 회차 4개, 연재\",\n   \"checkedAt\": \"2026-10-23T01:56:43.570Z\"\n  },\n  \"livesports\": {\n   \"origin\": \"https://njtv-01.com\",\n   \"domain\": \"dead\",\n   \"domainSince\": \"2026-10-03T17:30:25.871Z\"\n  },\n  \"livesports2\": {\n   \"ok\": true,\n   \"msg\": \"목록 5개\",\n   \"checkedAt\": \"2026-10-23T01:56:44.043Z\"\n  }\n }\n}\n"
   }
  },
  "healthStarted": "2026-10-03T17:30:32.662Z",
  "lastRun": {
   "mode": "all",
-  "at": "2026-10-23T01:56:44.044Z"
+  "at": "2026-10-24T01:57:24.856Z"
  },
  "sports": []
 }
