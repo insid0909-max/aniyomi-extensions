@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.31",
+    "version": "0.1.32",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -968,7 +968,7 @@ class DefaultExtension extends MProvider {
         await statusRefresh(this.client);
         // 앱이 돌려준 필터에 param 이 빠져 있을 수 있어 같은 이름의 원래 필터에서 채움
         const base = this.baseFilterList();
-        const list = (filters || []).filter((f) => f && !f._status && !(f.type_name === "HeaderFilter" && /^(?:📡|🩺|❌|🛡)/.test(String(f.name || ""))));
+        const list = (filters || []).filter((f) => f && !f._status && !(f.type_name === "HeaderFilter" && /^(?:📡|🩺|❌|🛡|📝)/.test(String(f.name || ""))));
         for (const f of list) {
             if (!f.param) {
                 const b = base.find((x) => x.name === f.name && x.type_name === f.type_name);
@@ -1116,6 +1116,7 @@ function statusKst(iso) {
 }
 
 async function statusRefresh(client) {
+    await notesRefresh(client);
     let p;
     try {
         p = new SharedPreferences();
@@ -1147,5 +1148,39 @@ function statusFilters(key, base, autoOn) {
     else if (item.ok) lines.push(`🩺 점검: 정상 · ${statusKst(item.checkedAt)}`);
     else lines.push(`❌ 점검: 문제 · ${statusKst(item.checkedAt)} · ${String(item.msg || "").substring(0, 40)}`);
     lines.push("🛡 Cloudflare에 막히면: 웹뷰 버튼으로 한 번 열어 통과");
-    return lines.map((name) => ({ type_name: "HeaderFilter", name, _status: true }));
+    return lines.map((name) => ({ type_name: "HeaderFilter", name, _status: true })).concat(notesFilters(key));
+}
+
+// ---------- 업데이트 내역 (필터 맨 위 📝 줄) ----------
+// 저장소의 changelog.json 을 1시간에 한 번 받아 두었다가 그 소스의 최근 3개를 보여 줌 (필터 화면을 열 때 기다리지 않음)
+const NOTES_URL = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/changelog.json";
+
+async function notesRefresh(client) {
+    let p;
+    try {
+        p = new SharedPreferences();
+    } catch (e) {
+        return;
+    }
+    const last = Number(p.getString("notes_at", "0")) || 0;
+    if (Date.now() - last < 60 * 60000) return;
+    p.setString("notes_at", String(Date.now()));
+    try {
+        const r = await client.get(NOTES_URL, {});
+        const body = String(r.body || "");
+        if (r.statusCode === 200 && body.trim().startsWith("{")) p.setString("notes_json", body);
+    } catch (e) {
+        // 다음 기회에 다시 받음
+    }
+}
+
+function notesFilters(key) {
+    let list = [];
+    try {
+        list = (JSON.parse(new SharedPreferences().getString("notes_json", "") || "{}").items || {})[key] || [];
+    } catch (e) {
+        list = [];
+    }
+    return list.filter((n) => n && n.t).slice(0, 3)
+        .map((n) => ({ type_name: "HeaderFilter", name: `📝 ${String(n.d || "").substring(5).replace("-", ".")} ${n.t}`, _status: true }));
 }

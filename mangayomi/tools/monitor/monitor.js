@@ -112,7 +112,7 @@ async function checkDomains() {
 
         const prev = state.domains[site.name] || {};
         if (found && found !== cur) {
-            const files = replaceOrigin(cur, found);
+            const files = replaceOrigin(cur, found).concat(noteDomainChange(site, found));
             summary.domainChanges.push({ name: site.name, from: cur, to: found, files });
             state.domains[site.name] = { origin: found, status: "alive", since: new Date().toISOString() };
             notify(`🔁 ${site.name} 주소 변경`, `${cur.replace("https://", "")} → ${found.replace("https://", "")}\n확장 기본 주소를 바꿔 다시 배포합니다.`, found, "arrows_counterclockwise");
@@ -125,6 +125,26 @@ async function checkDomains() {
             if (prev.status === "dead") notify(`✅ ${site.name} 다시 열림`, cur.replace("https://", ""), cur, "white_check_mark");
             state.domains[site.name] = { origin: cur, status: verdict, since: prev.status === verdict ? prev.since : new Date().toISOString() };
         }
+    }
+}
+
+/** 주소가 자동으로 바뀌면 업데이트 내역(changelog.json → 업데이트내역.md)에도 적음 (확장 필터 맨 위 📝 줄) */
+function noteDomainChange(site, to) {
+    const file = path.join(ROOT, "changelog.json");
+    if (!fs.existsSync(file)) return [];
+    try {
+        const { render, addNote } = require("./changelog.js");
+        const data = JSON.parse(fs.readFileSync(file, "utf8"));
+        const day = new Date(Date.now() + 9 * 3600000).toISOString().substring(0, 10);
+        for (const key of site.noteKeys || [site.key]) addNote(data, key, day, `기본 주소 ${to.replace("https://", "")} 로 자동 변경`);
+        fs.writeFileSync(file, JSON.stringify(data, null, 1) + "\n");
+        fs.writeFileSync(path.join(ROOT, "업데이트내역.md"), render(data));
+        const rel = ["changelog.json", "업데이트내역.md"];
+        for (const f of rel) if (!summary.changedFiles.includes(f)) summary.changedFiles.push(f);
+        return rel;
+    } catch (e) {
+        console.log("업데이트 내역 적기 실패:", e.message);
+        return [];
     }
 }
 

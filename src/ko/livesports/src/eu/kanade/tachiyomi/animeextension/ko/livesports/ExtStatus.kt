@@ -13,18 +13,24 @@ import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 
 /**
- * 필터 화면 맨 위의 현재 상태: 주소 · 자동 찾기 · 감시 점검 결과.
- * 점검 결과는 저장소 감시 작업이 올리는 status.json 을 백그라운드에서 받아 두었다가 보여 준다
- * (필터 화면을 여는 순간 네트워크를 기다리지 않음).
+ * 필터 화면 맨 위의 현재 상태: 주소 · 자동 찾기 · 감시 점검 결과 · 최근 업데이트 내역(📝).
+ * 점검 결과는 저장소 감시 작업이 올리는 status.json, 업데이트 내역은 저장소의 changelog.json 을
+ * 백그라운드에서 받아 두었다가 보여 준다 (필터 화면을 여는 순간 네트워크를 기다리지 않음).
  */
 internal object ExtStatus {
     private const val URL =
         "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/monitor-state/status.json"
     private const val PREF_JSON = "status_json"
+    private const val NOTES_URL =
+        "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/changelog.json"
+    private const val PREF_NOTES = "notes_json"
     private const val REFRESH_MS = 20 * 60 * 1000L
 
     @Volatile
     private var json: JSONObject? = null
+
+    @Volatile
+    private var notesJson: JSONObject? = null
 
     @Volatile
     private var lastFetchAt = 0L
@@ -43,18 +49,22 @@ internal object ExtStatus {
         if (now - lastFetchAt < REFRESH_MS) return
         lastFetchAt = now
         Thread {
-            try {
-                val client = OkHttpClient.Builder().callTimeout(10, TimeUnit.SECONDS).build()
-                client.newCall(Request.Builder().url(URL).build()).execute().use { res ->
-                    val text = res.body?.string().orEmpty()
-                    if (res.isSuccessful && text.trim().startsWith("{")) {
-                        json = JSONObject(text)
-                        prefs()?.edit()?.putString(PREF_JSON, text)?.apply()
+            val client = OkHttpClient.Builder().callTimeout(10, TimeUnit.SECONDS).build()
+            fun fetch(url: String, pref: String, set: (JSONObject) -> Unit) {
+                try {
+                    client.newCall(Request.Builder().url(url).build()).execute().use { res ->
+                        val text = res.body?.string().orEmpty()
+                        if (res.isSuccessful && text.trim().startsWith("{")) {
+                            set(JSONObject(text))
+                            prefs()?.edit()?.putString(pref, text)?.apply()
+                        }
                     }
+                } catch (e: Throwable) {
+                    // 다음 기회에 다시 받음
                 }
-            } catch (e: Throwable) {
-                // 다음 기회에 다시 받음
             }
+            fetch(URL, PREF_JSON) { json = it }
+            fetch(NOTES_URL, PREF_NOTES) { notesJson = it }
         }.start()
     }
 
@@ -62,6 +72,30 @@ internal object ExtStatus {
         prefs()?.getString(PREF_JSON, null)?.let { JSONObject(it) }?.also { json = it }
     } catch (e: Throwable) {
         null
+    }
+
+    private fun notesData(): JSONObject? = notesJson ?: try {
+        prefs()?.getString(PREF_NOTES, null)?.let { JSONObject(it) }?.also { notesJson = it }
+    } catch (e: Throwable) {
+        null
+    }
+
+    /** 그 소스의 최근 업데이트 내역 3개 ("📝 10.24 기본 주소 … 로 자동 변경") */
+    fun notes(key: String): List<String> {
+        refresh()
+        val arr = notesData()?.optJSONObject("items")?.optJSONArray(key) ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            val text = o.optString("t").trim()
+            if (text.isEmpty()) null else "📝 ${o.optString("d").drop(5).replace('-', '.')} $text"
+        }.take(3)
+    }
+
+    /** 상태 줄이 없는 소스: 업데이트 내역만 필터 맨 앞에 (내역이 없으면 그대로) */
+    fun withNotes(key: String, base: AnimeFilterList): AnimeFilterList {
+        val n = notes(key)
+        if (n.isEmpty()) return base
+        return AnimeFilterList(n.map { AnimeFilter.Header(it) } + AnimeFilter.Separator() + base.list)
     }
 
     private fun kst(iso: String): String = try {
@@ -94,6 +128,7 @@ internal object ExtStatus {
             },
         )
         out.add("🛡 Cloudflare에 막히면: 메뉴 → WebView에서 열기로 한 번 통과")
+        out.addAll(notes(key))
         return out
     }
 

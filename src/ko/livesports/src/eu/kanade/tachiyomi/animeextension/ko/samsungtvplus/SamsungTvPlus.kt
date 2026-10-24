@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.animeextension.ko.samsungtvplus
 
+import eu.kanade.tachiyomi.animeextension.ko.livesports.ExtStatus
 import eu.kanade.tachiyomi.animeextension.ko.livesports.LiveQuality
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
 import eu.kanade.tachiyomi.animesource.model.AnimeFilter
@@ -232,7 +233,10 @@ class SamsungTvPlus(private val fixedGroup: String? = null) : AnimeHttpSource(),
     private class GroupFilter(groups: Array<String>) : AnimeFilter.Select<String>("분류", groups)
     private class TabRuleFilter : AnimeFilter.Select<String>("인기/최신 탭 규칙", TAB_RULES)
 
-    override fun getFilterList(): AnimeFilterList {
+    // 맨 위에 최근 업데이트 내역(📝)
+    override fun getFilterList(): AnimeFilterList = ExtStatus.withNotes("samsungtvplus", baseFilters())
+
+    private fun baseFilters(): AnimeFilterList {
         if (fixedGroup != null) return AnimeFilterList(AnimeFilter.Header("검색어는 채널 이름이나 지금 방송 중인 프로그램 이름 ($fixedGroup 채널 안에서)"))
         // 화면을 그릴 때 인터넷을 쓰지 않도록, 받아 둔 목록이 있으면 그 분류, 없으면 기본 분류
         val known = cache.map { it.group }.distinct().ifEmpty { DEFAULT_GROUPS }

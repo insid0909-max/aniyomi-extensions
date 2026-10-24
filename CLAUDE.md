@@ -8,6 +8,8 @@
 - 망가요미 주소 바뀜 대응(2026-10-21, gogotv 0.1.29·tvchak 0.1.31·anilife 0.1.7 + 웹툰 저장소 9개): 파일마다 ADDR_HOST·ADDR_MARK·ADDR_UA·ADDR_PREF 설정 + 같은 공통 코드(addrAdopt·addrGuard). 검색창에 사이트 주소(https:// 없어도)를 붙여 넣으면 진짜 사이트 확인 후 직접 넣은 주소로 바로 적용(주소만이면 인기 목록). 인기·최신 첫 쪽이 오류이거나 비었는데 지금 주소 첫 화면에 ADDR_MARK 가 없으면 discover → 다시 불러옴, 못 찾으면 "주소가 바뀐 것 같아요…붙여 넣어 주세요". 웹뷰 방문 감지는 망가요미에서 쿠키를 못 읽어 없음.
 - 애니요미(Kotlin) 주소 규칙도 같음(TVroom 8735·LiveSports 8762, 2026-10-20): `DomainGuard.pick(prefs, KEY, DEFAULT, 자동찾기켜짐, valid)` 로 baseUrl, 자동으로 찾은 주소는 `DomainGuard.saveAuto` 로 KEY_auto 에 저장(직접 넣은 칸에 쓰지 않음). 처음 한 번 예전 한 칸 값을 KEY_auto 로 옮김(KEY_split 표시). 도메인 칸 기본값은 "". 고고티비·티비착·애니라이프·실시간스포츠 적용, 후후티비는 원래 칸이 나뉘어 있어 그대로, 애니24·실시간스포츠2 는 번호 없는 주소라 그대로.
 
+- 업데이트 내역(2026-10-24, TVroom 8740·LiveSports 8766): 저장소 맨 위 `changelog.json`(names + items[키] = [{d:"yyyy-MM-dd", t:"짧은 설명"}], 최신이 앞) → 확장 필터 맨 위 📝 줄에 그 소스의 최근 3개(Kotlin `ExtStatus.notes/withNotes`, JS `notesRefresh`·`notesFilters`, 1시간마다 master raw 에서 받음). `업데이트내역.md` 는 `node mangayomi/tools/monitor/changelog.js changelog.json 업데이트내역.md` 로 만듦. **확장을 고칠 때마다 changelog.json 에 한 줄 넣고 md 다시 만들기.** 감시 작업이 주소를 자동으로 바꾸면 내역도 자동으로 적음(monitor.js noteDomainChange). 키: gogotv·tvchak·hoohootv·anilife·ohli24·livesports·livesports2·samsungtvplus (분류별 소스는 기본 소스 키). 상태 줄 거르기 글자에 📝 포함.
+
 ## 새 확장앱(애니·드라마·스포츠 등) 체크리스트 — 요청 없어도 기본 적용
 
 사용자가 "빠진 기능"을 매번 말하지 않도록, 새 소스는 기존 앱(TVchak·GogoTV·HoohooTV)과 같은 기능을 처음부터 넣는다.
