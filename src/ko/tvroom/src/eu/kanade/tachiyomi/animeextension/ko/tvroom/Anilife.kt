@@ -550,7 +550,10 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
     override fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()
 
     // ================= 필터 =================
-    override fun getFilterList(): AnimeFilterList {
+    // 맨 위에 최근 업데이트 내역(📝)
+    override fun getFilterList(): AnimeFilterList = ExtStatus.withNotes("anilife", baseFilters())
+
+    private fun baseFilters(): AnimeFilterList {
         fun text(i: IntArray) = listOfNotNull(
             SCOPES[i[0]].first,
             STATUSES[i[1]].takeIf { i[1] > 0 },

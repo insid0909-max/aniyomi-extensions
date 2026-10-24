@@ -426,7 +426,10 @@ class Ohli24 : AnimeHttpSource(), ConfigurableAnimeSource {
     override fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()
 
     // ================= 필터 =================
-    override fun getFilterList(): AnimeFilterList {
+    // 맨 위에 최근 업데이트 내역(📝)
+    override fun getFilterList(): AnimeFilterList = ExtStatus.withNotes("ohli24", baseFilters())
+
+    private fun baseFilters(): AnimeFilterList {
         fun text(i: IntArray) = listOfNotNull(
             KINDS[i[0]].first,
             DAYS[i[1]].takeIf { i[0] == 0 && i[1] > 0 },
