@@ -1,12 +1,12 @@
 {
  "items": {
   "gogotv": {
-   "origin": "https://gogotv2.xyz",
+   "origin": "https://gogotv3.xyz",
    "domain": "alive",
-   "domainSince": "2026-10-03T17:30:23.048Z",
+   "domainSince": "2026-10-24T01:57:21.573Z",
    "ok": true,
-   "msg": "목록 24개, 회차 4개, 연재",
-   "checkedAt": "2026-10-23T01:56:43.570Z"
+   "msg": "목록 24개, 회차 5개, 연재",
+   "checkedAt": "2026-10-24T01:57:24.294Z"
   },
   "livesports": {
    "origin": "https://njtv-01.com",
@@ -16,7 +16,7 @@
   "livesports2": {
    "ok": true,
    "msg": "목록 5개",
-   "checkedAt": "2026-10-23T01:56:44.043Z"
+   "checkedAt": "2026-10-24T01:57:24.856Z"
   }
  }
 }

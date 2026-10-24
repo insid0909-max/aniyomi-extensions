@@ -1,5 +1,20 @@
 {
- "changedFiles": [],
- "domainChanges": [],
+ "changedFiles": [
+  "mangayomi/anime_index.json",
+  "src/ko/tvroom/src/eu/kanade/tachiyomi/animeextension/ko/tvroom/GogoTV.kt",
+  "mangayomi/javascript/anime/src/ko/gogotv.js"
+ ],
+ "domainChanges": [
+  {
+   "name": "고고티비",
+   "from": "https://gogotv2.xyz",
+   "to": "https://gogotv3.xyz",
+   "files": [
+    "src/ko/tvroom/src/eu/kanade/tachiyomi/animeextension/ko/tvroom/GogoTV.kt",
+    "mangayomi/javascript/anime/src/ko/gogotv.js",
+    "mangayomi/anime_index.json"
+   ]
+  }
+ ],
  "notes": []
 }
