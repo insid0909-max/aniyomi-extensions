@@ -2,7 +2,7 @@
   {
     "name": "고고티비",
     "id": 310282354,
-    "baseUrl": "https://gogotv2.xyz",
+    "baseUrl": "https://gogotv3.xyz",
     "lang": "ko",
     "typeSource": "single",
     "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
@@ -12,7 +12,7 @@
     "hasCloudflare": true,
     "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/mangayomi/javascript/anime/src/ko/gogotv.js",
     "apiUrl": "",
-    "version": "0.1.30",
+    "version": "0.1.31",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,

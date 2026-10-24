@@ -1,21 +1,21 @@
 const mangayomiSources = [{
     "name": "고고티비",
     "lang": "ko",
-    "baseUrl": "https://gogotv2.xyz",
+    "baseUrl": "https://gogotv3.xyz",
     "apiUrl": "",
     "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
     "typeSource": "single",
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.30",
+    "version": "0.1.31",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
 }];
 
 // Aniyomi GogoTV.kt(고고티비)를 망가요미용으로 옮긴 소스
-const DEFAULT_BASE_URL = "https://gogotv2.xyz";
+const DEFAULT_BASE_URL = "https://gogotv3.xyz";
 const DOMAIN_RE = /^https:\/\/gogotv\d*\.xyz$/;
 // 번호 없는 고고티비 주소 (번호 주소가 모두 안 될 때 마지막으로)
 const PLAIN_BASE = "https://gogotv.xyz";
@@ -905,7 +905,7 @@ class DefaultExtension extends MProvider {
             key: "gogotv_domain",
             editTextPreference: {
                 title: "고고티비 주소 직접 지정 (선택)",
-                summary: "비워 두면 자동으로 찾은 주소나 기본 주소(https://gogotv2.xyz)를 사용합니다.",
+                summary: "비워 두면 자동으로 찾은 주소나 기본 주소(https://gogotv3.xyz)를 사용합니다.",
                 value: "",
                 dialogTitle: "고고티비 주소",
                 dialogMessage: "gogotv숫자.xyz 또는 gogotv.xyz 형식의 HTTPS 주소만 사용됩니다.",

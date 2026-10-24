@@ -664,7 +664,7 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
                         true
                     }
                     else -> {
-                        Toast.makeText(ctx, "올바른 주소 형식이 아닙니다 (예: https://gogotv2.xyz)", Toast.LENGTH_LONG).show()
+                        Toast.makeText(ctx, "올바른 주소 형식이 아닙니다 (예: https://gogotv3.xyz)", Toast.LENGTH_LONG).show()
                         false
                     }
                 }
@@ -698,7 +698,7 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
         private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
         private const val PREF_OTHER_SERVERS = "pref_other_servers"
-        private const val DEFAULT_BASE_URL = "https://gogotv2.xyz"
+        private const val DEFAULT_BASE_URL = "https://gogotv3.xyz"
         private const val SITE_MARKER = "gogoTV"
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
