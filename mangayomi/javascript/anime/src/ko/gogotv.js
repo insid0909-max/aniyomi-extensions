@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.32",
+    "version": "0.1.33",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -423,6 +423,8 @@ class DefaultExtension extends MProvider {
     // 접속이 안 되면(오류·5xx·451) gogotv 번호 주소를 찾아 바꾼 뒤 다시 요청 (도메인 자동 찾기)
     async getDoc(path) {
         const base = this.getBaseUrl();
+        // 예전 주소가 통째로 저장된 작품(서재 등)은 지금 주소로 바꿔서 엶 (끊긴 옛 주소로 가면 회차를 못 불러옴)
+        path = String(path || "").replace(/^https?:\/\/(?:www\.)?gogotv\d*\.xyz(?=\/)/i, "");
         const url = path.startsWith("http") ? path : base + path;
         const ours = url.startsWith(base);
         await siteWait();
