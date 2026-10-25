@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.33",
+    "version": "0.1.34",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -599,8 +599,11 @@ class DefaultExtension extends MProvider {
         const links = [];
         const rawLabels = []; // 원래 회차 이름 (방영 중 판단용)
         const seen = {};
-        for (const li of doc.select(".view-floor1-rt-cont li")) {
-            const a = li.selectFirst("p.left a[href]") || li.selectFirst("a[href]");
+        // 휴대폰 화면은 .view-floor1-rt-cont, PC 화면(앱이 User-Agent 를 안 넣을 때 사이트가 줌)은 "재생목록" .view-playlist
+        for (const li of doc.select(".view-floor1-rt-cont li").concat(doc.select(".view-playlist li"))) {
+            // selectFirst 는 비어도 참으로 보여서 select().length 로 고름 (PC 화면엔 p.left 가 없음)
+            const as = li.select("p.left a[href]").length ? li.select("p.left a[href]") : li.select("a[href]");
+            const a = as.length ? as[0] : null;
             if (!a) continue;
             const href = this.resolveUrl(`${base}/`, a.attr("href"));
             if (!href || seen[href]) continue;
