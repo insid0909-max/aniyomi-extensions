@@ -193,7 +193,8 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     private fun hostNumber(host: String): Int =
         NUMBER_REGEX.find(host)?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
-    // tvchak 번호 주소를 현재 번호 -5 ~ +30 범위에서 동시에 열어 보고, 실제 티비착인 가장 큰 번호를 고른다
+    // tvchak 번호 주소를 현재 번호 -5 ~ +30 범위에서 동시에 열어 보고, 실제 티비착인 가장 큰 번호를 고른다.
+    // 번호 주소가 모두 안 열리면 비상 주소 tvchak.life (그 화면에 적힌 번호 주소, 아니면 비상 주소 자체가 진짜 사이트일 때 그대로)
     private fun discoverDomain(currentHost: String): String? = synchronized(DISCOVER_LOCK) {
         val now = System.currentTimeMillis()
         if (now - lastDiscover < 60_000) return null
@@ -224,10 +225,35 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
                         }
                     }
                 }
-            futures.mapNotNull { it.get() }.maxByOrNull { hostNumber(it) }?.takeIf { it != currentHost }
+            val best = futures.mapNotNull { it.get() }.maxByOrNull { hostNumber(it) }
+            if (best != null) return best.takeIf { it != currentHost }
+            emergency(plain, currentHost)
         } finally {
             pool.shutdown()
         }
+    }
+
+    /**
+     * 비상 주소(tvchak.life): 번호 주소로 넘겨 주면 그 주소, 화면에 번호 주소가 적혀 있으면 그 주소(열리는지 확인),
+     * 비상 주소 화면이 진짜 티비착(작품 링크 /vod/detail/ 있음)이면 비상 주소 그대로. 해외에서는 OTT 안내 글만 보여 줘서 쓰지 않음
+     */
+    private fun emergency(plain: OkHttpClient, currentHost: String): String? {
+        fun page(host: String): Pair<String, String>? = try {
+            val r = Request.Builder().url("https://$host/").header("User-Agent", USER_AGENT).build()
+            plain.newCall(r).execute().use { res ->
+                if (res.code == 200) res.request.url.host to res.peekBody(500_000).string() else null
+            }
+        } catch (e: Exception) {
+            null
+        }
+        val (finalHost, body) = page(EMERGENCY_HOST) ?: return null
+        fun real(text: String) = text.contains(SITE_MARKER) && text.contains("/vod/detail/")
+        if (finalHost != EMERGENCY_HOST && HOST_REGEX.matches(finalHost) && real(body)) return finalHost.takeIf { it != currentHost }
+        NUMBER_HOST_REGEX.findAll(body).map { it.value.lowercase() }.distinct()
+            .filter { it != currentHost }.sortedByDescending { hostNumber(it) }
+            .firstOrNull { h -> page(h)?.let { (fh, b) -> fh == h && real(b) } == true }
+            ?.let { return it }
+        return EMERGENCY_HOST.takeIf { real(body) && it != currentHost }
     }
 
     // ================= 목록 =================
@@ -733,7 +759,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
             title = "티비착 주소 직접 지정 (선택)"
             summary = summaryOf(baseUrl)
             dialogTitle = "기본값: $DEFAULT_BASE_URL"
-            dialogMessage = "tvchak숫자.com 형식의 HTTPS 주소만 허용됩니다."
+            dialogMessage = "tvchak숫자.com 또는 비상 주소 tvchak.life 형식의 HTTPS 주소만 허용됩니다."
             setDefaultValue("")
             setOnPreferenceChangeListener { _, newValue ->
                 val input = (newValue as String).trim().trimEnd('/')
@@ -758,7 +784,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         SwitchPreferenceCompat(ctx).apply {
             key = PREF_AUTO_DOMAIN
             title = "도메인 자동 찾기"
-            summary = "접속이 안 되면 tvchak 번호 주소(현재 번호 -5 ~ +30)를 찾아 자동 변경합니다."
+            summary = "접속이 안 되면 tvchak 번호 주소(현재 번호 -5 ~ +30)를 찾아 자동 변경합니다. 모두 안 되면 비상 주소 tvchak.life 로."
             setDefaultValue(true)
         }.also(screen::addPreference)
         SwitchPreferenceCompat(ctx).apply {
@@ -791,9 +817,13 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         private val CHALLENGE_LOCK = Any()
         private const val PAGE_MARKER = "maccms"
 
-        private val DOMAIN_REGEX = Regex("""^https://tvchak\d+\.com$""")
-        private val HOST_REGEX = Regex("""^tvchak\d+\.com$""")
+        private val DOMAIN_REGEX = Regex("""^https://(?:tvchak\d+\.com|tvchak\.life)$""")
+        private val HOST_REGEX = Regex("""^(?:tvchak\d+\.com|tvchak\.life)$""")
         private val NUMBER_REGEX = Regex("""tvchak(\d+)\.com""")
+        private val NUMBER_HOST_REGEX = Regex("""tvchak\d+\.com""", RegexOption.IGNORE_CASE)
+
+        /** 비상 주소 (사용자가 알려 줌, 2026-10-28) — 번호 주소가 모두 안 될 때 마지막으로 */
+        private const val EMERGENCY_HOST = "tvchak.life"
         private val PATH_REGEX = Regex("""^https?://[^/]+(/.*)$""")
         private val PAGE_REGEX = Regex("""/page/(\d+)""")
         private val BG_REGEX = Regex("""url\(['"]?([^'")]+)""")
@@ -802,7 +832,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val AIR_TTL_MS = 6 * 3_600_000L
         private const val ENDED_TTL_MS = 7 * 86_400_000L
         private const val RATE_GAP_MS = 350L
-        private val URL_ID_REGEX = Regex("""^https?://tvchak\d+\.com(?:/.*?)?/vod/(?:detail|play)/id/(\d+)""")
+        private val URL_ID_REGEX = Regex("""^https?://(?:tvchak\d+\.com|tvchak\.life)(?:/.*?)?/vod/(?:detail|play)/id/(\d+)""")
         private val ID_REGEX = Regex("""/id/(\d+)""")
         private val MOVIE_LIST_REGEX = Regex("""/vod/(?:show|type)/id/1[/.]""")
         private val YEAR_REGEX = Regex("""^(?:19|20)\d{2}$""")

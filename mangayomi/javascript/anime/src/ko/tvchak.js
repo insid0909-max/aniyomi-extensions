@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.32",
+    "version": "0.1.33",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -16,7 +16,9 @@ const mangayomiSources = [{
 
 // Aniyomi TVchak.kt(티비착)를 망가요미용으로 옮긴 소스 - MacCMS 사이트, 재생 페이지의 player_aaaa 에 영상 주소가 들어 있음
 const DEFAULT_BASE_URL = "https://tvchak208.com";
-const DOMAIN_RE = /^https:\/\/tvchak\d+\.com$/;
+const DOMAIN_RE = /^https:\/\/(?:tvchak\d+\.com|tvchak\.life)$/;
+// 비상 주소 (사용자가 알려 줌, 2026-10-28) — 번호 주소가 모두 안 될 때 마지막으로
+const EMERGENCY_BASE = "https://tvchak.life";
 const HOST_NUM = /tvchak(\d+)\.com/;
 const SITE_MARKER = "티비착";
 const PLAYER_REFERER = "https://ckp2.wiselife.blog/";
@@ -277,7 +279,7 @@ function hlsHint(list) {
 }
 
 // 주소 바뀜 대응 설정: 사이트 주소 모양, 진짜 사이트 표시 글자, User-Agent, 직접 넣은 주소 설정 키
-const ADDR_HOST = /^tvchak\d+\.com$/;
+const ADDR_HOST = /^(?:tvchak\d+\.com|tvchak\.life)$/;
 const ADDR_MARK = SITE_MARKER;
 const ADDR_UA = UA;
 const ADDR_PREF = "tvchak_domain";
@@ -375,7 +377,7 @@ class DefaultExtension extends MProvider {
         }
         // 자동으로 찾은 주소가 확장 업데이트로 바뀐 기본 주소보다 옛 번호면 기본 주소를 씀
         const n = (u) => parseInt((/(\d+)(?!.*\d)/.exec(String(u).replace(/\.[a-z]{2,6}$/i, "")) || [0, "0"])[1], 10) || 0;
-        return DOMAIN_RE.test(auto) && n(auto) >= n(DEFAULT_BASE_URL) ? auto : DEFAULT_BASE_URL;
+        return DOMAIN_RE.test(auto) && (n(auto) >= n(DEFAULT_BASE_URL) || n(auto) === 0) ? auto : DEFAULT_BASE_URL;
     }
 
     autoOn() {
@@ -512,8 +514,39 @@ class DefaultExtension extends MProvider {
             }
         }));
         const ok = hits.filter((x) => x).sort((a, b) => num(b) - num(a));
-        if (ok[0]) p.setString("tvchak_auto_domain", ok[0]);
-        return ok[0] || null;
+        let found = ok[0] || null;
+        // 번호 주소가 모두 안 열리면 비상 주소 tvchak.life: 화면에 적힌 번호 주소, 아니면 비상 주소가 진짜 사이트(작품 링크 있음)일 때 그대로
+        // (해외에서는 OTT 안내 글만 보여 줘서 쓰지 않음)
+        if (!found) {
+            const page = async (c) => {
+                try {
+                    const r = await this.client.get(c + "/", { "User-Agent": UA });
+                    const body = String(r.body || "");
+                    return r.statusCode === 200 && body.includes(SITE_MARKER) && body.includes("/vod/detail/") ? body : null;
+                } catch (e) {
+                    return null;
+                }
+            };
+            if (await page(current)) return null;
+            let em = "";
+            try {
+                const r = await this.client.get(EMERGENCY_BASE + "/", { "User-Agent": UA });
+                em = r.statusCode === 200 ? String(r.body || "") : "";
+            } catch (e) {
+                em = "";
+            }
+            const listed = [...new Set((em.match(/tvchak\d+\.com/gi) || []).map((x) => "https://" + x.toLowerCase()))]
+                .filter((c) => c !== current).sort((a, b) => num(b) - num(a));
+            for (const c of listed) {
+                if (await page(c)) {
+                    found = c;
+                    break;
+                }
+            }
+            if (!found && em.includes(SITE_MARKER) && em.includes("/vod/detail/") && EMERGENCY_BASE !== current) found = EMERGENCY_BASE;
+        }
+        if (found) p.setString("tvchak_auto_domain", found);
+        return found;
     }
 
     // ================= 목록 =================
@@ -548,7 +581,7 @@ class DefaultExtension extends MProvider {
 
     async searchBase(query, page, filters) {
         // 사이트 작품 주소를 붙여 넣으면 그 작품을 바로 보여 줌 (주소 번호가 달라도 됨)
-        const byUrl = /^https?:\/\/tvchak\d+\.com(?:\/.*?)?\/vod\/(?:detail|play)\/id\/(\d+)/.exec((query || "").trim());
+        const byUrl = /^https?:\/\/(?:tvchak\d+\.com|tvchak\.life)(?:\/.*?)?\/vod\/(?:detail|play)\/id\/(\d+)/.exec((query || "").trim());
         if (byUrl) {
             const link = `/index.php/vod/detail/id/${byUrl[1]}.html`;
             const { doc, base } = await this.getDoc(link);
@@ -988,7 +1021,7 @@ class DefaultExtension extends MProvider {
                 summary: "비워 두면 자동으로 찾은 주소나 기본 주소(https://tvchak208.com)를 사용합니다.",
                 value: "",
                 dialogTitle: "티비착 주소",
-                dialogMessage: "tvchak숫자.com 형식의 HTTPS 주소만 사용됩니다.",
+                dialogMessage: "tvchak숫자.com 또는 비상 주소 tvchak.life 형식의 HTTPS 주소만 사용됩니다.",
             },
         }, {
             key: "tvchak_auto_on",
