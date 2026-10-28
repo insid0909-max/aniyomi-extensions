@@ -288,8 +288,9 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             .build()
         // 주소 안내 사이트에 적힌 후후티비 주소들 (번호 큰 것 먼저)
         // 안내 사이트 첫 화면은 이제 소개 글뿐이고, /home 이 "최신 주소 안내" 글로 넘겨 줌 (한국에서만) → 둘 다 + 옛 주소가 넘겨 준 글
+        // + 사이트가 알려 주는 텔레그래프 "후후티비 최신 주소 안내" 글 (어디서나 열리고 바뀐 날 갱신됨, 2026-10-28 al.hoohootv463)
         val announced = (
-            listOf(PORTAL_URL + "home", PORTAL_URL).joinToString("\n") { u ->
+            listOf(PORTAL_URL + "home", PORTAL_URL, GUIDE_URL).joinToString("\n") { u ->
                 runCatching {
                     val r = Request.Builder().url(u).header("User-Agent", USER_AGENT).build()
                     plain.newCall(r).execute().use { res -> res.peekBody(500_000).string() }
@@ -870,7 +871,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         androidx.preference.SwitchPreferenceCompat(ctx).apply {
             key = PREF_AUTO_DOMAIN
             title = "도메인 자동 찾기$same"
-            summary = "접속이 안 되면 바로, 접속돼도 10분마다 주소 안내 사이트(hoohootv1.com)에 적힌 새 주소를 먼저 확인합니다 (앞 두 글자가 바뀌어도). 못 찾으면 다음 글자·번호 주소를 짐작해 찾습니다."
+            summary = "접속이 안 되면 바로, 접속돼도 10분마다 주소 안내 사이트(hoohootv1.com·텔레그래프 최신 주소 안내 글)에 적힌 새 주소를 먼저 확인합니다 (앞 두 글자가 바뀌어도). 못 찾으면 다음 글자·번호 주소를 짐작해 찾습니다."
             setDefaultValue(true)
             setOnPreferenceChangeListener { _, v ->
                 share(PREF_AUTO_DOMAIN, v)
@@ -900,11 +901,12 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         private const val PREF_AUTO_FOUND = "pref_auto_found_domain"
         private const val PREF_MANUAL_DEAD = "pref_manual_dead_host"
         private const val PORTAL_URL = "https://hoohootv1.com/"
+        private const val GUIDE_URL = "https://telegra.ph/%ED%9B%84%ED%9B%84%ED%8B%B0%EB%B9%84-%EC%B5%9C%EC%8B%A0-%EC%A3%BC%EC%86%8C-09-03"
         private val ANNOUNCED_REGEX = Regex("""[a-z]{2}\.hoohootv\d+\.[a-z]{2,6}""", RegexOption.IGNORE_CASE)
         private const val SITE_MARKER = "HOOHOO TV"
         private val DISCOVER_LOCK = Any()
         private val SUBDOMAIN_REGEX = Regex("""^([a-z])([a-z])\.hoohootv(\d+)\.([a-z]{2,6})$""")
-        private const val DEFAULT_BASE_URL = "https://au.hoohootv462.xyz"
+        private const val DEFAULT_BASE_URL = "https://al.hoohootv463.xyz"
         private const val RATE_GAP_MS = 350L
         private const val POSTER_RETRY_MS = 800L
         private const val USER_AGENT =
