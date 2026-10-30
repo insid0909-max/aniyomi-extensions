@@ -16,28 +16,10 @@
     30
    ],
    "key": "gogotv"
-  },
-  {
-   "name": "실시간스포츠",
-   "currentFrom": {
-    "file": "src/ko/livesports/src/eu/kanade/tachiyomi/animeextension/ko/livesports/LiveSports.kt",
-    "regex": "DEFAULT_BASE_URL = \"(https://njtv-\\d+\\.com)\""
-   },
-   "pattern": "^https://njtv-(\\d+)\\.com$",
-   "format": "https://njtv-{n}.com",
-   "pad": 2,
-   "probe": "/",
-   "marker": "gnuboard|g5_url|livetv",
-   "range": [
-    -2,
-    60
-   ],
-   "key": "livesports"
   }
  ],
  "replaceIn": [
   "src/ko/tvroom/src/eu/kanade/tachiyomi/animeextension/ko/tvroom/GogoTV.kt",
-  "src/ko/livesports/src/eu/kanade/tachiyomi/animeextension/ko/livesports/LiveSports.kt",
   "mangayomi/javascript/anime/src/ko/gogotv.js",
   "mangayomi/anime_index.json"
  ],
