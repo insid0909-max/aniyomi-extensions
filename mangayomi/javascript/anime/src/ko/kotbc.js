@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/kotbc.js"
@@ -668,12 +668,12 @@ class DefaultExtension extends MProvider {
         return this.listPage(idx, page);
     }
 
-    /** 검색 (검색 주소는 아직 미확인이라 흔한 모양을 차례로 시도, 된 모양은 기억) */
+    /** 검색: 사이트 검색은 /?keyword=검색어&page=N (props.comics, 2026-10-30 확인). 안 되면 다른 흔한 모양도 차례로 시도, 된 모양은 기억 */
     async searchSite(query, page) {
         const q = encodeURIComponent(query);
         const pg = page > 1 ? `&page=${page}` : "";
-        const forms = [`/search?q=${q}${pg}`, `/search?keyword=${q}${pg}`, `/?q=${q}${pg}`, `/?search=${q}${pg}`, `/api/search?q=${q}`];
-        const savedForm = Number(this.saved("kotbc_search_form"));
+        const forms = [`/?keyword=${q}${pg}`, `/search?q=${q}${pg}`, `/search?keyword=${q}${pg}`, `/?q=${q}${pg}`, `/?search=${q}${pg}`, `/api/search?q=${q}`];
+        const savedForm = Number(this.saved("kotbc_search_form2"));
         const order = forms.map((_, i) => i).sort((a, b) => (a === savedForm ? -1 : b === savedForm ? 1 : a - b));
         const words = query.replace(/\s+/g, "").toLowerCase();
         const fails = [];
@@ -707,7 +707,7 @@ class DefaultExtension extends MProvider {
             const hits = got.items.filter((o) => String(o.title || "").replace(/\s+/g, "").toLowerCase().includes(words));
             if (hits.length) {
                 try {
-                    new SharedPreferences().setString("kotbc_search_form", String(i));
+                    new SharedPreferences().setString("kotbc_search_form2", String(i));
                 } catch (e) {
                     // 그대로
                 }
