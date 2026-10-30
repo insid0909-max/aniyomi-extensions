@@ -52,6 +52,13 @@
    "key": "gogotv"
   },
   {
+   "name": "실시간스포츠1 (망가요미)",
+   "file": "mangayomi/javascript/anime/src/ko/livesports1.js",
+   "depth": "list",
+   "allowEmpty": true,
+   "key": "livesports1"
+  },
+  {
    "name": "실시간스포츠2 (망가요미)",
    "file": "mangayomi/javascript/anime/src/ko/livesports2.js",
    "depth": "list",
