@@ -8,13 +8,13 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/kotbc.js"
 }];
 
-// 코티비씨(k05.kotbc2.com) 영화·드라마·예능시사·해외드라마 (2026-10-30, 사용자가 보내 준 화면 글로 구조 확인 — 해외에서는 사이트가 막혀 직접 못 봄)
+// 코티비씨(k05.kotbc2.com, 같은 사이트 코무비 k05.kormovie.com) 영화·드라마·예능시사·해외드라마 (2026-10-30, 사용자가 보내 준 화면 글로 구조 확인 — 해외에서는 사이트가 막혀 직접 못 봄)
 // - Laravel + Inertia 사이트: 화면 안 <script data-page="app" type="application/json"> 에 화면 데이터가 통째로 있음
 //   첫 화면 props.sections[{label, href, items[작품]}], 작품 {title, slug, thumbnail(/storage/…), category, broadcaster, cast_names,
 //   country, air_schedule, runtime, episode_total, published_at, completed_at, card_meta{kind(movie|series),left,right},
@@ -24,7 +24,8 @@ const mangayomiSources = [{
 // - 분류 /영화 · /드라마 · /예능시사 · /해외드라마 (?page=N), 필터는 첫 화면 주소 /?sort=…&types[0]=…&genres[0]=…&years[0]=… (props.comics)
 // - 영상 플레이어 nnmo0oi1.com/video/{ID} = 애니24 와 같은 종류 → 애니24 에서 재생 확인된 방법(POST getVideo → securedLink) 그대로
 const DEFAULT_BASE_URL = "https://k05.kotbc2.com";
-const DOMAIN_RE = /^https:\/\/(?:[a-z]\d+\.)?kotbc\d*\.[a-z]{2,6}$/;
+// 같은 사이트의 두 이름: 코티비씨(kotbc2.com) · 코무비(kormovie.com) — 화면·작품·주소 모양이 같음 (2026-10-30 사용자 확인)
+const DOMAIN_RE = /^https:\/\/(?:[a-z]\d+\.)?(?:kotbc\d*|kormovie)\.[a-z]{2,6}$/;
 const LABEL = "코티비씨";
 const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
     "Chrome/124.0.0.0 Mobile Safari/537.36";
@@ -416,8 +417,9 @@ function hlsHint(list) {
 }
 
 // 주소 바뀜 대응 설정: 사이트 주소 모양, 진짜 사이트 표시 글자, User-Agent, 직접 넣은 주소 설정 키
-const ADDR_HOST = /^(?:[a-z]\d+\.)?kotbc\d*\.[a-z]{2,6}$/;
-const ADDR_MARK = "코티비씨";
+const ADDR_HOST = /^(?:[a-z]\d+\.)?(?:kotbc\d*|kormovie)\.[a-z]{2,6}$/;
+// 두 이름 모두 화면 데이터에 있는 글자 (자매 사이트 목록)
+const ADDR_MARK = "sister_sites";
 const ADDR_UA = UA;
 const ADDR_PREF = "kotbc_domain";
 
@@ -510,9 +512,11 @@ class DefaultExtension extends MProvider {
     getBaseUrl() {
         const manual = this.pref("kotbc_domain").replace(/\/+$/, "");
         const auto = this.saved("kotbc_auto_domain");
-        const num = (u) => Number((/(\d+)\.kotbc(\d*)/.exec(u) || [0, 0, 0]).slice(1).reverse().join("")) || 0;
+        const num = (u) => Number((/(\d+)\.(?:kotbc|kormovie)(\d*)/.exec(u) || [0, 0, 0]).slice(1).reverse().join("")) || 0;
         if (DOMAIN_RE.test(manual)) {
-            if (this.autoOn() && DOMAIN_RE.test(auto) && auto !== manual && num(auto) > num(manual)) {
+            // 번호 비교는 같은 이름끼리만 (kotbc2 와 kormovie 는 번호 체계가 달라 비교하지 않음)
+            const brand = (u) => (/kormovie/.test(u) ? "m" : "t");
+            if (this.autoOn() && DOMAIN_RE.test(auto) && auto !== manual && brand(auto) === brand(manual) && num(auto) > num(manual)) {
                 try {
                     new SharedPreferences().setString("kotbc_domain", auto);
                 } catch (e) {
@@ -543,7 +547,7 @@ class DefaultExtension extends MProvider {
         const tries = [];
         try {
             const r = await this.client.get(GUIDE_URL, { "User-Agent": UA });
-            const re = /https?:\/\/((?:[a-z]\d+\.)?kotbc\d*\.[a-z]{2,6})/gi;
+            const re = /https?:\/\/((?:[a-z]\d+\.)?(?:kotbc\d*|kormovie)\.[a-z]{2,6})/gi;
             let m;
             while ((m = re.exec(String(r.body || "")))) tries.push("https://" + m[1].toLowerCase());
         } catch (e) {
@@ -559,6 +563,11 @@ class DefaultExtension extends MProvider {
                 tries.push(`https://${m[1] ? m[1] + m[2] + "." : ""}kotbc${main + d}.${m[4]}`);
                 if (m[1]) tries.push(`https://${m[1]}${pad(sub + d, m[2].length)}.kotbc${main + d}.${m[4]}`);
             }
+        }
+        // 다른 이름(코무비 kormovie.com)의 같은 번호·다음 번호
+        const k = /^https:\/\/([a-z])(\d+)\.(?:kotbc\d*|kormovie)\./.exec(current);
+        if (k) {
+            for (let d = 0; d <= 4; d++) tries.push(`https://${k[1]}${String(Number(k[2]) + d).padStart(k[2].length, "0")}.kormovie.com`);
         }
         const seen = {};
         for (const t of tries) {
@@ -678,7 +687,7 @@ class DefaultExtension extends MProvider {
             if (!path || !this.pathOf(adopted + path[1])) return this.getPopular(1);
         }
         // 작품·회차 주소를 붙여 넣으면 그 작품을 바로 열기
-        if (/kotbc\d*\.[a-z]{2,6}\/\S+/i.test(query)) {
+        if (/(?:kotbc\d*|kormovie)\.[a-z]{2,6}\/\S+/i.test(query)) {
             const path = this.pathOf(/^https?:\/\//.test(query) ? query : "https://" + query);
             if (path) {
                 const d = await this.getDetail(path);
@@ -1092,7 +1101,7 @@ class DefaultExtension extends MProvider {
                 summary: `비워 두면 기본 주소(${DEFAULT_BASE_URL}) 또는 자동으로 찾은 주소를 사용합니다.`,
                 value: "",
                 dialogTitle: "코티비씨 주소",
-                dialogMessage: "https:// 로 시작하는 주소 (예: https://k05.kotbc2.com)",
+                dialogMessage: "https:// 로 시작하는 주소 (예: https://k05.kotbc2.com · https://k05.kormovie.com)",
             },
         }, {
             key: "kotbc_auto",
