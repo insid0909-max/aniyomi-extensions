@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.1",
+    "version": "0.1.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/kotbc.js"
@@ -21,7 +21,7 @@ const mangayomiSources = [{
 //   metadata.last_episode_at, tags[{name:{ko}}], latest_episode}
 // - 작품 화면 /{slug} (component contents/List): props.comic(작품) + props.episodes(쪽 나눔 per_page 100, ?page=N)
 //   회차 {title("47화"), sort, published_at, slug, body{url:"https://nnmo0oi1.com/video/{영상ID}", iframe}}
-// - 분류 /영화 · /드라마 · /예능시사 · /해외드라마 (?page=N), 장르 /?tag=이름 — 모양은 미확인이라 화면 데이터에서 작품을 두루 찾음
+// - 분류 /영화 · /드라마 · /예능시사 · /해외드라마 (?page=N), 필터는 첫 화면 주소 /?sort=…&types[0]=…&genres[0]=…&years[0]=… (props.comics)
 // - 영상 플레이어 nnmo0oi1.com/video/{ID} = 애니24 와 같은 종류 → 애니24 에서 재생 확인된 방법(POST getVideo → securedLink) 그대로
 const DEFAULT_BASE_URL = "https://k05.kotbc2.com";
 const DOMAIN_RE = /^https:\/\/(?:[a-z]\d+\.)?kotbc\d*\.[a-z]{2,6}$/;
@@ -31,19 +31,48 @@ const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, 
 // 주소 안내 사이트 (사이트 화면의 "주소안내(코사이트)")
 const GUIDE_URL = "https://korsite.net/";
 
-// 필터 (번호 순서가 탭 규칙 저장 값과 맞아야 함)
-const CATS = [["드라마", "/드라마"], ["예능시사", "/예능시사"], ["영화", "/영화"], ["해외드라마", "/해외드라마"]];
-const GENRES = [
-    "전체", "가족", "로맨스", "코미디", "액션", "스릴러", "미스터리", "범죄", "복수", "판타지", "SF", "공포", "드라마",
-    "어드벤처", "역사", "무협", "휴먼", "일상", "요리", "음악", "예능", "리얼리티", "서바이벌", "시사", "다큐멘터리",
+// 필터 (번호 순서가 탭 규칙 저장 값과 맞아야 함). 사이트 필터 주소(2026-10-30 확인):
+// /?keyword=검색어&sort=update-desc&types[0]=영화&types[1]=… (&page=N) — 장르·연도는 같은 모양(genres[]·years[], 첫 화면 filterOptions 이름)으로 추정
+// 종류: [이름, 사이트 값, 분류 화면 주소] — 다른 필터를 안 쓰면 원래 분류 화면(/드라마 등)을 그대로 씀
+const TYPES = [["전체", "", ""], ["국내드라마", "국내드라마", "/드라마"], ["예능시사", "예능시사", "/예능시사"], ["영화", "영화", "/영화"], ["해외드라마", "해외드라마", "/해외드라마"]];
+const GENRES = ["전체",
+    "액션", "스릴러", "범죄", "공포", "미스터리", "재난", "서스펜스",
+    "드라마", "코미디", "로맨스", "멜로", "가족", "휴먼", "힐링", "복수", "틴에이저", "연애", "성장", "일상", "청춘", "로맨틱 코미디",
+    "판타지", "SF", "어드벤처", "전쟁", "시대극", "무협", "서사", "역사", "사극", "서부",
+    "음악", "스포츠", "음식", "법정", "오피스", "의학", "요리",
+    "애니메이션", "다큐멘터리", "뮤지컬", "전기", "시트콤", "단편", "공연",
+    "예능", "시사", "리얼리티", "버라이어티", "교양", "토크", "여행", "서바이벌", "시상식",
 ];
-const FILTER_DEFS = [["분류", "cat", CATS.map((c) => c[0])], ["장르 (분류 대신)", "tag", GENRES]];
+const YEARS = [["전체", ""]].concat(
+    ["2027", "2026", "2025", "2024", "2023", "2022", "2021", "2020", "2019", "2018", "2017", "2016", "2015", "2014", "2013",
+        "2012", "2011", "2010"].map((y) => [y, y]),
+    [["2005~09", "2005-2009"], ["2000~04", "2000-2004"], ["1990년대", "1990-1999"], ["1980년대", "1980-1989"], ["1979년 이전", "0-1979"]],
+);
+// 정렬: update-desc 는 확인, 나머지 값은 같은 모양으로 추정
+const SORTS = [["업데이트 최신순", "update-desc"], ["업데이트 오래된순", "update-asc"], ["공개일 최신순", "published-desc"],
+    ["공개일 오래된순", "published-asc"], ["별점 높은순", "rating-desc"], ["제목 가나다순", "title-asc"]];
+const FILTER_DEFS = [
+    ["종류", "type", TYPES.map((t) => t[0])],
+    ["장르", "genre", GENRES],
+    ["연도", "year", YEARS.map((y) => y[0])],
+    ["정렬", "sort", SORTS.map((x) => x[0])],
+];
 const RULE_SIZES = FILTER_DEFS.map((d) => d[2].length);
-const DEFAULT_POPULAR = [0, 0];
-const DEFAULT_LATEST = [1, 0];
+const DEFAULT_POPULAR = [1, 0, 0, 0];
+const DEFAULT_LATEST = [2, 0, 0, 0];
 
 function ruleText(i) {
-    return i[1] > 0 ? `장르 ${GENRES[i[1]]}` : CATS[i[0]][0];
+    return [TYPES[i[0]][0], i[1] > 0 ? GENRES[i[1]] : null, i[2] > 0 ? YEARS[i[2]][0] : null, i[3] > 0 ? SORTS[i[3]][0] : null]
+        .filter((x) => x).join(" · ");
+}
+
+/** 사이트 필터 주소 조각 (검색어·쪽 번호 제외) */
+function filterQuery(idx) {
+    const q = [`sort=${SORTS[idx[3]][1]}`];
+    if (idx[0] > 0) q.push(`types%5B0%5D=${encodeURIComponent(TYPES[idx[0]][1])}`);
+    if (idx[1] > 0) q.push(`genres%5B0%5D=${encodeURIComponent(GENRES[idx[1]])}`);
+    if (idx[2] > 0) q.push(`years%5B0%5D=${encodeURIComponent(YEARS[idx[2]][1])}`);
+    return q.join("&");
 }
 
 let lastSiteRequest = 0;
@@ -613,8 +642,9 @@ class DefaultExtension extends MProvider {
     }
 
     listPath(idx, page) {
-        if (idx[1] > 0) return `/?tag=${encodeURIComponent(GENRES[idx[1]])}` + (page > 1 ? `&page=${page}` : "");
-        return encodeURI(CATS[idx[0]][1]) + (page > 1 ? `?page=${page}` : "");
+        // 종류만 고른 기본 정렬이면 원래 분류 화면 (휴대폰에서 확인된 주소), 아니면 사이트 필터 주소
+        if (idx[0] > 0 && !idx[1] && !idx[2] && !idx[3]) return encodeURI(TYPES[idx[0]][2]) + (page > 1 ? `?page=${page}` : "");
+        return `/?${filterQuery(idx)}` + (page > 1 ? `&page=${page}` : "");
     }
 
     async listPage(idx, page) {
@@ -655,8 +685,7 @@ class DefaultExtension extends MProvider {
                 return { list: [{ name: d.name, imageUrl: d.imageUrl, link: path }], hasNextPage: false };
             }
         }
-        if (query) return this.searchSite(query, page);
-        const idx = [0, 0];
+        const idx = [0, 0, 0, 0];
         let rule = 0;
         for (const f of filters || []) {
             if (!f || f.type_name !== "SelectFilter") continue;
@@ -664,15 +693,17 @@ class DefaultExtension extends MProvider {
             if (k >= 0) idx[k] = Math.min(Math.max(Number(f.state) || 0, 0), RULE_SIZES[k] - 1);
             else if (f.name === RULE_NAME) rule = Number(f.state) || 0;
         }
+        if (query) return this.searchSite(query, page, idx);
         if (rule) ruleApply("kotbc", rule, idx);
         return this.listPage(idx, page);
     }
 
     /** 검색: 사이트 검색은 /?keyword=검색어&page=N (props.comics, 2026-10-30 확인). 안 되면 다른 흔한 모양도 차례로 시도, 된 모양은 기억 */
-    async searchSite(query, page) {
+    async searchSite(query, page, idx) {
         const q = encodeURIComponent(query);
         const pg = page > 1 ? `&page=${page}` : "";
-        const forms = [`/?keyword=${q}${pg}`, `/search?q=${q}${pg}`, `/search?keyword=${q}${pg}`, `/?q=${q}${pg}`, `/?search=${q}${pg}`, `/api/search?q=${q}`];
+        const fq = idx && idx.some((v) => v > 0) ? "&" + filterQuery(idx) : "";
+        const forms = [`/?keyword=${q}${fq}${pg}`, `/search?q=${q}${pg}`, `/search?keyword=${q}${pg}`, `/?q=${q}${pg}`, `/?search=${q}${pg}`, `/api/search?q=${q}`];
         const savedForm = Number(this.saved("kotbc_search_form2"));
         const order = forms.map((_, i) => i).sort((a, b) => (a === savedForm ? -1 : b === savedForm ? 1 : a - b));
         const words = query.replace(/\s+/g, "").toLowerCase();
@@ -1046,7 +1077,7 @@ class DefaultExtension extends MProvider {
             { type_name: "HeaderFilter", name: `📡 주소: ${host}` },
             ...notesFilters("kotbc"),
             { type_name: "SeparatorFilter" },
-            { type_name: "HeaderFilter", name: "검색어가 없을 때만 적용 · 장르를 고르면 분류 대신 장르 목록 (작품·사이트 주소를 붙여 넣으면 바로 열기)" },
+            { type_name: "HeaderFilter", name: "검색어와 함께 써도 됨 · 작품·사이트 주소를 붙여 넣으면 바로 열기" },
         ].concat(FILTER_DEFS.map(([name, param, values]) => ({
             type_name: "SelectFilter", name, param, state: 0,
             values: values.map((v, j) => ({ type_name: "SelectOption", name: v, value: String(j) })),
