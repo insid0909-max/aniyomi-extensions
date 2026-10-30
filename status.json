@@ -6,17 +6,17 @@
    "domainSince": "2026-10-26T01:41:26.844Z",
    "ok": true,
    "msg": "목록 24개, 회차 6개, 연재",
-   "checkedAt": "2026-10-29T02:50:57.482Z"
+   "checkedAt": "2026-10-30T02:56:17.434Z"
   },
-  "livesports": {
-   "origin": "https://njtv-01.com",
-   "domain": "dead",
-   "domainSince": "2026-10-03T17:30:25.871Z"
+  "livesports1": {
+   "ok": true,
+   "msg": "목록 5개",
+   "checkedAt": "2026-10-30T02:56:18.180Z"
   },
   "livesports2": {
    "ok": true,
-   "msg": "목록 5개",
-   "checkedAt": "2026-10-29T02:50:58.000Z"
+   "msg": "목록 6개",
+   "checkedAt": "2026-10-30T02:56:18.743Z"
   }
  }
 }
