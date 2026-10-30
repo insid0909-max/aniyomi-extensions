@@ -5,6 +5,7 @@ Aniyomi 확장 중 망가요미에서 돌릴 수 있는 소스를 자바스크�
 | 소스 | 파일 | 비고 |
 |---|---|---|
 | 고고티비 | `javascript/anime/src/ko/gogotv.js` | 영상 페이지·iframe·압축 스크립트에서 영상 주소를 찾음 |
+| 코티비씨 | `javascript/anime/src/ko/kotbc.js` | 영화·드라마·예능시사·해외드라마. 화면 안 Inertia 데이터(data-page)로 목록·회차, 플레이어는 애니24 와 같은 방식으로 재생 |
 | 실시간스포츠1 | `javascript/anime/src/ko/livesports1.js` | 굿라이브티비 중계 화면 안의 경기 목록. 방송 중·예정 경기를 종목별 카드로, m3u8 재생 |
 | 실시간스포츠2 | `javascript/anime/src/ko/livesports2.js` | 통티비 경기 API. 플레이어 페이지에서 m3u8을 찾아 헤더를 붙여 바로 재생 (Aniyomi의 "직접" 재생 방식) |
 
