@@ -44,6 +44,28 @@
     "notes": ""
   },
   {
+    "name": "실시간스포츠1",
+    "id": 1543270635,
+    "baseUrl": "https://gltv88.com",
+    "lang": "ko",
+    "typeSource": "single",
+    "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/livesports/res/mipmap-xxhdpi/tv_icon.png",
+    "dateFormat": "",
+    "dateFormatLocale": "",
+    "isNsfw": false,
+    "hasCloudflare": false,
+    "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/mangayomi/javascript/anime/src/ko/livesports1.js",
+    "apiUrl": "",
+    "version": "0.1.0",
+    "isManga": false,
+    "itemType": 1,
+    "isFullData": false,
+    "appMinVerReq": "0.5.0",
+    "additionalParams": "",
+    "sourceCodeLanguage": 1,
+    "notes": ""
+  },
+  {
     "name": "티비착",
     "id": 870215001,
     "baseUrl": "https://tvchak208.com",
