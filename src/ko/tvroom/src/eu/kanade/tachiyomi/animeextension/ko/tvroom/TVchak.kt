@@ -193,7 +193,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     private fun hostNumber(host: String): Int =
         NUMBER_REGEX.find(host)?.groupValues?.get(1)?.toIntOrNull() ?: 0
 
-    // tvchak 번호 주소를 현재 번호 -5 ~ +30 범위에서 동시에 열어 보고, 실제 티비착인 가장 큰 번호를 고른다.
+    // 먼저 최신 주소 안내 페이지(tvchak.org)에 적힌 주소, 없으면 tvchak 번호 주소를 현재 번호 -5 ~ +30 범위에서 동시에 열어 보고, 실제 티비착인 가장 큰 번호를 고른다.
     // 번호 주소가 모두 안 열리면 비상 주소 tvchak.life (그 화면에 적힌 번호 주소, 아니면 비상 주소 자체가 진짜 사이트일 때 그대로)
     private fun discoverDomain(currentHost: String): String? = synchronized(DISCOVER_LOCK) {
         val now = System.currentTimeMillis()
@@ -206,6 +206,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
             .readTimeout(6, TimeUnit.SECONDS)
             .callTimeout(8, TimeUnit.SECONDS)
             .build()
+        guide(plain)?.let { return it.takeIf { h -> h != currentHost } }
         val pool = Executors.newFixedThreadPool(12)
         try {
             val futures = ((cur - 5).coerceAtLeast(1)..(cur + 30))
@@ -231,6 +232,28 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         } finally {
             pool.shutdown()
         }
+    }
+
+    /** 최신 주소 안내 페이지(tvchak.org/main.html, 해외에서도 열림)에 적힌 번호 주소 중 진짜 티비착인 가장 큰 번호 */
+    private fun guide(plain: OkHttpClient): String? {
+        val body = try {
+            val r = Request.Builder().url(GUIDE_URL).header("User-Agent", USER_AGENT).build()
+            plain.newCall(r).execute().use { res -> if (res.code == 200) res.peekBody(500_000).string() else "" }
+        } catch (e: Exception) {
+            ""
+        }
+        return NUMBER_HOST_REGEX.findAll(body).map { it.value.lowercase() }.distinct()
+            .sortedByDescending { hostNumber(it) }.take(3)
+            .firstOrNull { h ->
+                try {
+                    val r = Request.Builder().url("https://$h/").header("User-Agent", USER_AGENT).build()
+                    plain.newCall(r).execute().use { res ->
+                        res.code == 200 && res.request.url.host == h && res.peekBody(300_000).string().contains(SITE_MARKER)
+                    }
+                } catch (e: Exception) {
+                    false
+                }
+            }
     }
 
     /**
@@ -834,6 +857,9 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
 
         /** 비상 주소 (사용자가 알려 줌, 2026-10-28) — 번호 주소가 모두 안 될 때 마지막으로 */
         private const val EMERGENCY_HOST = "tvchak.life"
+
+        // 최신 주소 안내 페이지 (사용자가 알려 줌, 2026-11-01)
+        private const val GUIDE_URL = "https://tvchak.org/main.html"
         private val PATH_REGEX = Regex("""^https?://[^/]+(/.*)$""")
         private val PAGE_REGEX = Regex("""/page/(\d+)""")
         private val BG_REGEX = Regex("""url\(['"]?([^'")]+)""")
