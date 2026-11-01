@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.34",
+    "version": "0.1.35",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -19,6 +19,8 @@ const DEFAULT_BASE_URL = "https://tvchak208.com";
 const DOMAIN_RE = /^https:\/\/(?:tvchak\d+\.com|tvchak\.life)$/;
 // 비상 주소 (사용자가 알려 줌, 2026-10-28) — 번호 주소가 모두 안 될 때 마지막으로
 const EMERGENCY_BASE = "https://tvchak.life";
+// 최신 주소 안내 페이지 (사용자가 알려 줌, 2026-11-01)
+const GUIDE_URL = "https://tvchak.org/main.html";
 const HOST_NUM = /tvchak(\d+)\.com/;
 const SITE_MARKER = "티비착";
 const PLAYER_REFERER = "https://ckp2.wiselife.blog/";
@@ -500,6 +502,28 @@ class DefaultExtension extends MProvider {
         p.setString("tvchak_auto_at", String(Date.now()));
         const num = (u) => parseInt((u.match(HOST_NUM) || [0, "0"])[1], 10) || 0;
         const cur = num(current) || num(DEFAULT_BASE_URL);
+        // 먼저 최신 주소 안내 페이지(tvchak.org, 해외에서도 열림)에 적힌 번호 주소 중 진짜 티비착인 가장 큰 번호
+        let guideBody = "";
+        try {
+            const r = await this.client.get(GUIDE_URL, { "User-Agent": UA });
+            guideBody = r.statusCode === 200 ? String(r.body || "") : "";
+        } catch (e) {
+            guideBody = "";
+        }
+        const listedInGuide = [...new Set((guideBody.match(/tvchak\d+\.com/gi) || []).map((x) => "https://" + x.toLowerCase()))]
+            .sort((a, b) => num(b) - num(a)).slice(0, 3);
+        for (const c of listedInGuide) {
+            try {
+                const r = await this.client.get(c + "/", { "User-Agent": UA });
+                if (r.statusCode === 200 && String(r.body || "").includes(SITE_MARKER)) {
+                    if (c === current) return null;
+                    p.setString("tvchak_auto_domain", c);
+                    return c;
+                }
+            } catch (e) {
+                // 다음 주소
+            }
+        }
         const cands = [];
         for (let i = Math.max(1, cur - 5); i <= cur + 30; i++) {
             const c = `https://tvchak${i}.com`;
