@@ -34,6 +34,12 @@
    "key": "gogotv"
   },
   {
+   "name": "애니24 (망가요미)",
+   "file": "mangayomi/javascript/anime/src/ko/ohli24.js",
+   "depth": "detail",
+   "key": "ohli24"
+  },
+  {
    "name": "실시간스포츠1 (망가요미)",
    "file": "mangayomi/javascript/anime/src/ko/livesports1.js",
    "depth": "list",
