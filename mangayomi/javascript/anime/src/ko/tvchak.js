@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.35",
+    "version": "0.1.36",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -717,10 +717,11 @@ class DefaultExtension extends MProvider {
         const todo = unknown.concat(stale);
         let ok = 0;
         let fail = 0;
-        // 한꺼번에 많이 읽으면 사이트(CloudFront)가 접속을 잠시 차단하므로
-        // 한 번에 하나씩, 간격을 두고, 목록 한 번에 최대 3개만 읽는다(목록이 오래 기다리지 않게). 막히는 기미가 보이면 즉시 멈춤
+        // 한꺼번에 많이 읽으면 사이트(CloudFront)가 접속을 잠시 차단하므로 한 번에 하나씩 읽는다.
+        // 목록은 이 읽기가 끝나야 뜨므로(망가요미는 뒤에서 읽을 수 없음) 목록 한 번에 1개만 읽는다
+        // (전엔 3개 + 0.7초 쉼씩 → 목록이 3~5초 늦게 뜸, 2026-11-01). 작품 화면을 열 때도 저장되니 곧 채워짐. 막히면 즉시 멈춤
         const stopUntil = Number(p.getString("year_pause_until", "0")) || 0;
-        const batch = now < stopUntil ? [] : todo.slice(0, 3);
+        const batch = now < stopUntil ? [] : todo.slice(0, 1);
         for (const id of batch) {
             try {
                 const { html, res } = await this.getHtml(`/index.php/vod/detail/id/${id}.html`);
@@ -737,7 +738,6 @@ class DefaultExtension extends MProvider {
                 fail++;
                 break;
             }
-            await new Promise((r) => setTimeout(r, 700));
         }
         let years = 0;
         let airs = 0;
