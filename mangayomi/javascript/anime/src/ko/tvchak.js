@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.33",
+    "version": "0.1.34",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -534,6 +534,13 @@ class DefaultExtension extends MProvider {
                 em = r.statusCode === 200 ? String(r.body || "") : "";
             } catch (e) {
                 em = "";
+            }
+            // 한국에서도 비상 주소는 OTT 안내 글이고, "티비착 바로가기" 버튼 주소(지금 번호 주소)는 /content.json 에 있음
+            try {
+                const r = await this.client.get(EMERGENCY_BASE + "/content.json", { "User-Agent": UA });
+                if (r.statusCode === 200) em += String(r.body || "");
+            } catch (e) {
+                // 화면 글만으로 찾음
             }
             const listed = [...new Set((em.match(/tvchak\d+\.com/gi) || []).map((x) => "https://" + x.toLowerCase()))]
                 .filter((c) => c !== current).sort((a, b) => num(b) - num(a));
