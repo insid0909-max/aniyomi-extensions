@@ -235,7 +235,8 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
 
     /**
      * 비상 주소(tvchak.life): 번호 주소로 넘겨 주면 그 주소, 화면에 번호 주소가 적혀 있으면 그 주소(열리는지 확인),
-     * 비상 주소 화면이 진짜 티비착(작품 링크 /vod/detail/ 있음)이면 비상 주소 그대로. 해외에서는 OTT 안내 글만 보여 줘서 쓰지 않음
+     * 비상 주소 화면이 진짜 티비착(작품 링크 /vod/detail/ 있음)이면 비상 주소 그대로.
+     * 비상 주소는 국내·해외 모두 OTT 안내 글이고, "티비착 바로가기" 버튼의 번호 주소는 /content.json 에 있음 (2026-11-01 확인)
      */
     private fun emergency(plain: OkHttpClient, currentHost: String): String? {
         fun page(host: String): Pair<String, String>? = try {
@@ -249,7 +250,16 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         val (finalHost, body) = page(EMERGENCY_HOST) ?: return null
         fun real(text: String) = text.contains(SITE_MARKER) && text.contains("/vod/detail/")
         if (finalHost != EMERGENCY_HOST && HOST_REGEX.matches(finalHost) && real(body)) return finalHost.takeIf { it != currentHost }
-        NUMBER_HOST_REGEX.findAll(body).map { it.value.lowercase() }.distinct()
+        // 한국에서도 비상 주소는 OTT 안내 글이고, "티비착 바로가기" 버튼 주소(지금 번호 주소)는 /content.json 에 있음
+        val links = body + (
+            try {
+                val r = Request.Builder().url("https://$EMERGENCY_HOST/content.json").header("User-Agent", USER_AGENT).build()
+                plain.newCall(r).execute().use { res -> if (res.code == 200) res.peekBody(200_000).string() else "" }
+            } catch (e: Exception) {
+                ""
+            }
+            )
+        NUMBER_HOST_REGEX.findAll(links).map { it.value.lowercase() }.distinct()
             .filter { it != currentHost }.sortedByDescending { hostNumber(it) }
             .firstOrNull { h -> page(h)?.let { (fh, b) -> fh == h && real(b) } == true }
             ?.let { return it }
