@@ -1,22 +1,27 @@
 {
  "items": {
   "gogotv": {
-   "origin": "https://gogotv3.xyz",
+   "origin": "https://gogotv4.xyz",
    "domain": "alive",
-   "domainSince": "2026-10-26T01:41:26.844Z",
+   "domainSince": "2026-11-02T02:43:54.905Z",
    "ok": true,
    "msg": "목록 24개, 회차 8개, 연재",
-   "checkedAt": "2026-11-01T02:33:28.621Z"
+   "checkedAt": "2026-11-02T02:43:56.133Z"
+  },
+  "ohli24": {
+   "ok": true,
+   "msg": "목록 25개, 회차 3개, 완결",
+   "checkedAt": "2026-11-02T02:43:57.143Z"
   },
   "livesports1": {
    "ok": true,
    "msg": "목록 5개",
-   "checkedAt": "2026-11-01T02:33:28.876Z"
+   "checkedAt": "2026-11-02T02:43:57.787Z"
   },
   "livesports2": {
    "ok": true,
-   "msg": "목록 6개",
-   "checkedAt": "2026-11-01T02:33:29.334Z"
+   "msg": "목록 5개",
+   "checkedAt": "2026-11-02T02:43:58.471Z"
   }
  }
 }
