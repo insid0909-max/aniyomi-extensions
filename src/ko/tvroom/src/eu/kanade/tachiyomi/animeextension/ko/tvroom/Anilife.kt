@@ -74,7 +74,7 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
             val res = chain.proceed(chain.request())
             val from = chain.request().url.host
             val to = res.request.url.host
-            if (from != to && HOST_REGEX.matches(from) && HOST_REGEX.matches(to)) {
+            if (res.code == 200 && from != to && HOST_REGEX.matches(from) && HOST_REGEX.matches(to)) {
                 DomainGuard.saveAuto(prefs(), PREF_DOMAIN_KEY, "https://$to")
             }
             res

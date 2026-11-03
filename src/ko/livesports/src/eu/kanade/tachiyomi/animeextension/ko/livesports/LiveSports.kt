@@ -161,7 +161,7 @@ class LiveSports : AnimeHttpSource(), ConfigurableAnimeSource {
 
         // 사이트가 스스로 새 주소로 넘겨 준 경우 그 주소를 저장
         val finalHost = res.request.url.host
-        if (finalHost != baseHost && HOST_REGEX.matches(finalHost)) saveDomain("https://$finalHost")
+        if (res.code == 200 && finalHost != baseHost && HOST_REGEX.matches(finalHost)) saveDomain("https://$finalHost")
         return res
     }
 
