@@ -181,7 +181,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             if (found == null) {
                 if (!isListPath(req)) return res
                 res.close()
-                throw java.io.IOException("후후티비 주소가 바뀐 것 같아요. 웹뷰로 열어 새 주소를 확인한 뒤 그 주소(예: au.hoohootv462.xyz)를 검색창에 붙여 넣어 주세요.")
+                throw java.io.IOException("후후티비 주소가 바뀐 것 같아요. 웹뷰로 열어 새 주소를 확인한 뒤 그 주소(예: ah.hoohootv464.xyz)를 검색창에 붙여 넣어 주세요.")
             }
             res.close()
             return retryOn(found)
@@ -273,8 +273,22 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
     private fun discoverDomain(currentHost: String, newerOnly: Boolean = false, hint: String? = null): String? = synchronized(DISCOVER_LOCK) {
         val now = System.currentTimeMillis()
         if (!newerOnly) {
-            // 1분 안에 이미 찾아봤으면 다시 찾지 않음. 단 그사이 웹뷰로 새 주소에 들어갔다 왔으면 그 주소는 바로 확인 (인터넷 요청 한 번)
-            if (now - lastDiscover < 60_000) return probeHosts(cookieHosts(currentHost, sameNumber = true), currentHost)
+            // 1분 안에 이미 찾아봤으면 번호 짐작은 다시 하지 않음. 단 웹뷰로 새 주소에 들어갔다 왔으면 그 주소와,
+            // 텔레그래프 안내 글에 적힌 주소는 바로 확인 (2026-11-03 ah.hoohootv464: 웹뷰 다녀와서 재시도해도 1분 제한에 걸려 못 찾음)
+            if (now - lastDiscover < 60_000) {
+                val quick = OkHttpClient.Builder()
+                    .connectTimeout(4, TimeUnit.SECONDS)
+                    .readTimeout(6, TimeUnit.SECONDS)
+                    .callTimeout(8, TimeUnit.SECONDS)
+                    .build()
+                val guide = runCatching {
+                    val r = Request.Builder().url(GUIDE_URL).header("User-Agent", USER_AGENT).build()
+                    quick.newCall(r).execute().use { res -> res.peekBody(500_000).string() }
+                }.getOrNull().orEmpty() + "\n" + hint.orEmpty()
+                val fromGuide = ANNOUNCED_REGEX.findAll(guide).map { it.value.lowercase() }
+                    .filter { SUBDOMAIN_REGEX.matches(it) && it != currentHost }.distinct().toList()
+                return probeHosts((fromGuide + cookieHosts(currentHost, sameNumber = true)).distinct(), currentHost)
+            }
             lastDiscover = now
         }
         val m = SUBDOMAIN_REGEX.matchEntire(currentHost) ?: return null
@@ -907,7 +921,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         private const val SITE_MARKER = "HOOHOO TV"
         private val DISCOVER_LOCK = Any()
         private val SUBDOMAIN_REGEX = Regex("""^([a-z])([a-z])\.hoohootv(\d+)\.([a-z]{2,6})$""")
-        private const val DEFAULT_BASE_URL = "https://al.hoohootv463.xyz"
+        private const val DEFAULT_BASE_URL = "https://ah.hoohootv464.xyz"
         private const val RATE_GAP_MS = 350L
         private const val POSTER_RETRY_MS = 800L
         private const val USER_AGENT =
