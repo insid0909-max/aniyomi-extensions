@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.4",
+    "version": "0.1.5",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/kotbc.js"
@@ -1133,6 +1133,7 @@ async function notesRefresh(client) {
     } catch (e) {
         return;
     }
+    await verRefresh(client, p);
     const last = Number(p.getString("notes_at", "0")) || 0;
     if (Date.now() - last < 60 * 60000) return;
     p.setString("notes_at", String(Date.now()));
@@ -1145,6 +1146,49 @@ async function notesRefresh(client) {
     }
 }
 
+// ---------- 설치 버전 확인 (필터 맨 위 📝 줄) ----------
+// 망가요미는 자동 업데이트를 해도 알림이 없어 → 설치된 버전과 저장소의 최신 버전을 1시간마다 비교해 보여 줌 (2026-11-03)
+const VER_INDEX_URLS = ["https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/mangayomi/anime_index.json"];
+
+function verCmp(a, b) {
+    const x = String(a || "").split(".").map((n) => parseInt(n, 10) || 0);
+    const y = String(b || "").split(".").map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0);
+    return 0;
+}
+
+async function verRefresh(client, p) {
+    const last = Number(p.getString("ver_at", "0")) || 0;
+    if (Date.now() - last < 60 * 60000) return;
+    p.setString("ver_at", String(Date.now()));
+    const file = String(mangayomiSources[0].pkgPath || "").split("/").pop();
+    for (const u of VER_INDEX_URLS) {
+        try {
+            const r = await client.get(u, {});
+            const arr = JSON.parse(String(r.body || "[]"));
+            const hit = (Array.isArray(arr) ? arr : []).find((x) => x && String(x.sourceCodeUrl || "").endsWith("/" + file));
+            if (hit && hit.version) {
+                p.setString("ver_latest", String(hit.version));
+                return;
+            }
+        } catch (e) {
+            // 다음 기회에 다시 확인
+        }
+    }
+}
+
+function verLine() {
+    const mine = String(mangayomiSources[0].version || "");
+    let latest = "";
+    try {
+        latest = new SharedPreferences().getString("ver_latest", "") || "";
+    } catch (e) {
+        latest = "";
+    }
+    const tail = latest && verCmp(latest, mine) > 0 ? ` · 새 버전 ${latest} 있음 → 확장 화면에서 업데이트` : latest ? " · 최신" : "";
+    return { type_name: "HeaderFilter", name: `📝 설치 버전 ${mine}${tail}`, _status: true };
+}
+
 function notesFilters(key) {
     let list = [];
     try {
@@ -1152,6 +1196,6 @@ function notesFilters(key) {
     } catch (e) {
         list = [];
     }
-    return list.filter((n) => n && n.t).slice(0, 3)
-        .map((n) => ({ type_name: "HeaderFilter", name: `📝 ${String(n.d || "").substring(5).replace("-", ".")} ${n.t}`, _status: true }));
+    return [verLine()].concat(list.filter((n) => n && n.t).slice(0, 3)
+        .map((n) => ({ type_name: "HeaderFilter", name: `📝 ${String(n.d || "").substring(5).replace("-", ".")} ${n.t}`, _status: true })));
 }
