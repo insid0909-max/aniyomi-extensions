@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.19",
+    "version": "0.1.20",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/livesports2.js"
@@ -109,6 +109,20 @@ function hlsHint(list) {
     return list;
 }
 
+// 저장소 주소 목록 파일(domains.json, 2026-11-03): 확장이 스스로 새 주소를 못 찾을 때를 대비해 저장소에 적어 둔 지금 주소.
+// 주소 찾기 때 먼저 확인하고, 진짜 사이트일 때만 씀
+const DOMAIN_LIST_URL = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/domains.json";
+async function listedDomain(client, key) {
+    try {
+        const r = await client.get(DOMAIN_LIST_URL + "?t=" + Math.floor(Date.now() / 60000), { "Cache-Control": "no-cache" });
+        if (Number(r.statusCode) !== 200) return "";
+        const u = String((((JSON.parse(String(r.body || "{}")).domains || {})[key]) || {}).baseUrl || "").trim().replace(/\/+$/, "");
+        return /^https:\/\/[A-Za-z0-9.-]+$/.test(u) ? u.toLowerCase() : "";
+    } catch (e) {
+        return "";
+    }
+}
+
 class DefaultExtension extends MProvider {
     constructor() {
         super();
@@ -151,6 +165,21 @@ class DefaultExtension extends MProvider {
         if (Date.now() - last < 60000) return null;
         p.setString("ls2_auto_at", String(Date.now()));
         const site = this.siteHost();
+        // 저장소 주소 목록 파일에 적힌 주소 먼저 (경기 자료 서버가 답할 때만)
+        const listed = await listedDomain(this.client, "livesports2");
+        const lh = listed.replace(/^https:\/\/(?:www\.)?/, "");
+        if (lh && lh !== site && DOMAIN_RE.test(listed)) {
+            try {
+                const r = await this.client.get(`https://live.${lh}/api/collections/view_bw_live_on/records?perPage=1&skipTotal=true`, { "User-Agent": UA });
+                if (Number(r.statusCode) === 200 && String(r.body || "").trim().startsWith("{")) {
+                    const found = `https://www.${lh}`;
+                    p.setString("ls2_auto_domain", found);
+                    return found;
+                }
+            } catch (e) {
+                // 사이트 화면에서 찾기로
+            }
+        }
         for (const host of [`www.${site}`, site]) {
             let body = "";
             try {

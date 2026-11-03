@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.13",
+    "version": "0.1.14",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/anilife.js"
@@ -418,6 +418,20 @@ async function addrGuard(ext, page, fn) {
     throw new Error(ADDR_HELP + (err ? ` [${(err && err.message) || err}]` : ""));
 }
 
+// 저장소 주소 목록 파일(domains.json, 2026-11-03): 확장이 스스로 새 주소를 못 찾을 때를 대비해 저장소에 적어 둔 지금 주소.
+// 주소 찾기 때 먼저 확인하고, 진짜 사이트일 때만 씀
+const DOMAIN_LIST_URL = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/domains.json";
+async function listedDomain(client, key) {
+    try {
+        const r = await client.get(DOMAIN_LIST_URL + "?t=" + Math.floor(Date.now() / 60000), { "Cache-Control": "no-cache" });
+        if (Number(r.statusCode) !== 200) return "";
+        const u = String((((JSON.parse(String(r.body || "{}")).domains || {})[key]) || {}).baseUrl || "").trim().replace(/\/+$/, "");
+        return /^https:\/\/[A-Za-z0-9.-]+$/.test(u) ? u.toLowerCase() : "";
+    } catch (e) {
+        return "";
+    }
+}
+
 class DefaultExtension extends MProvider {
     constructor() {
         super();
@@ -517,11 +531,14 @@ class DefaultExtension extends MProvider {
         const width = m[1].length;
         const host = (v) => `https://anilife${String(v).padStart(width, "0")}.tv`;
         const cands = [];
+        // 저장소 주소 목록 파일에 적힌 주소가 맨 먼저
+        const listed = await listedDomain(this.client, "anilife");
+        if (listed && listed !== current && DOMAIN_RE.test(listed)) cands.push(listed);
         // 공개 주소 목록(중앙신호등: 여러 사이트의 최신 주소를 확인해 올려 두는 곳)에 적힌 주소를 먼저 후보로
         try {
             const r = await this.client.get(SIGNAL_URL + "?t=" + Date.now(), { "Accept": "application/json", "Cache-Control": "no-cache" });
             const sig = String((((JSON.parse(String(r.body || "{}")).domains || {}).anilife) || {}).baseUrl || "").replace(/\/+$/, "");
-            if (DOMAIN_RE.test(sig) && sig !== current) cands.push(sig);
+            if (DOMAIN_RE.test(sig) && sig !== current && !cands.includes(sig)) cands.push(sig);
         } catch (e) {}
         for (let i = Math.max(1, cur - 2); i <= cur + 8; i++) if (host(i) !== current && !cands.includes(host(i))) cands.push(host(i));
         const hits = await Promise.all(cands.map(async (c) => {

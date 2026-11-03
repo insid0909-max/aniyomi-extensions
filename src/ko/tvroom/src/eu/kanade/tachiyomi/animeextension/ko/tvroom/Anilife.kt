@@ -141,7 +141,9 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
                     ?.trimEnd('/')?.toHttpUrlOrNull()?.host?.takeIf { HOST_REGEX.matches(it) }
             }
         }.getOrNull()
-        val candidates = (listOfNotNull(signal) + (1..8).map { host(n + it) } + (1..2).mapNotNull { (n - it).takeIf { v -> v > 0 }?.let(::host) })
+        // 저장소 주소 목록 파일(domains.json)에 적힌 주소가 맨 먼저
+        val listed = DomainList.host("anilife")?.takeIf { HOST_REGEX.matches(it) }
+        val candidates = (listOfNotNull(listed, signal) + (1..8).map { host(n + it) } + (1..2).mapNotNull { (n - it).takeIf { v -> v > 0 }?.let(::host) })
             .distinct().filter { it != currentHost }
         val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
         try {

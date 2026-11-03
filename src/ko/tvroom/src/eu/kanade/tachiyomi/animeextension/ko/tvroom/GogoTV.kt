@@ -150,6 +150,9 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
             .readTimeout(6, TimeUnit.SECONDS)
             .callTimeout(8, TimeUnit.SECONDS)
             .build()
+        // 저장소 주소 목록 파일(domains.json)에 적힌 주소 먼저 (진짜 고고티비일 때만)
+        DomainList.host("gogotv")?.takeIf { it != currentHost && HOST_REGEX.matches(it) && realPage(plain, it) != null }
+            ?.let { return it }
         val pool = Executors.newFixedThreadPool(12)
         try {
             val futures = ((cur - 5).coerceAtLeast(1)..(cur + 30))
