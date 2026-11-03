@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.38",
+    "version": "0.1.39",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -428,7 +428,7 @@ class DefaultExtension extends MProvider {
     }
 
     /** 접속이 안 되면(오류/5xx) tvchak 번호 주소를 찾아 바꾼 뒤 다시 요청 */
-    async getHtml(path) {
+    async getHtml(path, noDiscover) {
         const base = this.getBaseUrl();
         const url = path.startsWith("http") ? path : base + path;
         let res = null;
@@ -450,7 +450,8 @@ class DefaultExtension extends MProvider {
                 if (attempt === 0) await new Promise((r) => setTimeout(r, 700));
             }
         }
-        const found = notice || (this.autoOn() ? await this.discover(base) : null);
+        // 보안 확인 직후 다시 받기에서는 주소 찾기를 하지 않음 (방금 사이트가 응답했으니 주소는 그대로, 사용자 기록 2026-11-03: 주소찾기 3.6초)
+        const found = notice || (this.autoOn() && !noDiscover ? await this.discover(base) : null);
         if (notice) new SharedPreferences().setString("tvchak_auto_domain", notice);
         if (!found) {
             if (res) return { html: res.body, base, res };
@@ -493,7 +494,7 @@ class DefaultExtension extends MProvider {
             tmAdd("보안확인", Date.now() - tw);
             if (html && html.includes("maccms")) return { html, base: r.base };
             if (left() < 2000) break;
-            const again = await this.getHtml(path);
+            const again = await this.getHtml(path, true);
             if (String(again.html || "").includes("maccms")) return again;
         }
         throw new Error("사이트 보안 확인을 자동으로 마치지 못했어요. 오른쪽 위 지구본(웹뷰)으로 한 번 열었다 닫은 뒤 다시 불러오세요." +
