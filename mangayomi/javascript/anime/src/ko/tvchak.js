@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.37",
+    "version": "0.1.38",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -325,6 +325,9 @@ async function addrAdopt(ext, query) {
 
 // 인기·최신 첫 쪽이 오류이거나 비었는데 지금 주소가 사이트가 아니면(끊김·빈 페이지·404) 새 주소를 찾아 다시 불러옴,
 // 못 찾으면 붙여 넣기 안내 (지금 주소가 진짜 사이트면 원래 결과·오류 그대로)
+// 목록 화면 5분 저장 (getDoc)
+const PAGE_CACHE = {};
+
 // [임시 측정, 2026-11-03] 목록이 가끔 10초 넘게 걸리는 원인 찾기 — 원인 찾으면 반드시 뺄 것
 const TM = { on: false, parts: {} };
 function tmAdd(key, ms) {
@@ -364,6 +367,8 @@ async function addrGuard(ext, page, fn) {
         if (err) throw err;
         return r;
     }
+    // 보안 확인을 못 마친 것은 주소가 바뀐 게 아님 → 주소 찾기를 돌리지 않고 그 안내 그대로 (시간도 아낌)
+    if (err && /보안 확인/.test(String((err && err.message) || err))) throw err;
     const base = addrCurrent(ext);
     if (await addrIsSite(ext, base)) {
         if (err) throw err;
@@ -456,7 +461,17 @@ class DefaultExtension extends MProvider {
     }
 
     async getDoc(path) {
+        // 목록 화면은 5분 동안 다시 받지 않음 → 나갔다 들어오거나 탭을 오가도 사이트에 다시 묻지 않아
+        // 보안 확인 화면을 만날 일이 줄어듦 (통과 상태가 얼마나 가는지는 사이트가 정해서 확장이 늘릴 수 없음)
+        const listLike = !/\/vod\/(?:detail|play)\//.test(path);
+        const key = this.getBaseUrl() + path;
+        const hit = listLike ? PAGE_CACHE[key] : null;
+        if (hit && Date.now() - hit.at < 5 * 60000) return { doc: new Document(hit.html), base: hit.base };
         const { html, base } = await this.getPage(path);
+        if (listLike) {
+            for (const k in PAGE_CACHE) if (Date.now() - PAGE_CACHE[k].at >= 5 * 60000) delete PAGE_CACHE[k];
+            PAGE_CACHE[key] = { at: Date.now(), html, base };
+        }
         return { doc: new Document(html), base };
     }
 
@@ -467,17 +482,21 @@ class DefaultExtension extends MProvider {
         // 앱이 숨은 WebView 실행을 지원하면, 그 안에서 보안 확인을 끝내고 실제 페이지 내용을 받아 씀
         const url = path.startsWith("http") ? path : r.base + path;
         let html = null;
-        // 숨은 WebView 는 앱이 15초만 기다려 주므로 최대 두 번 시도.
-        // 결과를 못 받아도 그 사이 통과 쿠키가 저장됐을 수 있으니 매번 원래 요청을 다시 해 본다
-        for (let i = 0; i < 2; i++) {
+        // 망가요미는 목록을 40초까지만 기다림(넘으면 "TimeoutException", 2026-11-03 사용자 화면) → 전체 30초 안에 끝냄.
+        // 숨은 WebView 는 한 번에 최대 15초. 결과를 못 받아도 그 사이 통과 쿠키가 저장됐을 수 있으니 원래 요청을 다시 해 본다.
+        // 두 번째 웹뷰는 시간이 충분히 남았을 때만
+        const start = Date.now();
+        const left = () => 30000 - (Date.now() - start);
+        for (let i = 0; i < 2 && left() > 8000; i++) {
             const tw = Date.now();
-            html = await this.viaWebview(url);
+            html = await this.viaWebview(url, Math.min(15000, left() - 4000));
             tmAdd("보안확인", Date.now() - tw);
             if (html && html.includes("maccms")) return { html, base: r.base };
+            if (left() < 2000) break;
             const again = await this.getHtml(path);
             if (String(again.html || "").includes("maccms")) return again;
         }
-        throw new Error("사이트 보안 확인이 필요합니다. 오른쪽 위 지구본(WebView) 버튼으로 한 번 열었다 닫은 뒤 다시 불러오세요." +
+        throw new Error("사이트 보안 확인을 자동으로 마치지 못했어요. 오른쪽 위 지구본(웹뷰)으로 한 번 열었다 닫은 뒤 다시 불러오세요." +
             ` [진단: ${this.diag(r, html)}]`);
     }
 
@@ -507,15 +526,19 @@ class DefaultExtension extends MProvider {
         ].filter((x) => x).join(" · ");
     }
 
-    async viaWebview(url) {
+    async viaWebview(url, waitMs) {
         if (typeof evaluateJavascriptViaWebview !== "function") return null;
-        // 페이지에 실제 내용(maccms)이 나타날 때까지 기다렸다가 HTML 을 앱으로 돌려줌
-        // 확인 페이지에서는 기다리고(확인이 끝나면 사이트가 스스로 새로고침), 실제 페이지가 열리면 바로 HTML 을 돌려줌
-        const script = "(function(){function f(){var h=document.documentElement.outerHTML;" +
-            "if(h.indexOf('maccms')>=0){window.flutter_inappwebview.callHandler('setResponse',h);return true;}return false;}" +
-            "if(!f()){var t=setInterval(function(){if(f())clearInterval(t);},300);}})();";
+        // 페이지에 실제 내용(maccms)이 나타날 때까지 기다렸다가 HTML 을 앱으로 돌려줌.
+        // 확인 화면은 확인이 끝나면 스스로 새로고침하는데, 새로 열린 화면에는 이 스크립트가 다시 안 들어갈 수 있음 →
+        // 확인 화면 안에서 1.5초마다 같은 주소를 다시 받아 보고(사이트가 준 통과 쿠키 그대로), 진짜 목록이 오면 그 내용을 돌려줌
+        const script = "(function(){var done=false;function send(h){if(done)return;done=true;" +
+            "window.flutter_inappwebview.callHandler('setResponse',h);}" +
+            "function f(){var h=document.documentElement.outerHTML;if(h.indexOf('maccms')>=0){send(h);return true;}return false;}" +
+            "if(f())return;var n=0;var t=setInterval(function(){if(done||f()){clearInterval(t);return;}n++;" +
+            "if(n%5===0&&window.fetch){fetch(location.href,{credentials:'include'}).then(function(r){return r.text();})" +
+            ".then(function(h){if(h&&h.indexOf('maccms')>=0){clearInterval(t);send(h);}}).catch(function(){});}},300);})();";
         try {
-            const timeout = new Promise((res) => setTimeout(() => res(null), 30000));
+            const timeout = new Promise((res) => setTimeout(() => res(null), waitMs || 15000));
             const res = await Promise.race([
                 evaluateJavascriptViaWebview(url, {}, [script]),
                 timeout,
