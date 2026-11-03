@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.36",
+    "version": "0.1.37",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -325,6 +325,33 @@ async function addrAdopt(ext, query) {
 
 // 인기·최신 첫 쪽이 오류이거나 비었는데 지금 주소가 사이트가 아니면(끊김·빈 페이지·404) 새 주소를 찾아 다시 불러옴,
 // 못 찾으면 붙여 넣기 안내 (지금 주소가 진짜 사이트면 원래 결과·오류 그대로)
+// [임시 측정, 2026-11-03] 목록이 가끔 10초 넘게 걸리는 원인 찾기 — 원인 찾으면 반드시 뺄 것
+const TM = { on: false, parts: {} };
+function tmAdd(key, ms) {
+    if (TM.on && !(key === "페이지" && TM.inYears)) TM.parts[key] = (TM.parts[key] || 0) + ms;
+}
+async function tmRun(label, fn) {
+    TM.on = true;
+    TM.parts = {};
+    const t0 = Date.now();
+    try {
+        return await fn();
+    } finally {
+        TM.on = false;
+        const total = (Date.now() - t0) / 1000;
+        const order = ["페이지", "보안확인", "주소찾기", "연도", "상태"];
+        const parts = order.filter((k) => TM.parts[k] >= 50).map((k) => `${k} ${(TM.parts[k] / 1000).toFixed(1)}`);
+        try {
+            const p = new SharedPreferences();
+            const line = `${label} ${total.toFixed(1)}초` + (parts.length ? ` (${parts.join(" · ")})` : "");
+            p.setString("tm_last", line);
+            if (total >= 6) p.setString("tm_slow", line + ` · ${new Date(Date.now() + 9 * 3600000).toISOString().substring(5, 16).replace("T", " ")}`);
+        } catch (e) {
+            // 무시
+        }
+    }
+}
+
 async function addrGuard(ext, page, fn) {
     let r = null;
     let err = null;
@@ -405,7 +432,9 @@ class DefaultExtension extends MProvider {
         for (let attempt = 0; attempt < 2; attempt++) {
             await siteWait();
             try {
+                const tq = Date.now();
                 res = await this.client.get(url, this.headers());
+                tmAdd("페이지", Date.now() - tq);
                 if (res.statusCode < 500 && String(res.body || "").length > 0) {
                     notice = res.statusCode === 200 && this.autoOn() ? await noticeTarget(this, res.body, base, "/vod/detail/") : null;
                     if (!notice) return { html: res.body, base, res };
@@ -441,7 +470,9 @@ class DefaultExtension extends MProvider {
         // 숨은 WebView 는 앱이 15초만 기다려 주므로 최대 두 번 시도.
         // 결과를 못 받아도 그 사이 통과 쿠키가 저장됐을 수 있으니 매번 원래 요청을 다시 해 본다
         for (let i = 0; i < 2; i++) {
+            const tw = Date.now();
             html = await this.viaWebview(url);
+            tmAdd("보안확인", Date.now() - tw);
             if (html && html.includes("maccms")) return { html, base: r.base };
             const again = await this.getHtml(path);
             if (String(again.html || "").includes("maccms")) return again;
@@ -496,6 +527,15 @@ class DefaultExtension extends MProvider {
     }
 
     async discover(current) {
+        const td = Date.now();
+        try {
+            return await this.discoverInner(current);
+        } finally {
+            tmAdd("주소찾기", Date.now() - td);
+        }
+    }
+
+    async discoverInner(current) {
         const p = new SharedPreferences();
         const last = Number(p.getString("tvchak_auto_at", "0")) || 0;
         if (Date.now() - last < 60000) return null;
@@ -594,11 +634,13 @@ class DefaultExtension extends MProvider {
     }
 
     async getLatestUpdates(page) {
-        return addrGuard(this, page, () => this.latestGuarded(page));
+        return tmRun(`최신 ${page}쪽`, () => addrGuard(this, page, () => this.latestGuarded(page)));
     }
 
     async latestGuarded(page) {
+        const ts = Date.now();
         await statusRefresh(this.client);
+        tmAdd("상태", Date.now() - ts);
         const saved = ruleRead("tvchak", false, RULE_SIZES);
         if (saved) return this.withYears(await this.filterPage(page, saved), TYPES[saved[0]][1] === "1");
         return this.withYears(await this.latestBase(page));
@@ -723,8 +765,17 @@ class DefaultExtension extends MProvider {
         const stopUntil = Number(p.getString("year_pause_until", "0")) || 0;
         const batch = now < stopUntil ? [] : todo.slice(0, 1);
         for (const id of batch) {
+            const ty = Date.now();
             try {
-                const { html, res } = await this.getHtml(`/index.php/vod/detail/id/${id}.html`);
+                TM.inYears = true;
+                let got;
+                try {
+                    got = await this.getHtml(`/index.php/vod/detail/id/${id}.html`);
+                } finally {
+                    TM.inYears = false;
+                    tmAdd("연도", Date.now() - ty);
+                }
+                const { html, res } = got;
                 const code = res ? Number(res.statusCode) : 200;
                 if (code === 403 || code === 202 || code === 429 || !String(html || "").includes("maccms")) {
                     fail++;
@@ -1011,15 +1062,27 @@ class DefaultExtension extends MProvider {
             diag = "";
         }
         const extra = diag ? [{ type_name: "HeaderFilter", name: `🎬 영화 연도: ${diag}`, _status: true }] : [];
+        // [임시 측정] 마지막 목록 시간과 6초 넘게 걸린 마지막 기록
+        try {
+            const p = new SharedPreferences();
+            const last = p.getString("tm_last", "");
+            const slow = p.getString("tm_slow", "");
+            if (last) extra.push({ type_name: "HeaderFilter", name: `⏱ 마지막: ${last}`, _status: true });
+            if (slow) extra.push({ type_name: "HeaderFilter", name: `⏱ 느렸던 때: ${slow}`, _status: true });
+        } catch (e) {
+            // 무시
+        }
         return statusFilters("tvchak", this.getBaseUrl(), this.autoOn()).concat(extra, this.baseFilterList());
     }
 
     async getPopular(page) {
-        return addrGuard(this, page, () => this.popularGuarded(page));
+        return tmRun(`인기 ${page}쪽`, () => addrGuard(this, page, () => this.popularGuarded(page)));
     }
 
     async popularGuarded(page) {
+        const ts = Date.now();
         await statusRefresh(this.client);
+        tmAdd("상태", Date.now() - ts);
         const saved = ruleRead("tvchak", true, RULE_SIZES);
         if (saved) return this.withYears(await this.filterPage(page, saved), TYPES[saved[0]][1] === "1");
         return this.withYears(await this.popularBase(page));
@@ -1032,7 +1095,7 @@ class DefaultExtension extends MProvider {
         await statusRefresh(this.client);
         // 앱이 돌려준 필터에 param 이 빠져 있을 수 있어 같은 이름의 원래 필터에서 채움
         const base = this.baseFilterList();
-        const list = (filters || []).filter((f) => f && !f._status && !(f.type_name === "HeaderFilter" && /^(?:📡|🩺|❌|🛡|📝)/.test(String(f.name || ""))));
+        const list = (filters || []).filter((f) => f && !f._status && !(f.type_name === "HeaderFilter" && /^(?:📡|🩺|❌|🛡|📝|⏱|🎬)/.test(String(f.name || ""))));
         for (const f of list) {
             if (!f.param) {
                 const b = base.find((x) => x.name === f.name && x.type_name === f.type_name);
