@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.5",
+    "version": "0.1.6",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/kotbc.js"
@@ -1177,16 +1177,22 @@ async function verRefresh(client, p) {
     }
 }
 
-function verLine() {
+function verLine(key) {
     const mine = String(mangayomiSources[0].version || "");
     let latest = "";
+    let day = "";
     try {
-        latest = new SharedPreferences().getString("ver_latest", "") || "";
+        const p = new SharedPreferences();
+        latest = p.getString("ver_latest", "") || "";
+        const n = ((JSON.parse(p.getString("notes_json", "") || "{}").items || {})[key] || [])[0];
+        if (n && n.d) day = String(n.d).substring(5).replace("-", ".");
     } catch (e) {
-        latest = "";
+        latest = latest || "";
     }
-    const tail = latest && verCmp(latest, mine) > 0 ? ` · 새 버전 ${latest} 있음 → 확장 화면에서 업데이트` : latest ? " · 최신" : "";
-    return { type_name: "HeaderFilter", name: `📝 설치 버전 ${mine}${tail}`, _status: true };
+    let name = `📝 설치 버전 ${mine}`;
+    if (latest && verCmp(latest, mine) > 0) name = `📝 ⚠️ OLD · 설치 ${mine} → 새 버전 ${latest} 있음, 확장 화면에서 업데이트`;
+    else if (latest) name = `📝 🆕 NEW · 최신 버전 ${mine}` + (day ? ` (${day} 업데이트)` : "");
+    return { type_name: "HeaderFilter", name, _status: true };
 }
 
 function notesFilters(key) {
@@ -1196,6 +1202,6 @@ function notesFilters(key) {
     } catch (e) {
         list = [];
     }
-    return [verLine()].concat(list.filter((n) => n && n.t).slice(0, 3)
+    return [verLine(key)].concat(list.filter((n) => n && n.t).slice(0, 3)
         .map((n) => ({ type_name: "HeaderFilter", name: `📝 ${String(n.d || "").substring(5).replace("-", ".")} ${n.t}`, _status: true })));
 }
