@@ -106,7 +106,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             val res = chain.proceed(chain.request())
             val from = chain.request().url.host
             val to = res.request.url.host
-            if (from != to && HOST_REGEX.matches(from) && SUBDOMAIN_REGEX.matches(to)) saveFound(from, to)
+            if (res.code == 200 && from != to && HOST_REGEX.matches(from) && SUBDOMAIN_REGEX.matches(to)) saveFound(from, to)
             res
         }
         .addInterceptor { chain -> domainIntercept(chain) }

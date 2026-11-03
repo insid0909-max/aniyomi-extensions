@@ -116,7 +116,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
         }
 
         val finalHost = res.request.url.host
-        if (finalHost != baseHost && HOST_REGEX.matches(finalHost)) saveDomain("https://$finalHost")
+        if (res.code == 200 && finalHost != baseHost && HOST_REGEX.matches(finalHost)) saveDomain("https://$finalHost")
         return res
     }
 
