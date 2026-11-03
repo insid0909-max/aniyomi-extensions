@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.12",
+    "version": "0.1.13",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/anilife.js"
@@ -881,21 +881,19 @@ async function verRefresh(client, p) {
     }
 }
 
-function verLine(key) {
+function verLine(key, note) {
+    // 버전과 마지막 업데이트 내역을 한 줄로 (필터가 지저분해 보여, 사용자 2026-11-03)
     const mine = String(mangayomiSources[0].version || "");
     let latest = "";
-    let day = "";
     try {
-        const p = new SharedPreferences();
-        latest = p.getString("ver_latest", "") || "";
-        const n = ((JSON.parse(p.getString("notes_json", "") || "{}").items || {})[key] || [])[0];
-        if (n && n.d) day = String(n.d).substring(5).replace("-", ".");
+        latest = new SharedPreferences().getString("ver_latest", "") || "";
     } catch (e) {
-        latest = latest || "";
+        latest = "";
     }
-    let name = `📝 설치 버전 ${mine}`;
-    if (latest && verCmp(latest, mine) > 0) name = `📝 ⚠️ OLD · 설치 ${mine} → 새 버전 ${latest} 있음, 확장 화면에서 업데이트`;
-    else if (latest) name = `📝 🆕 NEW · 최신 버전 ${mine}` + (day ? ` (${day} 업데이트)` : "");
+    const last = note && note.t ? ` · ${String(note.d || "").substring(5).replace("-", ".")} ${String(note.t).replace(/^망가요미:\s*/, "")}` : "";
+    let name = `📝 ${mine}${last}`;
+    if (latest && verCmp(latest, mine) > 0) name = `📝 ⚠️ OLD ${mine} → 새 버전 ${latest} 있음, 확장 화면에서 업데이트`;
+    else if (latest) name = `📝 🆕 NEW ${mine}${last}`;
     return { type_name: "HeaderFilter", name, _status: true };
 }
 
@@ -906,8 +904,7 @@ function notesFilters(key) {
     } catch (e) {
         list = [];
     }
-    return [verLine(key)].concat(list.filter((n) => n && n.t).slice(0, 3)
-        .map((n) => ({ type_name: "HeaderFilter", name: `📝 ${String(n.d || "").substring(5).replace("-", ".")} ${n.t}`, _status: true })));
+    return [verLine(key, list.filter((n) => n && n.t)[0])];
 }
 
 // ---------- 필터 맨 끝 빈 줄 (2026-11-03) ----------

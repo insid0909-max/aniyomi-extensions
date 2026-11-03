@@ -80,15 +80,16 @@ internal object ExtStatus {
         null
     }
 
-    /** 그 소스의 최근 업데이트 내역 3개 ("📝 10.24 기본 주소 … 로 자동 변경") */
+    /** 그 소스의 최근 업데이트 내역(마지막 1개) ("📝 10.24 기본 주소 … 로 자동 변경") */
     fun notes(key: String): List<String> {
         refresh()
         val arr = notesData()?.optJSONObject("items")?.optJSONArray(key) ?: return emptyList()
         return (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
             val text = o.optString("t").trim()
-            if (text.isEmpty()) null else "📝 ${o.optString("d").drop(5).replace('-', '.')} $text"
-        }.take(3)
+            // 망가요미에만 해당하는 내역은 애니요미에서 건너뜀
+            if (text.isEmpty() || (key != "samsungtvplus" && text.startsWith("망가요미"))) null else "📝 ${o.optString("d").drop(5).replace('-', '.')} $text"
+        }.take(if (key == "samsungtvplus") 3 else 1) // 필터가 지저분해 보여 마지막 1개만 (사용자, 2026-11-03)
     }
 
     /** 상태 줄이 없는 소스: 업데이트 내역만 필터 맨 앞에 (내역이 없으면 그대로) */
