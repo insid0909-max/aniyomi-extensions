@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.40",
+    "version": "0.1.41",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -318,6 +318,20 @@ async function addrGuard(ext, page, fn) {
     throw new Error(ADDR_HELP + (err ? ` [${(err && err.message) || err}]` : ""));
 }
 
+// 저장소 주소 목록 파일(domains.json, 2026-11-03): 확장이 스스로 새 주소를 못 찾을 때를 대비해 저장소에 적어 둔 지금 주소.
+// 주소 찾기 때 먼저 확인하고, 진짜 사이트일 때만 씀
+const DOMAIN_LIST_URL = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/domains.json";
+async function listedDomain(client, key) {
+    try {
+        const r = await client.get(DOMAIN_LIST_URL + "?t=" + Math.floor(Date.now() / 60000), { "Cache-Control": "no-cache" });
+        if (Number(r.statusCode) !== 200) return "";
+        const u = String((((JSON.parse(String(r.body || "{}")).domains || {})[key]) || {}).baseUrl || "").trim().replace(/\/+$/, "");
+        return /^https:\/\/[A-Za-z0-9.-]+$/.test(u) ? u.toLowerCase() : "";
+    } catch (e) {
+        return "";
+    }
+}
+
 class DefaultExtension extends MProvider {
     constructor() {
         super();
@@ -371,6 +385,19 @@ class DefaultExtension extends MProvider {
         p.setString("gogotv_auto_at", String(Date.now()));
         const num = (u) => parseInt((/gogotv(\d+)\.xyz/.exec(u) || [0, "0"])[1], 10) || 0;
         const cur = num(current) || num(DEFAULT_BASE_URL);
+        // 저장소 주소 목록 파일에 적힌 주소 먼저 (작품 링크가 있는 진짜 고고티비일 때만)
+        const listed = await listedDomain(this.client, "gogotv");
+        if (listed && listed !== current && DOMAIN_RE.test(listed)) {
+            try {
+                const r = await this.client.get(listed + "/", { "User-Agent": UA });
+                if (r.statusCode === 200 && String(r.body || "").indexOf("/player/") >= 0) {
+                    p.setString("gogotv_auto_domain", listed);
+                    return listed;
+                }
+            } catch (e) {
+                // 번호 찾기로
+            }
+        }
         const cands = [];
         for (let i = Math.max(1, cur - 5); i <= cur + 30; i++) {
             const c = `https://gogotv${i}.xyz`;

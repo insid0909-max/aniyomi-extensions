@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.8",
+    "version": "0.1.9",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/kotbc.js"
@@ -493,6 +493,20 @@ async function addrGuard(ext, page, fn) {
 }
 
 
+// 저장소 주소 목록 파일(domains.json, 2026-11-03): 확장이 스스로 새 주소를 못 찾을 때를 대비해 저장소에 적어 둔 지금 주소.
+// 주소 찾기 때 먼저 확인하고, 진짜 사이트일 때만 씀
+const DOMAIN_LIST_URL = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/domains.json";
+async function listedDomain(client, key) {
+    try {
+        const r = await client.get(DOMAIN_LIST_URL + "?t=" + Math.floor(Date.now() / 60000), { "Cache-Control": "no-cache" });
+        if (Number(r.statusCode) !== 200) return "";
+        const u = String((((JSON.parse(String(r.body || "{}")).domains || {})[key]) || {}).baseUrl || "").trim().replace(/\/+$/, "");
+        return /^https:\/\/[A-Za-z0-9.-]+$/.test(u) ? u.toLowerCase() : "";
+    } catch (e) {
+        return "";
+    }
+}
+
 class DefaultExtension extends MProvider {
     constructor() {
         super();
@@ -553,6 +567,9 @@ class DefaultExtension extends MProvider {
     /** 사이트 주소가 바뀌었을 때: 안내 사이트에 적힌 주소 → 앞 글자 번호(k05→k06…) · 뒤 번호(kotbc2→kotbc3…) */
     async discover(current) {
         const tries = [];
+        // 저장소 주소 목록 파일에 적힌 주소 먼저 (아래에서 진짜 사이트인지 확인)
+        const listed = await listedDomain(this.client, "kotbc");
+        if (listed && DOMAIN_RE.test(listed)) tries.push(listed);
         try {
             const r = await this.client.get(GUIDE_URL, { "User-Agent": UA });
             const re = /https?:\/\/((?:[a-z]\d+\.)?(?:kotbc\d*|kormovie)\.[a-z]{2,6})/gi;

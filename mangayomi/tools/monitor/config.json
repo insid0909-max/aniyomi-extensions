@@ -21,7 +21,8 @@
  "replaceIn": [
   "src/ko/tvroom/src/eu/kanade/tachiyomi/animeextension/ko/tvroom/GogoTV.kt",
   "mangayomi/javascript/anime/src/ko/gogotv.js",
-  "mangayomi/anime_index.json"
+  "mangayomi/anime_index.json",
+  "domains.json"
  ],
  "indexFiles": [
   "mangayomi/anime_index.json"

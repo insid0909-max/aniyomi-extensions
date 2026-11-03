@@ -7,6 +7,7 @@ import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import eu.kanade.tachiyomi.animeextension.ko.livesports.DomainGuard
+import eu.kanade.tachiyomi.animeextension.ko.livesports.DomainList
 import eu.kanade.tachiyomi.animeextension.ko.livesports.ExtStatus
 import eu.kanade.tachiyomi.animeextension.ko.livesports.LiveQuality
 import eu.kanade.tachiyomi.animesource.ConfigurableAnimeSource
@@ -116,6 +117,9 @@ class LiveSports1 : AnimeHttpSource(), ConfigurableAnimeSource {
             return list
         }
         tryBase(baseUrl)?.let { return it }
+        // 저장소 주소 목록 파일(domains.json)에 적힌 주소 (중계 화면 목록이 읽힐 때만 씀)
+        DomainList.host("livesports1")?.let { "https://$it" }?.takeIf { it != baseUrl && DOMAIN_REGEX.matches(it) }
+            ?.let { tryBase(it) }?.let { return it }
         val m = NUM_HOST.find(baseUrl) ?: return null
         val n = m.groupValues[2].toInt()
         for (d in listOf(1, 2, 3, 4, 5, 6, 7, 8, -1, -2)) {

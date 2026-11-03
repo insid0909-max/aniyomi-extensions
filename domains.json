@@ -1,0 +1,13 @@
+{
+ "schemaVersion": 1,
+ "note": "소스별 지금 주소. 확장이 스스로 새 주소를 못 찾을 때 이 주소를 먼저 확인함(진짜 사이트일 때만 씀). 바뀌면 baseUrl 만 고치면 됨(확장 업데이트 불필요).",
+ "domains": {
+  "hoohootv": {"baseUrl": "https://ah.hoohootv464.xyz", "updated": "2026-11-03"},
+  "tvchak": {"baseUrl": "https://tvchak208.com", "updated": "2026-11-03"},
+  "gogotv": {"baseUrl": "https://gogotv4.xyz", "updated": "2026-11-03"},
+  "anilife": {"baseUrl": "https://anilife01.tv", "updated": "2026-11-03"},
+  "kotbc": {"baseUrl": "https://k05.kotbc2.com", "updated": "2026-11-03"},
+  "livesports1": {"baseUrl": "https://gltv88.com", "updated": "2026-11-03"},
+  "livesports2": {"baseUrl": "https://www.tongtv.net", "updated": "2026-11-03"}
+ }
+}
