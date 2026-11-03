@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.39",
+    "version": "0.1.40",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -336,6 +336,7 @@ function tmAdd(key, ms) {
 async function tmRun(label, fn) {
     TM.on = true;
     TM.parts = {};
+    TM.why = "";
     const t0 = Date.now();
     try {
         return await fn();
@@ -343,7 +344,8 @@ async function tmRun(label, fn) {
         TM.on = false;
         const total = (Date.now() - t0) / 1000;
         const order = ["페이지", "보안확인", "주소찾기", "연도", "상태"];
-        const parts = order.filter((k) => TM.parts[k] >= 50).map((k) => `${k} ${(TM.parts[k] / 1000).toFixed(1)}`);
+        const parts = order.filter((k) => TM.parts[k] >= 50).map((k) => `${k} ${(TM.parts[k] / 1000).toFixed(1)}` +
+            (k === "주소찾기" && TM.why ? `[${TM.why}]` : ""));
         try {
             const p = new SharedPreferences();
             const line = `${label} ${total.toFixed(1)}초` + (parts.length ? ` (${parts.join(" · ")})` : "");
@@ -374,6 +376,7 @@ async function addrGuard(ext, page, fn) {
         if (err) throw err;
         return r;
     }
+    TM.why = err ? "목록 오류" : "목록 0개";
     const found = await ext.discover(base);
     if (found) return await fn();
     throw new Error(ADDR_HELP + (err ? ` [${(err && err.message) || err}]` : ""));
@@ -440,9 +443,12 @@ class DefaultExtension extends MProvider {
                 const tq = Date.now();
                 res = await this.client.get(url, this.headers());
                 tmAdd("페이지", Date.now() - tq);
-                if (res.statusCode < 500 && String(res.body || "").length > 0) {
-                    notice = res.statusCode === 200 && this.autoOn() ? await noticeTarget(this, res.body, base, "/vod/detail/") : null;
-                    if (!notice) return { html: res.body, base, res };
+                // 사이트가 응답했으면(빈 응답·보안 확인 화면 포함, 5xx 제외) 주소는 그대로 → 주소 찾기 안 함.
+                // 보안 확인 화면은 getPage 가 웹뷰로 처리 (사용자 기록 2026-11-03: 보안확인 2.2 + 주소찾기 2.6 — 빈 응답에도 주소 찾기를 돌렸음)
+                if (res.statusCode < 500) {
+                    const body = String(res.body || "");
+                    notice = res.statusCode === 200 && body.length > 0 && this.autoOn() ? await noticeTarget(this, body, base, "/vod/detail/") : null;
+                    if (!notice) return { html: body, base, res };
                 }
                 break;
             } catch (e) {
@@ -451,6 +457,7 @@ class DefaultExtension extends MProvider {
             }
         }
         // 보안 확인 직후 다시 받기에서는 주소 찾기를 하지 않음 (방금 사이트가 응답했으니 주소는 그대로, 사용자 기록 2026-11-03: 주소찾기 3.6초)
+        if (!notice && this.autoOn() && !noDiscover) TM.why = res ? `HTTP ${res.statusCode}` : "연결 실패";
         const found = notice || (this.autoOn() && !noDiscover ? await this.discover(base) : null);
         if (notice) new SharedPreferences().setString("tvchak_auto_domain", notice);
         if (!found) {
