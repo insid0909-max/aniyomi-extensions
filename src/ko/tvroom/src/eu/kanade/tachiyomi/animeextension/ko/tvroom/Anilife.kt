@@ -67,6 +67,7 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         get() = DomainGuard.pick(prefs(), PREF_DOMAIN_KEY, DEFAULT_BASE_URL, autoDomain(), { DOMAIN_REGEX.matches(it) })
 
     override val client: OkHttpClient = network.client.newBuilder()
+        .apply { interceptors().add(0, FriendlyNet) }
         .addInterceptor(PageCache(Regex("^/api/anime/\\d+$")))
         .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS, skipImages = true))
         .addInterceptor { chain ->
