@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.11",
+    "version": "0.1.12",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/anilife.js"
@@ -909,3 +909,14 @@ function notesFilters(key) {
     return [verLine(key)].concat(list.filter((n) => n && n.t).slice(0, 3)
         .map((n) => ({ type_name: "HeaderFilter", name: `📝 ${String(n.d || "").substring(5).replace("-", ".")} ${n.t}`, _status: true })));
 }
+
+// ---------- 필터 맨 끝 빈 줄 (2026-11-03) ----------
+// 망가요미 필터 창이 휴대폰 하단 버튼(|||·○·<)에 가려 맨 아래 항목이 안 눌림 → 맨 끝에 빈 줄을 두어 위로 올릴 수 있게.
+// 맨 끝에만 붙여 기존 필터 순서·저장된 탭 규칙은 그대로
+(function () {
+    const base = DefaultExtension.prototype.getFilterList;
+    DefaultExtension.prototype.getFilterList = function () {
+        const list = base.apply(this, arguments) || [];
+        return list.concat([1, 2, 3].map(() => ({ type_name: "HeaderFilter", name: "\u3000", _status: true })));
+    };
+})();
