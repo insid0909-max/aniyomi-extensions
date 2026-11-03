@@ -73,6 +73,7 @@ class Ohli24 : AnimeHttpSource(), ConfigurableAnimeSource {
         }
 
     override val client: OkHttpClient = network.client.newBuilder()
+        .apply { interceptors().add(0, FriendlyNet) }
         .addInterceptor(PageCache(Regex("^/\\d+/")))
         .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS))
         .addInterceptor { chain ->

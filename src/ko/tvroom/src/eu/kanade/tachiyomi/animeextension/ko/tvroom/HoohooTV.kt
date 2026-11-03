@@ -98,6 +98,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         SUBDOMAIN_REGEX.matchEntire(url.substringAfter("://").substringBefore('/'))?.groupValues?.get(3)?.toIntOrNull() ?: 0
 
     override val client: OkHttpClient = network.client.newBuilder()
+        .apply { interceptors().add(0, FriendlyNet) }
         .addInterceptor(PageCache(Regex("^/detail/")))
         .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS, skipImages = true))
         .addInterceptor { chain -> posterRetry(chain) }

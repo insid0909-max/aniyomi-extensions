@@ -71,6 +71,7 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     override val client: OkHttpClient = network.client.newBuilder()
+        .apply { interceptors().add(0, FriendlyNet) }
         .addInterceptor(PageCache(Regex("/vod/detail/")))
         // 포스터 그림이 사이트 주소에 있으면 간격 제한에 걸려 한 장씩 뜸 → 그림은 빼기 (고고티비와 같음)
         .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS, skipImages = true))
