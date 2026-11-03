@@ -207,6 +207,16 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
             .readTimeout(6, TimeUnit.SECONDS)
             .callTimeout(8, TimeUnit.SECONDS)
             .build()
+        // 저장소 주소 목록 파일(domains.json)에 적힌 주소 먼저 (진짜 티비착일 때만)
+        DomainList.host("tvchak")?.takeIf { h ->
+            h != currentHost && HOST_REGEX.matches(h) && runCatching {
+                val r = Request.Builder().url("https://$h/").header("User-Agent", USER_AGENT).build()
+                plain.newCall(r).execute().use { res ->
+                    val body = if (res.code == 200 && res.request.url.host == h) res.peekBody(500_000).string() else ""
+                    body.contains(SITE_MARKER) && body.contains("/vod/detail/")
+                }
+            }.getOrDefault(false)
+        }?.let { return it }
         guide(plain)?.let { return it.takeIf { h -> h != currentHost } }
         val pool = Executors.newFixedThreadPool(12)
         try {

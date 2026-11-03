@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.46",
+    "version": "0.1.47",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -352,6 +352,20 @@ async function addrGuard(ext, page, fn) {
     throw new Error(ADDR_HELP + (err ? ` [${(err && err.message) || err}]` : ""));
 }
 
+// 저장소 주소 목록 파일(domains.json, 2026-11-03): 확장이 스스로 새 주소를 못 찾을 때를 대비해 저장소에 적어 둔 지금 주소.
+// 주소 찾기 때 먼저 확인하고, 진짜 사이트일 때만 씀
+const DOMAIN_LIST_URL = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/domains.json";
+async function listedDomain(client, key) {
+    try {
+        const r = await client.get(DOMAIN_LIST_URL + "?t=" + Math.floor(Date.now() / 60000), { "Cache-Control": "no-cache" });
+        if (Number(r.statusCode) !== 200) return "";
+        const u = String((((JSON.parse(String(r.body || "{}")).domains || {})[key]) || {}).baseUrl || "").trim().replace(/\/+$/, "");
+        return /^https:\/\/[A-Za-z0-9.-]+$/.test(u) ? u.toLowerCase() : "";
+    } catch (e) {
+        return "";
+    }
+}
+
 class DefaultExtension extends MProvider {
     constructor() {
         super();
@@ -529,6 +543,20 @@ class DefaultExtension extends MProvider {
         p.setString("tvchak_auto_at", String(Date.now()));
         const num = (u) => parseInt((u.match(HOST_NUM) || [0, "0"])[1], 10) || 0;
         const cur = num(current) || num(DEFAULT_BASE_URL);
+        // 저장소 주소 목록 파일에 적힌 주소 먼저 (작품 링크가 있는 진짜 티비착일 때만)
+        const listed = await listedDomain(this.client, "tvchak");
+        if (listed && listed !== current && DOMAIN_RE.test(listed)) {
+            try {
+                const r = await this.client.get(listed + "/", { "User-Agent": UA });
+                const body = String(r.body || "");
+                if (r.statusCode === 200 && body.includes(SITE_MARKER) && body.includes("/vod/detail/")) {
+                    p.setString("tvchak_auto_domain", listed);
+                    return listed;
+                }
+            } catch (e) {
+                // 안내 페이지로
+            }
+        }
         // 먼저 최신 주소 안내 페이지(tvchak.org, 해외에서도 열림)에 적힌 번호 주소 중 진짜 티비착인 가장 큰 번호
         let guideBody = "";
         try {

@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.5",
+    "version": "0.1.6",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/livesports1.js"
@@ -111,6 +111,20 @@ function hlsHint(list) {
     return list;
 }
 
+// 저장소 주소 목록 파일(domains.json, 2026-11-03): 확장이 스스로 새 주소를 못 찾을 때를 대비해 저장소에 적어 둔 지금 주소.
+// 주소 찾기 때 먼저 확인하고, 진짜 사이트일 때만 씀
+const DOMAIN_LIST_URL = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/domains.json";
+async function listedDomain(client, key) {
+    try {
+        const r = await client.get(DOMAIN_LIST_URL + "?t=" + Math.floor(Date.now() / 60000), { "Cache-Control": "no-cache" });
+        if (Number(r.statusCode) !== 200) return "";
+        const u = String((((JSON.parse(String(r.body || "{}")).domains || {})[key]) || {}).baseUrl || "").trim().replace(/\/+$/, "");
+        return /^https:\/\/[A-Za-z0-9.-]+$/.test(u) ? u.toLowerCase() : "";
+    } catch (e) {
+        return "";
+    }
+}
+
 class DefaultExtension extends MProvider {
     constructor() {
         super();
@@ -196,6 +210,11 @@ class DefaultExtension extends MProvider {
             return r ? { base, frame: f } : null;
         };
         let hit = await tryBase(this.getBaseUrl());
+        // 저장소 주소 목록 파일에 적힌 주소 (중계 화면 목록이 읽힐 때만 씀)
+        if (!hit) {
+            const listed = await listedDomain(this.client, "livesports1");
+            if (listed && listed !== this.getBaseUrl() && SITE_RE.test(listed)) hit = await tryBase(listed);
+        }
         if (!hit) {
             const m = /^https:\/\/(?:www\.)?([a-z]+)(\d+)\.([a-z]{2,6})$/.exec(this.getBaseUrl());
             if (m) {

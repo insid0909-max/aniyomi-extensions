@@ -284,7 +284,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                 val guide = runCatching {
                     val r = Request.Builder().url(GUIDE_URL).header("User-Agent", USER_AGENT).build()
                     quick.newCall(r).execute().use { res -> res.peekBody(500_000).string() }
-                }.getOrNull().orEmpty() + "\n" + hint.orEmpty()
+                }.getOrNull().orEmpty() + "\n" + hint.orEmpty() + "\n" + DomainList.host("hoohootv").orEmpty()
                 val fromGuide = ANNOUNCED_REGEX.findAll(guide).map { it.value.lowercase() }
                     .filter { SUBDOMAIN_REGEX.matches(it) && it != currentHost }.distinct().toList()
                 return probeHosts((fromGuide + cookieHosts(currentHost, sameNumber = true)).distinct(), currentHost)
@@ -310,7 +310,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                     val r = Request.Builder().url(u).header("User-Agent", USER_AGENT).build()
                     plain.newCall(r).execute().use { res -> res.peekBody(500_000).string() }
                 }.getOrNull().orEmpty()
-            } + "\n" + hint.orEmpty()
+            } + "\n" + hint.orEmpty() + "\n" + DomainList.host("hoohootv").orEmpty() // 저장소 주소 목록 파일(domains.json)
             ).let { body ->
             ANNOUNCED_REGEX.findAll(body).map { it.value.lowercase() }
                 .filter { SUBDOMAIN_REGEX.matches(it) }.distinct()
