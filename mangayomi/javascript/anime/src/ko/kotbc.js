@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.9",
+    "version": "0.1.10",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/kotbc.js"
@@ -84,8 +84,29 @@ async function siteWait() {
 }
 
 /** "2026-10-29T12:28:23.000000Z" · "2026-10-29T21:28:23+09:00" → ms */
+// 날짜 글자 → 밀리초. 망가요미 안의 자바스크립트는 "2026-11-03 21:00:00"(띄어쓰기) 같은 모양을 Date.parse 로 못 읽을 수 있어 직접 읽음.
+// 시간대가 없으면 한국 시간, 숫자면 유닉스 시각(초·밀리초)
 function timeMs(s) {
-    const t = Date.parse(String(s || "").replace(/\.\d+Z$/, "Z"));
+    if (s === null || s === undefined || s === "") return 0;
+    const str = String(s).trim();
+    if (/^\d{9,13}$/.test(str)) {
+        const n = Number(str);
+        return n < 1e12 ? n * 1000 : n;
+    }
+    const m = /^(\d{4})[-./](\d{1,2})[-./](\d{1,2})\.?(?:[T\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?)?\s*(Z|[+-]\d{2}:?\d{2})?/i.exec(str);
+    if (!m) {
+        const t = Date.parse(str);
+        return isNaN(t) ? 0 : t;
+    }
+    let t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4] || 0), Number(m[5] || 0), Number(m[6] || 0));
+    const z = m[7];
+    if (!z) {
+        t -= 9 * 3600000;
+    } else if (z.toUpperCase() !== "Z") {
+        const o = /([+-])(\d{2}):?(\d{2})/.exec(z);
+        const off = (Number(o[2]) * 60 + Number(o[3])) * 60000;
+        t -= o[1] === "+" ? off : -off;
+    }
     return isNaN(t) ? 0 : t;
 }
 
@@ -665,7 +686,8 @@ class DefaultExtension extends MProvider {
     cardOf(o) {
         let name = String(o.title || "").trim();
         const kind = o.card_meta && o.card_meta.kind;
-        const last = timeMs(o.metadata && o.metadata.last_episode_at);
+        const le = o.latest_episode || {};
+        const last = timeMs(o.metadata && o.metadata.last_episode_at) || timeMs(o.last_episode_at) || timeMs(le.published_at || le.created_at);
         const year = yearOf(timeMs(o.published_at));
         if (kind === "movie" || o.completed_at) {
             if (year && !name.includes(`(${year})`)) name = `${name} (${year})`;
