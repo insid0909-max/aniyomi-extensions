@@ -280,7 +280,9 @@ class Aniwolf : AnimeHttpSource(), ConfigurableAnimeSource {
 
     // ================= 영상 =================
     override suspend fun getVideoList(episode: SEpisode): List<Video> = withContext(Dispatchers.IO) {
-        val pageUrl = baseUrl + episode.url
+        // 회차 주소에 한글이 있음("/원피스/001화") → 요청 머리글(Referer)에는 한글을 못 넣으므로 %XX 로 바꾼 주소를 씀
+        // (8752 에서 재생 화면 요청이 이 때문에 실패해 "No available videos", 2026-11-04)
+        val pageUrl = (baseUrl + episode.url).toHttpUrl().toString()
         val doc = client.newCall(GET(pageUrl, h())).execute().use { res ->
             if (!res.isSuccessful) throw Exception("회차 화면을 열지 못했습니다 (HTTP ${res.code})")
             Jsoup.parse(res.body.string(), res.request.url.toString())
