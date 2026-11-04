@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.12",
+    "version": "0.1.13",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/kotbc.js"
@@ -813,19 +813,29 @@ class DefaultExtension extends MProvider {
         const o = props.comic || props.series || collectSeries(props).items[0];
         if (!o) throw new Error(`작품 정보를 찾지 못했어요 [${props._component}]`);
         const raw = [];
+        // 회차: 재생 주소(body)가 없는 회차도 회차 주소(slug)가 있으면 넣음 — 재생 때 회차 화면에서 주소를 다시 찾음
+        // (2026-11-04 엄마가 미쳤어요 0개: 회차 목록에 body 가 없는 작품이 있는 듯). episodes 가 배열 그대로인 경우도
+        const epList = (x) => (Array.isArray(x) ? x : x && Array.isArray(x.data) ? x.data : []);
         const add = (list) => {
-            for (const e of list || []) if (e && e.body) raw.push(e);
+            for (const e of list || []) if (e && (e.body || e.slug) && (e.title !== undefined || e.sort !== undefined)) raw.push(e);
         };
-        add(props.episodes && props.episodes.data);
+        add(epList(props.episodes));
+        if (!raw.length) add(epList(o.episodes));
         // 회차는 100개씩 나뉨 → 나머지 쪽도 받음
         const lastPage = Math.min(Number(props.episodes && props.episodes.last_page) || 1, 30);
         for (let p = 2; p <= lastPage; p++) {
             try {
                 const more = await this.props(`${encodeURI(path)}?page=${p}`);
-                add(more.episodes && more.episodes.data);
+                add(epList(more.episodes));
             } catch (e) {
                 break;
             }
+        }
+        if (!raw.length && !(o.card_meta && o.card_meta.kind === "movie")) {
+            const ep = props.episodes;
+            const shape = ep ? (Array.isArray(ep) ? `배열 ${ep.length}` : `${Object.keys(ep).slice(0, 8).join(",")} · data ${Array.isArray(ep.data) ? ep.data.length : "-"}`) : "없음";
+            const first = ep && (Array.isArray(ep) ? ep[0] : ep.data && ep.data[0]);
+            throw new Error(`회차를 찾지 못했어요 [${props._component} · episodes ${shape}${first ? " · 첫 회차 " + Object.keys(first).slice(0, 10).join(",") : ""} · ${Object.keys(props).filter((k) => k !== "_component").join(",").substring(0, 80)}]`);
         }
         const seen = {};
         const eps = raw.filter((e) => {
