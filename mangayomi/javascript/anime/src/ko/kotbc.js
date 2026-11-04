@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.11",
+    "version": "0.1.12",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/kotbc.js"
@@ -108,25 +108,6 @@ function timeMs(s) {
         t -= o[1] === "+" ? off : -off;
     }
     return isNaN(t) ? 0 : t;
-}
-
-// 목록 카드 날짜: 목록 자료에는 방영일이 없어(2026-11-04 사용자 화면) 작품 화면에서 읽은 값을 저장해 두고 씀
-// air_{slug} = {l: 최근 회차 시각, d: 끝남(1), y: 연도, c: 읽은 시각}
-const AIR_TTL_MS = 6 * 3600000;
-function airGet(p, slug) {
-    try {
-        const v = p.getString("air_" + slug, "");
-        return v ? JSON.parse(v) : null;
-    } catch (e) {
-        return null;
-    }
-}
-function airSet(slug, last, done, year) {
-    try {
-        new SharedPreferences().setString("air_" + slug, JSON.stringify({ l: last || 0, d: done ? 1 : 0, y: year || "", c: Date.now() }));
-    } catch (e) {
-        // 저장 못 해도 그대로
-    }
 }
 
 function mmdd(ms) {
@@ -702,28 +683,13 @@ class DefaultExtension extends MProvider {
     }
 
     // ================= 목록 =================
-    cardOf(o, p) {
-        if (p === undefined) {
-            try {
-                p = new SharedPreferences();
-            } catch (e) {
-                p = null;
-            }
-        }
+    cardOf(o) {
         let name = String(o.title || "").trim();
         const kind = o.card_meta && o.card_meta.kind;
         const le = o.latest_episode || {};
-        let last = timeMs(o.metadata && o.metadata.last_episode_at) || timeMs(o.last_episode_at) || timeMs(le.published_at || le.created_at);
-        let year = yearOf(timeMs(o.published_at));
-        let done = kind === "movie" || !!o.completed_at;
-        // 목록 자료에 날짜가 없으면 작품 화면에서 읽어 저장해 둔 값
-        const a = p && !last ? airGet(p, o.slug) : null;
-        if (a) {
-            if (a.d) done = true;
-            else if (a.l) last = a.l;
-            if (!year && a.y) year = a.y;
-        }
-        if (done) {
+        const last = timeMs(o.metadata && o.metadata.last_episode_at) || timeMs(o.last_episode_at) || timeMs(le.published_at || le.created_at);
+        const year = yearOf(timeMs(o.published_at));
+        if (kind === "movie" || o.completed_at) {
             if (year && !name.includes(`(${year})`)) name = `${name} (${year})`;
         } else if (last) {
             name = `${name} · ${mmdd(last)}`;
@@ -743,50 +709,7 @@ class DefaultExtension extends MProvider {
         if (!got.items.length && page === 1) {
             throw new Error(`작품을 찾지 못했어요 [${props._component} · ${Object.keys(props).filter((k) => k !== "_component").join(",").substring(0, 80)}]`);
         }
-        let p = null;
-        try {
-            p = new SharedPreferences();
-        } catch (e) {
-            p = null;
-        }
-        if (p) await this.fillAir(p, got.items);
-        return { list: got.items.map((o) => this.cardOf(o, p)), hasNextPage: got.hasNext };
-    }
-
-    /** 날짜 없는 작품 1개만 작품 화면을 읽어 날짜 저장 (목록이 늦게 뜨지 않게, 막히면 10분 쉼). 방영 중은 6시간마다 다시 */
-    async fillAir(p, items) {
-        const now = Date.now();
-        if (now < (Number(p.getString("air_pause_until", "0")) || 0)) return;
-        const todo = items.filter((o) => {
-            if (!o || !o.slug) return false;
-            if ((o.card_meta && o.card_meta.kind === "movie") || o.completed_at) return false;
-            if (timeMs(o.metadata && o.metadata.last_episode_at) || timeMs(o.last_episode_at)) return false;
-            const a = airGet(p, o.slug);
-            return !a || (!a.d && now - (a.c || 0) > AIR_TTL_MS);
-        });
-        const o = todo[0];
-        if (!o) return;
-        try {
-            const props = await this.props("/" + encodeURI(o.slug));
-            const c = props.comic || props.series || o;
-            const pick = (list) => Math.max(0, ...(list || []).map((e) => timeMs(e && (e.published_at || e.created_at))));
-            let last = pick(props.episodes && props.episodes.data);
-            const lp = Number(props.episodes && props.episodes.last_page) || 1;
-            if (lp > 1) {
-                try {
-                    const more = await this.props(`/${encodeURI(o.slug)}?page=${lp}`);
-                    last = Math.max(last, pick(more.episodes && more.episodes.data));
-                } catch (e) {
-                    // 첫 쪽만으로
-                }
-            }
-            const done = (c.card_meta && c.card_meta.kind === "movie") || !!c.completed_at;
-            airSet(o.slug, last, done, yearOf(timeMs(c.published_at)));
-        } catch (e) {
-            // 이 작품은 6시간 뒤 다시, 사이트가 막았을 수 있으니 2분 쉼
-            airSet(o.slug, 0, false, "");
-            p.setString("air_pause_until", String(Date.now() + 2 * 60000));
-        }
+        return { list: got.items.map((o) => this.cardOf(o)), hasNextPage: got.hasNext };
     }
 
     async getPopular(page) {
@@ -928,10 +851,9 @@ class DefaultExtension extends MProvider {
                 dateUpload: at ? String(at) : null,
             };
         });
-        const last = Math.max(0, ...eps.map((e) => timeMs(e.published_at || e.created_at)));
+        const last = Math.max(0, ...eps.map((e) => timeMs(e.published_at)));
         const done = movie || !!o.completed_at || eps.some((e) => /완결/.test(String(e.title || "")));
         const year = yearOf(timeMs(o.published_at));
-        airSet(o.slug || path.replace(/^\//, ""), last, done, year);
         let title = String(o.title || "").trim();
         if (done) {
             if (year && !title.includes(`(${year})`)) title = `${title} (${year})`;
