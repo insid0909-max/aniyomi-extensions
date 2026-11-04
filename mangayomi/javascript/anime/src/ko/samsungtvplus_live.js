@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/samsungtvplus_live.js"
@@ -35,11 +35,11 @@ const STV_TAB_LATEST = "stv_tab_latest";
 const STV_RULE_NAME = "인기/최신 탭 규칙";
 const STV_RULES = [
     "저장하지 않음 (필터 결과만 보기)",
-    "고른 분류를 인기 탭에 저장",
-    "고른 분류를 최신 탭에 저장",
-    "인기 탭을 기본값(전체)으로",
-    "최신 탭을 기본값(실시간)으로",
-    "두 탭 모두 기본값으로",
+    "현재 조건을 인기 탭에 저장",
+    "현재 조건을 최신 탭에 저장",
+    "인기 탭을 기본값으로 복원",
+    "최신 탭을 기본값으로 복원",
+    "두 탭 모두 기본값으로 복원",
 ];
 const STV_CACHE_MS = 30 * 60 * 1000;
 // 지상파 채널 (방송사 홈페이지의 공식 무료 실시간, 라이브TV(livetv.js)와 같은 주소). [id, 이름, 재생 방식:값]
