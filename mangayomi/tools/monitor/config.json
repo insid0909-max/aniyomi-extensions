@@ -16,30 +16,13 @@
     30
    ],
    "key": "gogotv"
-  },
-  {
-   "name": "미미티비",
-   "currentFrom": {
-    "file": "mangayomi/javascript/anime/src/ko/mimitv.js",
-    "regex": "DEFAULT_BASE_URL = \"(https://mimitv\\d+\\.com)\""
-   },
-   "pattern": "^https://mimitv(\\d+)\\.com$",
-   "format": "https://mimitv{n}.com",
-   "probe": "/",
-   "marker": "shplay\\.php",
-   "range": [
-    -3,
-    20
-   ],
-   "key": "mimitv"
   }
  ],
  "replaceIn": [
   "src/ko/tvroom/src/eu/kanade/tachiyomi/animeextension/ko/tvroom/GogoTV.kt",
   "mangayomi/javascript/anime/src/ko/gogotv.js",
   "mangayomi/anime_index.json",
-  "domains.json",
-  "mangayomi/javascript/anime/src/ko/mimitv.js"
+  "domains.json"
  ],
  "indexFiles": [
   "mangayomi/anime_index.json"
@@ -56,12 +39,6 @@
    "file": "mangayomi/javascript/anime/src/ko/ohli24.js",
    "depth": "detail",
    "key": "ohli24"
-  },
-  {
-   "name": "미미티비 (망가요미)",
-   "file": "mangayomi/javascript/anime/src/ko/mimitv.js",
-   "depth": "detail",
-   "key": "mimitv"
   },
   {
    "name": "실시간스포츠1 (망가요미)",
