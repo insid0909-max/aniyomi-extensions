@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/mimitv.js"
@@ -569,13 +569,24 @@ class DefaultExtension extends MProvider {
         const seasons = this.seasonsOf(html);
         const total = seasons.reduce((a, s) => a + s.length, 0);
         const isMovie = /영화/.test(genres) || (total === 1 && !/\d+\s*화/.test((seasons[0] && seasons[0][0] && seasons[0][0].label) || ""));
-        const airing = !isMovie && AIRING_RE.test(genres);
-        const status = isMovie ? 1 : airing ? 0 : 5;
+        const episodes = this.episodes(id, seasons, isMovie);
+        // 회차에 방송 날짜가 있으면(가요무대 등) 최근 방영일로 방영 중(3주 안)/끝남을 판단
+        const latest = Math.max(0, ...episodes.map((e) => Number(e.dateUpload) || 0));
+        const recent = latest > 0 && Date.now() - latest <= 21 * 86400000;
+        const airing = !isMovie && (latest ? recent : AIRING_RE.test(genres));
+        const status = isMovie ? 1 : airing ? 0 : latest ? 1 : 5;
+        const kst = latest ? new Date(latest + 9 * 3600000) : null;
+        const pad2 = (n) => String(n).padStart(2, "0");
         const yearRe = /\s*\((?:19|20)\d{2}\)\s*$/;
         // 끝났거나 방영 여부를 모르는 작품은 제목 뒤에 (연도). 방영 중은 회차 날짜가 없어 그대로
-        const name = !airing && year && rawName && !yearRe.test(rawName) ? `${rawName} (${year})` : rawName;
+        // 방영 중이면 제목 뒤에 최근 방영일 " · MM.dd"(날짜가 있을 때, 망가요미는 서재 제목도 갱신), 아니면 (연도)
+        const name = airing && kst ? `${rawName.replace(yearRe, "")} · ${pad2(kst.getUTCMonth() + 1)}.${pad2(kst.getUTCDate())}`
+            : !airing && year && rawName && !yearRe.test(rawName) ? `${rawName} (${year})` : rawName;
         const lines = [];
-        if (airing) lines.push("방영 중");
+        if (kst) {
+            const day = "일월화수목금토"[kst.getUTCDay()];
+            lines.push(`${airing ? "방영 중 · " : "종영 · "}최근 방영: ${kst.getUTCFullYear()}.${pad2(kst.getUTCMonth() + 1)}.${pad2(kst.getUTCDate())} (${day})`);
+        } else if (airing) lines.push("방영 중");
         for (const k of ["국가", "장르", "연도", "감독", "배우"]) {
             const v = this.meta(info, k);
             if (v) lines.push(`${k}: ${v}`);
@@ -589,7 +600,7 @@ class DefaultExtension extends MProvider {
             genre: genres.split(",").map((g) => g.trim()).filter((g) => g),
             status,
             link: base + link,
-            episodes: this.episodes(id, seasons, isMovie),
+            episodes,
         };
     }
 
@@ -597,23 +608,48 @@ class DefaultExtension extends MProvider {
      * 회차: 이름은 번호로 시작("12화", 번호 없는 "특 집" 은 앞 회차 번호 + 0.5), 여러 시즌이면 scanlator 에 "시즌N".
      * 사이트 순서가 작품마다 달라(최신이 위 / 1화가 위) 번호로 방향을 보고 최신이 위로 오게
      */
+    /** 회차 이름이 날짜면 {at: 한국시간 그날 0시, short: "26.10.19"} ("26-10-19"·"2026-10-19"·"26.10.19") */
+    labelDate(label) {
+        const m = /^\s*(\d{2}|\d{4})[-./](\d{1,2})[-./](\d{1,2})\s*$/.exec(String(label || ""));
+        if (!m) return null;
+        const y = m[1].length === 2 ? 2000 + Number(m[1]) : Number(m[1]);
+        const mo = Number(m[2]);
+        const d = Number(m[3]);
+        if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+        const pad = (n) => String(n).padStart(2, "0");
+        return { at: Date.UTC(y, mo - 1, d) - 9 * 3600000, short: `${String(y).substring(2)}.${pad(mo)}.${pad(d)}` };
+    }
+
     episodes(id, seasons, isMovie) {
         const out = [];
         const multi = seasons.length > 1;
         seasons.forEach((eps, s) => {
             const nums = eps.map((e) => { const m = /(\d+(?:\.\d+)?)\s*화/.exec(e.label); return m ? parseFloat(m[1]) : null; });
+            const dates = eps.map((e) => this.labelDate(e.label));
             const known = nums.filter((n) => n !== null);
-            // 과거 → 최신 차례의 번호 목록 (화면 위가 최신이면 뒤집음)
-            const newestFirst = known.length >= 2 && known[0] > known[known.length - 1];
+            const dated = dates.filter((d) => d);
+            // 회차 이름이 방송 날짜("26-10-19", 가요무대 등)면 날짜로, 아니면 번호로 방향을 봄 → 과거 → 최신 차례
+            const byDate = !known.length && dated.length >= Math.max(1, eps.length / 2);
+            const newestFirst = byDate ? dated.length >= 2 && dated[0] > dated[dated.length - 1]
+                : known.length >= 2 && known[0] > known[known.length - 1];
             const order = eps.map((e, i) => i);
             if (newestFirst) order.reverse();
+            // 번호 없는 회차가 10개 넘게 이어지면 "앞 번호 + 0.5" 로는 번호가 겹침 → 차례 번호로
+            let run = 0;
+            let longRun = false;
+            for (const i of order) { run = nums[i] === null ? run + 1 : 0; if (run > 9) longRun = true; }
+            const seqMode = byDate || (longRun && eps.length > 1);
             let last = 0;
             let step = 0;
             const part = [];
-            for (const i of order) {
+            order.forEach((i, k) => {
                 const e = eps[i];
                 let name;
-                if (nums[i] !== null) {
+                if (seqMode) {
+                    // 사이트에 회차 번호가 없어 오래된 회차부터 센 차례 번호 + 날짜(있으면)
+                    const d = dates[i];
+                    name = d ? `${k + 1}회 (${d.short})` : `${k + 1}회 ${e.label.replace(/\s+/g, " ")}`.trim();
+                } else if (nums[i] !== null) {
                     last = nums[i];
                     step = 0;
                     const rest = e.label.replace(/^제?\s*0*\d+(?:\.\d+)?\s*화\s*/, "").trim();
@@ -625,8 +661,12 @@ class DefaultExtension extends MProvider {
                     const n = Math.round((last + 0.5 + (step - 1) / 10) * 10) / 10;
                     name = `${n} ${e.label.replace(/\s+/g, "") || "특별편"}`;
                 }
-                part.push({ name, url: `/shplay.php?id=${id}&ep=${s}_${i}`, dateUpload: null, scanlator: multi ? `시즌${s + 1}` : "" });
-            }
+                part.push({
+                    name, url: `/shplay.php?id=${id}&ep=${s}_${i}`,
+                    dateUpload: dates[i] ? String(dates[i].at) : null,
+                    scanlator: multi ? `시즌${s + 1}` : "",
+                });
+            });
             part.reverse().forEach((x) => out.push(x));
         });
         // 시즌도 최신 시즌이 위로
