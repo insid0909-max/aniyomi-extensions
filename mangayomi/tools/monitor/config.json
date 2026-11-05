@@ -16,30 +16,13 @@
     30
    ],
    "key": "gogotv"
-  },
-  {
-   "name": "애니마루",
-   "currentFrom": {
-    "file": "mangayomi/javascript/anime/src/ko/animaru.js",
-    "regex": "DEFAULT_BASE_URL = \"(https://animaru\\d+\\.com)\""
-   },
-   "pattern": "^https://animaru(\\d+)\\.com$",
-   "format": "https://animaru{n}.com",
-   "probe": "/",
-   "marker": "favicon-maru",
-   "range": [
-    -2,
-    8
-   ],
-   "key": "animaru"
   }
  ],
  "replaceIn": [
   "src/ko/tvroom/src/eu/kanade/tachiyomi/animeextension/ko/tvroom/GogoTV.kt",
   "mangayomi/javascript/anime/src/ko/gogotv.js",
   "mangayomi/anime_index.json",
-  "domains.json",
-  "mangayomi/javascript/anime/src/ko/animaru.js"
+  "domains.json"
  ],
  "indexFiles": [
   "mangayomi/anime_index.json"
@@ -56,12 +39,6 @@
    "file": "mangayomi/javascript/anime/src/ko/ohli24.js",
    "depth": "detail",
    "key": "ohli24"
-  },
-  {
-   "name": "애니마루 (망가요미)",
-   "file": "mangayomi/javascript/anime/src/ko/animaru.js",
-   "depth": "detail",
-   "key": "animaru"
   },
   {
    "name": "실시간스포츠1 (망가요미)",
