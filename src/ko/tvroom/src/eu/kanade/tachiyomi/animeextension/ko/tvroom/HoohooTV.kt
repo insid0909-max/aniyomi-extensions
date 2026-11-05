@@ -33,6 +33,7 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import rx.Observable
 import java.io.ByteArrayInputStream
 import java.util.Calendar
 import java.util.TimeZone
@@ -403,6 +404,10 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
     override fun latestUpdatesRequest(page: Int): Request = savedRule(false, page) ?: GET(listUrl("/tv/all", page), h())
 
     override fun latestUpdatesParse(response: Response): AnimesPage = parseList(response.asDoc())
+
+    // 검색 띄어쓰기: 결과가 없으면 띄어쓰기 뺀 검색어 등으로 다시 찾음(SearchSpacing)
+    override fun fetchSearchAnime(page: Int, query: String, filters: AnimeFilterList): Observable<AnimesPage> =
+        SearchSpacing.wrap(page, query) { q, p -> super.fetchSearchAnime(p, q, filters) }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         // 웹뷰 등에서 복사한 새 주소를 붙여 넣으면 그 주소로 바로 바꿈 (작품 주소면 그 작품, 아니면 첫 화면 목록)
