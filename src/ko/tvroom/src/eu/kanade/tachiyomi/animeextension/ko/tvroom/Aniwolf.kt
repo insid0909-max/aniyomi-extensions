@@ -35,6 +35,7 @@ import okhttp3.Response
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import rx.Observable
 import java.io.ByteArrayInputStream
 import java.net.URLDecoder
 import java.text.SimpleDateFormat
@@ -119,6 +120,10 @@ class Aniwolf : AnimeHttpSource(), ConfigurableAnimeSource {
         GET(listUrl(TabRule.read(prefs(), false, ruleSizes()) ?: DEFAULT_LATEST, page), h())
 
     override fun latestUpdatesParse(response: Response): AnimesPage = parseList(response)
+
+    // 검색 띄어쓰기: 결과가 없으면 띄어쓰기 뺀 검색어 등으로 다시 찾음(SearchSpacing)
+    override fun fetchSearchAnime(page: Int, query: String, filters: AnimeFilterList): Observable<AnimesPage> =
+        SearchSpacing.wrap(page, query) { q, p -> super.fetchSearchAnime(p, q, filters) }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         val q = query.trim()

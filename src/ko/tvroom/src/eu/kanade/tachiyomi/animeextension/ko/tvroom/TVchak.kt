@@ -32,6 +32,7 @@ import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import rx.Observable
 import java.io.ByteArrayInputStream
 import java.net.URLDecoder
 import java.net.URLEncoder
@@ -325,6 +326,10 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     private fun defaultLatest(): Request = GET("$baseUrl/", h())
 
     override fun latestUpdatesParse(response: Response): AnimesPage = parseList(response.asDoc())
+
+    // 검색 띄어쓰기: 결과가 없으면 띄어쓰기 뺀 검색어 등으로 다시 찾음(SearchSpacing)
+    override fun fetchSearchAnime(page: Int, query: String, filters: AnimeFilterList): Observable<AnimesPage> =
+        SearchSpacing.wrap(page, query) { q, p -> super.fetchSearchAnime(p, q, filters) }
 
     override fun searchAnimeRequest(page: Int, query: String, filters: AnimeFilterList): Request {
         // 사이트 작품 주소를 붙여 넣으면 그 작품을 바로 보여 줌 (주소 번호가 달라도 됨)
