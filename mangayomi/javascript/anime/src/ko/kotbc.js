@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.14",
+    "version": "0.1.15",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/kotbc.js"
@@ -139,6 +139,33 @@ function decodeHtml(s) {
 }
 
 /** 화면 안의 Inertia 화면 데이터 (data-page) */
+// 글자 종류(charset)가 없는 JSON 응답을 망가요미가 Latin-1 로 넘길 때 UTF-8 로 되돌림 (북코 fixUtf8 과 같음)
+function kotbcUtf8(s) {
+    s = String(s || "");
+    if (/[^\u0000-\u00ff]/.test(s) || !/[\u0080-\u00ff]/.test(s)) return s;
+    let out = "";
+    for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+        let n = 0;
+        let cp = 0;
+        if (c >= 0xc2 && c <= 0xdf) { n = 1; cp = c & 0x1f; }
+        else if (c >= 0xe0 && c <= 0xef) { n = 2; cp = c & 0x0f; }
+        else if (c >= 0xf0 && c <= 0xf4) { n = 3; cp = c & 0x07; }
+        let ok = n > 0 && i + n < s.length + 1;
+        for (let k = 1; ok && k <= n; k++) {
+            const t = s.charCodeAt(i + k);
+            if ((t & 0xc0) !== 0x80) ok = false; else cp = (cp << 6) | (t & 0x3f);
+        }
+        if (ok) {
+            out += String.fromCodePoint(cp);
+            i += n;
+        } else {
+            out += s[i];
+        }
+    }
+    return out;
+}
+
 function pageData(html) {
     const m = /<script[^>]*data-page=["']app["'][^>]*>([\s\S]*?)<\/script>/.exec(html);
     if (m) {
@@ -657,6 +684,7 @@ class DefaultExtension extends MProvider {
             throw new Error(`화면 데이터를 찾지 못했어요 [${t || html.replace(/\s+/g, " ").substring(0, 60)}]`);
         }
         data.props._component = data.component || "";
+        data.props._version = data.version || "";
         return data.props;
     }
 
@@ -819,6 +847,34 @@ class DefaultExtension extends MProvider {
         const add = (list) => {
             for (const e of list || []) if (e && (e.body || e.slug) && (e.title !== undefined || e.sort !== undefined)) raw.push(e);
         };
+        // 2026-11-05 같은 사이트 시스템(북코)이 바뀜: episodes 가 [id, "47화", 회차slug, "2026-05-10"] 짧은 목록(앞 10개),
+        // 전체는 화면처럼 Inertia 부분 새로고침(only=episodesAll)으로 받음 → props.episodesAll.rows (같은 모양). 코티비씨도 같을 것으로 보고 대비
+        if (Array.isArray(props.episodes) && props.episodes.length && Array.isArray(props.episodes[0])) {
+            let rows = props.episodes;
+            if ((Number(props.episodesTotal) || 0) > rows.length) {
+                try {
+                    const h = Object.assign(this.getHeaders(), {
+                        "X-Inertia": "true",
+                        "X-Inertia-Partial-Component": props._component || "contents/List",
+                        "X-Inertia-Partial-Data": "episodesAll",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "Accept": "text/html, application/xhtml+xml",
+                    });
+                    if (props._version) h["X-Inertia-Version"] = String(props._version);
+                    await siteWait();
+                    const r = await this.client.get(this.getBaseUrl() + encodeURI(path), h);
+                    const all = ((JSON.parse(kotbcUtf8(r.body)).props || {}).episodesAll || {}).rows;
+                    if (Array.isArray(all) && all.length > rows.length) rows = all;
+                } catch (e) {
+                    // 앞 10개만
+                }
+            }
+            const n = rows.length;
+            props.episodes = rows.filter((r) => Array.isArray(r) && r[2]).map((r, i) => {
+                const num = /\d+(?:\.\d+)?/.exec(String(r[1] || ""));
+                return { id: r[0], title: String(r[1] || ""), slug: r[2], published_at: r[3] || null, sort: num ? Number(num[0]) : n - i };
+            });
+        }
         add(epList(props.episodes));
         if (!raw.length) add(epList(o.episodes));
         // 회차는 100개씩 나뉨 → 나머지 쪽도 받음
