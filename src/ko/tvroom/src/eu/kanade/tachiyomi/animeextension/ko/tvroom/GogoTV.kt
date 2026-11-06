@@ -377,6 +377,8 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
             status = when {
                 air != null -> SAnime.ONGOING
                 latest > 0 || periodText != null -> SAnime.COMPLETED
+                // 영화(날짜 있는 회차 없음): 완결 (전엔 "알 수 없음")
+                newest == null && epLabels.isNotEmpty() -> SAnime.COMPLETED
                 else -> SAnime.UNKNOWN
             }
             val head = if (latest > 0) {
@@ -408,7 +410,10 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
             href to a.text().replace(ICON_REGEX, "").trim().ifEmpty { "바로보기" }
         }.distinctBy { it.first }
 
-    override fun episodeListParse(response: Response): List<SEpisode> {
+    // 영화 회차 이름은 "본편" 으로 통일 (MovieName)
+    override fun episodeListParse(response: Response): List<SEpisode> = MovieName.unify(parseEpisodes(response))
+
+    private fun parseEpisodes(response: Response): List<SEpisode> {
         val doc = response.asDoc()
         val links = episodeLinks(doc)
         // 회차 주소는 만료되므로 "작품 주소#ep=회차 이름" 으로 저장하고, 재생할 때 작품 페이지에서 새 주소를 받음

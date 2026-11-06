@@ -588,7 +588,10 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     // ================= 회차 =================
-    override fun episodeListParse(response: Response): List<SEpisode> {
+    // 영화 회차 이름은 "본편" 으로 통일 (MovieName)
+    override fun episodeListParse(response: Response): List<SEpisode> = MovieName.unify(parseEpisodes(response))
+
+    private fun parseEpisodes(response: Response): List<SEpisode> {
         val doc = response.asDoc()
         val boxes = doc.select("#tagContent .play_list_box").ifEmpty { doc.select(".content_playlist") }
         val tabs = doc.select("#tag .swiper-slide, #tag a").map { it.text().trim() }

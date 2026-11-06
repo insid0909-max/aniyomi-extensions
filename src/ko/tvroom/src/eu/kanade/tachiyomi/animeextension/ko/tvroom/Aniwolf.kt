@@ -266,7 +266,10 @@ class Aniwolf : AnimeHttpSource(), ConfigurableAnimeSource {
 
     override fun episodeListRequest(anime: SAnime): Request = GET(baseUrl + workOf(anime.url), h())
 
-    override fun episodeListParse(response: Response): List<SEpisode> {
+    // 영화 회차 이름은 "본편" 으로 통일 (MovieName)
+    override fun episodeListParse(response: Response): List<SEpisode> = MovieName.unify(parseEpisodes(response))
+
+    private fun parseEpisodes(response: Response): List<SEpisode> {
         val doc = Jsoup.parse(response.body.string(), response.request.url.toString())
         val eps = episodesOf(doc)
         val used = HashSet<Float>()
