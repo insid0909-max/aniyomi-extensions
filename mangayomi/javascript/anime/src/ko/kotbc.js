@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.15",
+    "version": "0.1.16",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/kotbc.js"
@@ -828,10 +828,15 @@ class DefaultExtension extends MProvider {
                 }
                 return { list: hits.map((o) => this.cardOf(o)), hasNextPage: got.hasNext && hits.length === got.items.length };
             }
+            // 사이트 화면이 제대로 왔는데 맞는 작품이 없으면 "검색 결과 없음"(오류 화면 대신 빈 목록, 2026-11-06 "폴2").
+            // 확인된 검색 주소(/?keyword=)가 응답했으면 다른 옛 주소는 더 시험하지 않음
+            if (props && i === 0) return { list: [], hasNextPage: false };
             fails.push(`${i + 1}:0`);
         }
         if (page > 1) return { list: [], hasNextPage: false };
-        throw new Error(`검색 결과가 없어요 [${fails.join(" ")}]`);
+        // 어느 주소든 사이트가 응답했으면 결과 없음, 모두 연결 실패·오류일 때만 오류
+        if (fails.some((f) => / *:0$/.test(f))) return { list: [], hasNextPage: false };
+        throw new Error(`검색 중 사이트에 연결되지 않았어요 [${fails.join(" ")}]`);
     }
 
     // ================= 작품 정보 · 회차 =================
