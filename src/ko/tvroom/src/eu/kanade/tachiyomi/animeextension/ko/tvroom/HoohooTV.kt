@@ -577,8 +577,8 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             }
             description = listOfNotNull(head, doc.selectFirst(".overview")?.text()?.trim()?.ifEmpty { null })
                 .joinToString("\n\n").ifEmpty { null }
-            if (episodes.isEmpty()) {
-                // 영화(회차 없음): 다시 확인할 필요 없음
+            if (episodes.isEmpty() || isMovieLike(episodes)) {
+                // 영화(회차 없음 또는 "0화" 하나뿐): 다시 확인할 필요 없음
                 status = SAnime.COMPLETED
                 update_strategy = AnimeUpdateStrategy.ONLY_FETCH_ONCE
             } else if (latest > 0) {
@@ -612,6 +612,10 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
 
     private class EpisodeInfo(val season: Int, val episode: String, val label: String, val date: String)
 
+    /** 영화: 사이트가 회차를 "시즌 1 · 0화" 하나로 줌(2026-11-06 스트리트 파이터) → 회차 이름 "본편"·상태 완결 */
+    private fun isMovieLike(list: List<EpisodeInfo>): Boolean =
+        list.size == 1 && list[0].episode.trim().let { it.isEmpty() || it == "0" } && epDate(list[0]) <= 0L
+
     // ================= 회차 =================
     override fun episodeListRequest(anime: SAnime): Request = GET(baseUrl + anime.url, h())
 
@@ -623,6 +627,16 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             return listOf(
                 SEpisode.create().apply {
                     url = path
+                    name = "본편"
+                    episode_number = 1f
+                },
+            )
+        }
+        if (isMovieLike(list)) {
+            val e = list[0]
+            return listOf(
+                SEpisode.create().apply {
+                    url = "$path?season=${e.season}&episode=${e.episode}"
                     name = "본편"
                     episode_number = 1f
                 },
