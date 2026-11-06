@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.3",
+    "version": "0.1.4",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/mimitv.js"
@@ -1031,5 +1031,31 @@ function notesFilters(key) {
     DefaultExtension.prototype.getFilterList = function () {
         const list = base.apply(this, arguments) || [];
         return list.concat([1, 2, 3].map(() => ({ type_name: "HeaderFilter", name: "\u3000", _status: true })));
+    };
+})();
+
+// ---------- 영화 회차 이름 통일 (2026-11-06, 사용자 "통일시켜") ----------
+// 확장마다 영화 회차가 "바로보기"·"한글자막"·"1회 · 바로보기"·"애니감상"·"1. 극장판 X" 처럼 달라서 → "1. 본편" 으로 (애니요미는 "본편").
+// 회차가 하나뿐이고 회차 번호(N화·N회·EN)가 없을 때만 (자막·더빙 같은 구분은 괄호로), 상태를 모르면 완결
+(function () {
+    const base = DefaultExtension.prototype.getDetail;
+    const core = (n) => String(n || "").replace(/^\s*\d+\s*(?:회)?\s*[.·]\s*/, "").replace(/\s*\(\d{2}\.\d{2}\)\s*$/, "").trim();
+    const hasNo = (n) => /\d+\s*(?:화|회)|(?:^|\s)E\d+/i.test(core(n));
+    const movieName = (n) => {
+        const v = (core(n).match(/한글\s*자막|영어\s*자막|자막|더빙|무삭제|감독판|확장판|극장판/g) || [])
+            .map((x) => x.replace(/\s+/g, "")).filter((x) => x !== "극장판");
+        return v.length ? `본편 (${[...new Set(v)].join(" · ")})` : "본편";
+    };
+    DefaultExtension.prototype.getDetail = async function (url) {
+        const d = await base.apply(this, arguments);
+        const eps = (d && d.episodes) || [];
+        const variant = /바로\s*보기|본편|자막|더빙|애니감상/;
+        const movie = eps.length === 1 ? !hasNo(eps[0].name)
+            : eps.length > 1 && eps.every((e) => !hasNo(e.name) && variant.test(core(e.name)));
+        if (!movie) return d;
+        // 망가요미는 이름 맨 앞 숫자로 회차 번호를 매김 → 숫자가 없으면 "번호를 매길 수 없음" 경고가 떠서 "1. 본편" (사용자, 2026-11-06)
+        eps.forEach((e, i) => { e.name = `${i + 1}. ${movieName(e.name)}`; });
+        if (d.status === 5 || d.status === undefined) d.status = 1;
+        return d;
     };
 })();
