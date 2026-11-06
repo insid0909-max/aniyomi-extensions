@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.17",
+    "version": "0.1.18",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/kotbc.js"
@@ -1375,7 +1375,8 @@ function notesFilters(key) {
         const movie = eps.length === 1 ? !hasNo(eps[0].name)
             : eps.length > 1 && eps.every((e) => !hasNo(e.name) && variant.test(core(e.name)));
         if (!movie) return d;
-        for (const e of eps) e.name = movieName(e.name);
+        // 망가요미는 이름 맨 앞 숫자로 회차 번호를 매김 → 숫자가 없으면 "번호를 매길 수 없음" 경고가 떠서 "1. 본편" (사용자, 2026-11-06)
+        eps.forEach((e, i) => { e.name = `${i + 1}. ${movieName(e.name)}`; });
         if (d.status === 5 || d.status === undefined) d.status = 1;
         return d;
     };
