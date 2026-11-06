@@ -630,7 +630,10 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         }
         val multiSeason = list.map { it.season }.distinct().size > 1
         // 오래된 회차가 1번, 앱에는 최신 회차가 위로
-        val sorted = list.sortedWith(compareBy({ it.season }, { it.episode.toFloatOrNull() ?: 0f }))
+        // 사이트가 같은 회차를 두 번 줄 때가 있음(신인감독 김연경 시즌2 "2화"·"3화" 날짜 있는 것·없는 것, 2026-11-06)
+        // → 주소가 같아 앱이 하나를 지우고 번호에 빈칸("Missing")이 생김 → 날짜 있는 쪽 하나만 남기고 번호를 이어 붙임
+        val sorted = list.sortedWith(compareBy({ it.season }, { it.episode.toFloatOrNull() ?: 0f }, { if (epDate(it) > 0) 0 else 1 }))
+            .distinctBy { it.season to it.episode }
         return sorted.mapIndexed { i, e ->
             SEpisode.create().apply {
                 url = "$path?season=${e.season}&episode=${e.episode}"
