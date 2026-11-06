@@ -283,7 +283,10 @@ class Ohli24 : AnimeHttpSource(), ConfigurableAnimeSource {
         Ep(path, label, EP_NUM_REGEX.find(label)?.groupValues?.get(1)?.toFloatOrNull(), date)
     }
 
-    override fun episodeListParse(response: Response): List<SEpisode> {
+    // 영화 회차 이름은 "본편" 으로 통일 (MovieName)
+    override fun episodeListParse(response: Response): List<SEpisode> = MovieName.unify(parseEpisodes(response))
+
+    private fun parseEpisodes(response: Response): List<SEpisode> {
         val doc = Jsoup.parse(response.body.string(), response.request.url.toString())
         val eps = episodesOf(doc)
         val used = HashSet<Float>()
