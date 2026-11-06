@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.16",
+    "version": "0.1.17",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/anilife.js"
@@ -944,17 +944,24 @@ function notesFilters(key) {
     DefaultExtension.prototype.search = async function (query, page, filters) {
         const r = await base.apply(this, arguments);
         const q = String(query || "").trim();
-        if (!q || Number(page) > 1 || /[/.:]/.test(q) || (r && r.list && r.list.length)) return r;
-        const squash = (s) => String(s || "").normalize("NFC").replace(/[\s\-_:·.,!?~'"()[\]{}]/g, "").toLowerCase();
+        if (!q || Number(page) > 1 || /^(?:https?:\/\/|[\w-]+(?:\.[\w-]+)+(?:[/?#]|$))/i.test(q) || (r && r.list && r.list.length)) return r;
+        const squash = (s) => String(s || "").normalize("NFC").replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
         const want = squash(q);
         if (want.length < 2) return r;
         const joined = q.replace(/\s+/g, "");
         const tries = [];
         const add = (t) => { if (t && t.length >= 2 && t !== q && tries.indexOf(t) < 0) tries.push(t); };
+        // 사이트 검색은 쉼표·쌍점·물결·괄호·한자 같은 기호가 있으면 못 찾음("밑도 끝도 없이, 너다" 0개, 2026-11-06 검색 검사)
+        // → 기호를 뺀 검색어, 앞쪽 단어만으로 먼저 찾아 봄
+        const plain = q.replace(/[^\p{L}\p{N}\s]+/gu, " ").replace(/[\u3400-\u9fff]+/g, " ").replace(/\s+/g, " ").trim();
+        const words = plain.split(" ").filter((w) => w);
+        add(plain);
+        if (words.length > 2) add(words.slice(0, words.length - 1).join(" "));
+        if (words.length > 1) add(words.slice(0, Math.ceil(words.length / 2)).join(" "));
         add(joined);
         if (joined.length > 2) add(joined.substring(0, Math.max(2, Math.ceil(joined.length / 2))));
         for (let i = 0; i + 2 <= joined.length; i++) add(joined.substring(i, i + 2));
-        for (const t of tries.slice(0, 6)) {
+        for (const t of tries.slice(0, 8)) {
             try {
                 const r2 = await base.call(this, t, 1, filters);
                 const hit = ((r2 && r2.list) || []).filter((x) => squash(x && x.name).includes(want));
