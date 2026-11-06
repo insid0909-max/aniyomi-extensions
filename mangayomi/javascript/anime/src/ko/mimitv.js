@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.2",
+    "version": "0.1.3",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/mimitv.js"
@@ -531,7 +531,8 @@ class DefaultExtension extends MProvider {
         let hasNextPage = false;
         if (pag) {
             const after = pag[1].split(/<li class="active">/)[1] || "";
-            hasNextPage = /<a href="[^"]*page=\d+">\s*\d+\s*<\/a>/.test(after);
+            // 쪽 번호는 10개씩 묶음 → 10·20쪽 뒤에는 숫자 대신 "다음" 링크 (2026-11-06, 전엔 10쪽·240개에서 멈춤)
+            hasNextPage = /<a\s+href="[^"]*page=\d+"[^>]*>\s*(?:\d+|다음)\s*<\/a>/.test(after);
         }
         return { list, hasNextPage };
     }
