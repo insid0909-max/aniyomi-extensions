@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.23",
+    "version": "0.1.24",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -914,8 +914,9 @@ class DefaultExtension extends MProvider {
         const script = "(function(){var n=0,played=false,rx=[],urls=[];" +
             // 0.1.19 시험(사용자 제안): 이 화면이 요청한 주소를 fetch·XHR·PerformanceObserver 로 모음
             "function add(u){if(!u)return;u=String(u);if(urls.indexOf(u)===-1)urls.push(u);}" +
-            "try{var of=window.fetch;if(of){window.fetch=function(){try{var a=arguments[0];add(a&&a.url?a.url:a);}catch(e){}return of.apply(this,arguments);};}}catch(e){}" +
-            "try{var oo=XMLHttpRequest.prototype.open;if(oo){XMLHttpRequest.prototype.open=function(m,u){try{add(u);}catch(e){}return oo.apply(this,arguments);};}}catch(e){}" +
+            // 0.1.24(사용자 v2): 응답 주소(넘겨준 뒤 최종 주소)도 모음
+            "try{var of=window.fetch;if(of){window.fetch=function(){var g=arguments;try{var a=g[0];add(a&&a.url?a.url:a);}catch(e){}var pr=of.apply(this,g);try{pr.then(function(r){try{add(r&&r.url);}catch(e2){}}).catch(function(){});}catch(e){}return pr;};}}catch(e){}" +
+            "try{var oo=XMLHttpRequest.prototype.open;if(oo){XMLHttpRequest.prototype.open=function(m,u){var x=this;try{add(u);}catch(e){}try{x.addEventListener('load',function(){try{add(x.responseURL);}catch(e2){}});}catch(e){}return oo.apply(this,arguments);};}}catch(e){}" +
             "try{new PerformanceObserver(function(l){l.getEntries().forEach(function(e){add(e.name);});}).observe({type:'resource',buffered:true});}catch(e){}" +
             "function fromUrls(){for(var i=0;i<urls.length;i++){var x=urls[i];if(/creatorofvideo\\.com.*\\.m3u8|\\.(m3u8|mp4)(\\?|$)/i.test(x))return x;var m=fromMu(x);if(m)return m;}return null;}" +
             // 안쪽 플레이어가 바깥 화면으로 보내는 신호(postMessage)를 모아 둠. 영상 주소가 들어 있으면 그 주소를 씀
@@ -928,6 +929,13 @@ class DefaultExtension extends MProvider {
             "if(/creatorofvideo\\.com.*\\.m3u8|\\.m3u8/i.test(d))return d.split('&')[0];}catch(e){}return null;}" +
             "function pickFile(it){if(!it)return null;if(it.file)return abs(it.file);" +
             "if(it.sources&&it.sources.length){for(var i=0;i<it.sources.length;i++){var s=it.sources[i];if(s&&s.file)return abs(s.file);}}return null;}" +
+            // 0.1.24(사용자 v2): JW 플레이어 사건(ready·playlist·playlistItem·play) 듣기 — 설정을 받는 순간 영상 주소를 모음
+            "var hooked=false,jwFile=null;function hookJw(){try{if(!window.jwplayer)return false;var p=null;try{p=window.jwplayer();}catch(e){}if(!p||!p.on||!p.id)return false;" +
+            "function g(it){var f=pickFile(it);if(f){add(f);jwFile=f;}}" +
+            "p.on('ready',function(){try{g(p.getPlaylistItem&&p.getPlaylistItem());}catch(e){}});" +
+            "p.on('playlist',function(e){try{var pl=(e&&e.playlist)||(p.getPlaylist&&p.getPlaylist())||[];for(var i=0;i<pl.length;i++)g(pl[i]);}catch(x){}});" +
+            "p.on('playlistItem',function(e){try{g((e&&e.item)||(p.getPlaylistItem&&p.getPlaylistItem()));}catch(x){}});" +
+            "p.on('play',function(){try{g(p.getPlaylistItem&&p.getPlaylistItem());}catch(e){}});return true;}catch(e){return false;}}" +
             "function jw(){try{if(!window.jwplayer)return null;var players=[];" +
             "try{if(jwplayer().id||jwplayer().getPlaylist)players.push(jwplayer());}catch(e){}" +
             "document.querySelectorAll('[id]').forEach(function(el){try{var p=jwplayer(el.id);if(p&&p.getPlaylist)players.push(p);}catch(e){}});" +
@@ -943,7 +951,7 @@ class DefaultExtension extends MProvider {
             "var mu=fromMu(name);if(mu)return mu;}" +
             "var v=w.document.querySelector('video');var s=v&&(v.currentSrc||v.src);" +
             "if(s&&/^https?:/.test(s)&&(/m3u8|creatorofvideo|mp4/i.test(s)))return s;}catch(e){}return null;}" +
-            "function find(){var u=jw()||scan(window)||fromRx()||fromUrls();if(u)return u;" +
+            "function find(){var u=jwFile||jw()||scan(window)||fromRx()||fromUrls();if(u)return u;" +
             "var f=document.querySelectorAll('iframe');for(var i=0;i<f.length;i++){try{u=scan(f[i].contentWindow);if(u)return u;}catch(e){}}return null;}" +
             "function inner(){var f=document.querySelectorAll('iframe');for(var i=0;i<f.length;i++){" +
             "var s=f[i].src||f[i].getAttribute('data-src')||'';" +
@@ -952,7 +960,7 @@ class DefaultExtension extends MProvider {
             "try{var j=window.jwplayer&&window.jwplayer();if(j){if(j.setMute)j.setMute(true);if(j.play)j.play();}}catch(e){}" +
             "var v=document.querySelector('video');if(v){v.muted=true;try{var q=v.play();if(q&&q.catch)q.catch(function(){});}catch(e){}}" +
             "var b=document.querySelector('.jw-icon-display,.jw-display-icon-container,.vjs-big-play-button,[aria-label=\"Play\"],.play-button');if(b)b.click();}" +
-            "var t=setInterval(function(){n++;mute();var u=find();" +
+            "var t=setInterval(function(){n++;mute();if(!hooked&&n%2===0&&hookJw())hooked=true;var u=find();" +
             "if(u){clearInterval(t);window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:u,p:played,r:location.href}));return;}" +
             // 0.1.22 진단: 짧은 주소 모양, 안쪽으로 옮기기 전 바깥 화면 주소는 # 뒤에 담아 감(서버로 안 감)
             "function jwst(){try{var j=window.jwplayer&&window.jwplayer();if(!j)return '';var pl=(j.getPlaylist&&j.getPlaylist())||[];return ' (상태 '+(j.getState?j.getState():'?')+' · 목록 '+pl.length+' · 설정 '+(j.getConfig&&j.getConfig()?'Y':'N')+')';}catch(e){return ' (상태 오류)';}}" +
@@ -961,15 +969,15 @@ class DefaultExtension extends MProvider {
             "if(" + (stay ? "false" : "true") + "&&n>=12&&n<=40){var s=inner();if(s){clearInterval(t);" +
             "var o=location.host+': '+urls.map(sh).join(' , ');location.href=s+(s.indexOf('#')<0?'#':'&')+'hhout='+encodeURIComponent(o.substring(0,500));return;}}" +
             "if(n===" + playAt + "||n===" + (playAt + 15) + "||n===" + (playAt + 30) + ")tryPlay();" +
-            "if(n===70){clearInterval(t);var v=document.querySelector('video');" +
+            "if(n===110){clearInterval(t);var v=document.querySelector('video');" +
             "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:null,p:played," +
-            "d:location.host+' | jw:'+(window.jwplayer?'Y':'N')+jwst()+' | video:'+(v?'Y':'N')+' | 주소'+urls.length+' | 신호'+rx.length+(rx.length?' '+rx.join(' / ').substring(0,140):'')" +
+            "d:location.host+' | jw:'+(window.jwplayer?'Y':'N')+jwst()+' | hook:'+(hooked?'Y':'N')+' | video:'+(v?'Y':'N')+' | 주소'+urls.length+' | 신호'+rx.length+(rx.length?' '+rx.join(' / ').substring(0,140):'')" +
             "+' || 안쪽 주소: '+urls.map(sh).join(' , ').substring(0,700)+outer()}));}" +
             "},300);})();";
         try {
-            const timeout = new Promise((res) => setTimeout(() => res(null), 36000));
+            const timeout = new Promise((res) => setTimeout(() => res(null), 50000));
             const res = await Promise.race([
-                evaluateJavascriptViaWebview(player, { "Referer": pageUrl }, [script], 35),
+                evaluateJavascriptViaWebview(player, { "Referer": pageUrl }, [script], 48),
                 timeout,
             ]);
             if (!res) {
