@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.25",
+    "version": "0.1.26",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -28,6 +28,21 @@ const PORTAL_URL = "https://hoohootv1.com/";
 // 주소 안내 글(텔레그래프, 어디서나 열림)·저장소 주소 목록 — 애니요미 후후티비와 같게 (0.1.21)
 const GUIDE_URL = "https://telegra.ph/%ED%9B%84%ED%9B%84%ED%8B%B0%EB%B9%84-%EC%B5%9C%EC%8B%A0-%EC%A3%BC%EC%86%8C-09-03";
 const HH_TAP = String.raw`var wins=[],prox=[],outN=0;function wrapWin(w){if(!w||w===window)return w;for(var i=0;i<wins.length;i++)if(wins[i]===w)return prox[i];var P;try{P=new Proxy(w,{get:function(t,k){if(k==='postMessage')return function(d){try{var s=typeof d==='string'?d:JSON.stringify(d);rx.push('OUT>'+s);outN++;add(s);}catch(e){}return t.postMessage.apply(t,arguments);};var v;try{v=t[k];}catch(e){return undefined;}return typeof v==='function'?v.bind(t):v;},set:function(t,k,v){try{t[k]=v;}catch(e){}return true;}});}catch(e){return w;}wins.push(w);prox.push(P);return P;}try{var fd=Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,'contentWindow');if(fd&&fd.get)Object.defineProperty(HTMLIFrameElement.prototype,'contentWindow',{configurable:true,get:function(){var w;try{w=fd.get.call(this);}catch(e){return null;}return wrapWin(w);}});}catch(e){}try{var sd=Object.getOwnPropertyDescriptor(MessageEvent.prototype,'source');if(sd&&sd.get)Object.defineProperty(MessageEvent.prototype,'source',{configurable:true,get:function(){var w=sd.get.call(this);return wrapWin(w);}});}catch(e){}`;
+/** 자막 신호 {"type":"subtitlesData","data":"[{\"source\":…,\"label\":…}]"} → [{file, label}] */
+function subsOf(raw) {
+    try {
+        if (!raw) return [];
+        let o = typeof raw === "string" ? JSON.parse(raw) : raw;
+        let d = o && o.data !== undefined ? o.data : o;
+        if (typeof d === "string") d = JSON.parse(d);
+        if (!Array.isArray(d)) d = d && (d.tracks || d.subtitles) || [];
+        return d.map((x) => ({ file: String(x.source || x.file || x.src || ""), label: String(x.label || x.lang || x.language || "자막") }))
+            .filter((x) => /^https?:\/\//.test(x.file));
+    } catch (e) {
+        return [];
+    }
+}
+
 const DOMAIN_LIST_URL = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/domains.json";
 const SITE_MARKER = "HOOHOO TV";
 const LABEL = "후후티비";
@@ -844,7 +859,10 @@ class DefaultExtension extends MProvider {
         const keys = Object.keys(MEDIA_CACHE);
         if (keys.length >= 30) delete MEDIA_CACHE[keys[0]];
         MEDIA_CACHE[path] = { media: found.media, referer: found.referer, at: Date.now() };
-        return this.toVideos(found.media, found.referer);
+        const vids = await this.toVideos(found.media, found.referer);
+        // 바깥 화면이 플레이어에 보낸 자막 신호(subtitlesData)의 자막을 붙임 (0.1.26)
+        if (found.subs && found.subs.length) for (const v of vids) v.subtitles = found.subs;
+        return vids;
     }
 
     /** 회차 화면의 플레이어 주소들: 기본 iframe + 다른 서버 버튼(data-src·data-url·onclick 등) */
@@ -966,7 +984,8 @@ class DefaultExtension extends MProvider {
             "var v=document.querySelector('video');if(v){v.muted=true;try{var q=v.play();if(q&&q.catch)q.catch(function(){});}catch(e){}}" +
             "var b=document.querySelector('.jw-icon-display,.jw-display-icon-container,.vjs-big-play-button,[aria-label=\"Play\"],.play-button');if(b)b.click();}" +
             "var t=setInterval(function(){n++;mute();if(!hooked&&n%2===0&&hookJw())hooked=true;var u=find();" +
-            "if(u){clearInterval(t);window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:u,p:played,r:location.href}));return;}" +
+            "if(u){clearInterval(t);var sb=null;for(var si=rx.length-1;si>=0;si--){if(/subtitlesData/.test(rx[si])){sb=rx[si].replace(/^OUT>|^IN>/,'');break;}}" +
+            "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:u,p:played,r:location.href,sb:sb}));return;}" +
             // 0.1.22 진단: 짧은 주소 모양, 안쪽으로 옮기기 전 바깥 화면 주소는 # 뒤에 담아 감(서버로 안 감)
             "function jwst(){try{var j=window.jwplayer&&window.jwplayer();if(!j)return '';var pl=(j.getPlaylist&&j.getPlaylist())||[];return ' (상태 '+(j.getState?j.getState():'?')+' · 목록 '+pl.length+' · 설정 '+(j.getConfig&&j.getConfig()?'Y':'N')+')';}catch(e){return ' (상태 오류)';}}" +
             "function outer(){try{var m=/[#&]hhout=([^&]*)/.exec(location.hash);return m?' || 바깥 '+decodeURIComponent(m[1]):'';}catch(e){return '';}}" +
@@ -974,11 +993,11 @@ class DefaultExtension extends MProvider {
             "if(" + (stay ? "false" : "true") + "&&n>=12&&n<=40){var s=inner();if(s){clearInterval(t);" +
             "var o=location.host+': '+urls.map(sh).join(' , ');location.href=s+(s.indexOf('#')<0?'#':'&')+'hhout='+encodeURIComponent(o.substring(0,500));return;}}" +
             "if(n===" + playAt + "||n===" + (playAt + 15) + "||n===" + (playAt + 30) + ")tryPlay();" +
-            // 15초 동안 바깥→안쪽 신호가 없으면(스크립트가 들어가기 전에 지나감) 안쪽 플레이어를 한 번 새로고침해 주고받기를 다시 하게 함
-            "if(n===50&&outN===0&&!window.__hhRe){window.__hhRe=1;try{var fr=document.querySelector('iframe');if(fr&&fr.src)fr.src=fr.src;}catch(e){}}" +
+            // 15초 동안 영상 주소가 안 잡히면(첫 신호는 스크립트가 들어가기 전에 지나감) 안쪽 플레이어를 한 번 새로고침해 주고받기를 다시 하게 함 (0.1.26: 자막 신호만 잡혀도 새로고침)
+            "if(n===50&&!window.__hhRe){window.__hhRe=1;try{var fr=document.querySelector('iframe');if(fr&&fr.src)fr.src=fr.src;}catch(e){}}" +
             "if(n===110){clearInterval(t);var v=document.querySelector('video');" +
             "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:null,p:played," +
-            "d:location.host+' | jw:'+(window.jwplayer?'Y':'N')+jwst()+' | hook:'+(hooked?'Y':'N')+' | video:'+(v?'Y':'N')+' | 주소'+urls.length+' | 신호'+rx.length+'(바깥→안 '+outN+')'+(rx.length?' '+rx.join(' / ').substring(0,500):'')" +
+            "d:location.host+' | jw:'+(window.jwplayer?'Y':'N')+jwst()+' | hook:'+(hooked?'Y':'N')+' | video:'+(v?'Y':'N')+' | 주소'+urls.length+' | 신호'+rx.length+'(바깥→안 '+outN+')'+(rx.length?' '+rx.map(function(x){var m=/\"type\"\\s*:\\s*\"([^\"]+)\"/.exec(x);return (m?'['+m[1]+'] ':'')+x.substring(0,160);}).join(' || ').substring(0,1200):'')" +
             "+' || 안쪽 주소: '+urls.map(sh).join(' , ').substring(0,700)+outer()}));}" +
             "},300);})();";
         try {
@@ -999,7 +1018,7 @@ class DefaultExtension extends MProvider {
             }
             if (!o || !/^https?:\/\//.test(String(o.u || ""))) return null;
             if (o.p && playerHost && playAt > 2) this.rememberAutoplay(playerHost);
-            return { media: String(o.u), referer: /^https?:\/\//.test(String(o.r || "")) ? String(o.r) : player };
+            return { media: String(o.u), referer: /^https?:\/\//.test(String(o.r || "")) ? String(o.r) : player, subs: subsOf(o.sb) };
         } catch (e) {
             return null;
         }
