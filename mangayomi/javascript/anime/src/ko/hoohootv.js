@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.28",
+    "version": "0.1.29",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -22,6 +22,7 @@ const mangayomiSources = [{
 //   ③ v3 도청 웹뷰: 바깥 화면에 머물며 요청·신호(양방향)·JW 사건 관찰 + 자막 신호(subtitlesData) 캡처
 // 0.1.28: 재프레이밍에서 안쪽이 보낸 확인 신호(contentChecked)에 진짜 자막 신호(subtitlesData)를 그대로 전달(악수 완성)
 //   + 모든 실패 경로에 진단 기록(재프레이밍 무응답·웹뷰 오류·플레이어 가져오기 실패) + 웹뷰 현재 주소 표시
+// 0.1.29: 프레임 문서가 바뀔 때 관찰 코드 다시 연결, 로딩 상태·제목·본문 일부 진단
 // jwpcdn 회차: creatorofvideo.com HLS / JW ping 의 mu= 파라미터를 우선 추출.
 const HH_KIND = 0; // 0 = 전체, 1 = 영화, 2 = 드라마
 const DEFAULT_BASE_URL = "https://dc.hoohootv464.xyz";
@@ -377,6 +378,7 @@ const REFRAME_SCRIPT = String.raw`(function(){
   var n = 0, played = false, hooked = false;
   var urls = [], rx = [];
   var inner = null, frame = null;
+  var watchedDoc = null, loads = 0, frameError = '';
   var HHSUBS = null; // 0.1.28: 진짜 체인에서 받아 둔 자막 신호(subtitlesData) 원문. 확인 신호(contentChecked)에 그대로 전달(내용 수정 없음)
 
   function isReady(){
@@ -433,11 +435,37 @@ const REFRAME_SCRIPT = String.raw`(function(){
 
   function buildFrame(){
     var f = document.createElement('iframe');
+    f.addEventListener('load', function(){ loads++; attachFrame(); });
+    f.addEventListener('error', function(){ frameError = '프레임 로드 오류'; });
     f.src = location.href;
     f.allow = 'autoplay; fullscreen';
     f.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;border:0;z-index:2147483647;background:#000';
     (document.body || document.documentElement).appendChild(f);
     return f;
+  }
+
+  // 빈 문서가 아닌 실제 문서를 관찰. 같은 창이어도 문서가 바뀌면 다시 연결함.
+  function attachFrame(){
+    try {
+      var w = frame && frame.contentWindow;
+      if (!w || !w.document || w.location.href === 'about:blank') return;
+      inner = w;
+      if (watchedDoc !== w.document) {
+        watchedDoc = w.document;
+        hooked = false;
+        installHooks(w);
+      }
+    } catch(e){ frameError = String(e && e.name ? e.name : e).substring(0,80); }
+  }
+
+  function pageState(w){
+    try {
+      if (!w || !w.document) return '문서 없음';
+      var d = w.document;
+      return '상태:' + d.readyState + ' / 제목:' + String(d.title || '').substring(0,60) +
+        ' / 스크립트:' + d.scripts.length +
+        ' / 본문:' + String(d.body && d.body.textContent || '').replace(/\s+/g,' ').trim().substring(0,140);
+    } catch(e){ return '읽기 실패:' + String(e && e.name ? e.name : e); }
   }
 
   function installHooks(w){
@@ -573,15 +601,7 @@ const REFRAME_SCRIPT = String.raw`(function(){
 
   var t = setInterval(function(){
     n++;
-    if (frame && !inner) {
-      try {
-        var w = frame.contentWindow;
-        if (w && w.document && w.document.readyState !== 'loading') {
-          inner = w;
-          installHooks(inner);
-        }
-      } catch(e){}
-    }
+    if (frame) attachFrame();
     if (inner) {
       if (!hooked && n % 2 === 0) hooked = hookJwIn(inner);
       muteIn(inner);
@@ -611,6 +631,9 @@ const REFRAME_SCRIPT = String.raw`(function(){
            ' | rxdata:' + rx.slice(0,6).join(' // ').substring(0,240) +
            ' | 여기:' + location.href.split('?')[0].replace('https://','').replace('http://','').substring(0,60) +
            ' | 틀:' + (function(){ try { return inner && inner.location ? inner.location.href.split('?')[0].replace('https://','').replace('http://','').substring(0,60) : '없음'; } catch(e){ return '차단'; } })()
+           + ' | 로드:' + loads + ' / 오류:' + (frameError || '없음')
+           + ' | 바깥문서:' + pageState(window)
+           + ' | 안쪽문서:' + pageState(inner)
       });
     }
   }, 300);
@@ -1335,7 +1358,7 @@ class DefaultExtension extends MProvider {
      *  성공: { media, referer: playUrl, subs } / 실패: null (진단은 hoohootv_diag 에 저장) */
     async reframePlay(playUrl, pageUrl, subs, subsRaw) {
         // 0.1.28: 진짜 체인에서 받아 둔 자막 신호 원문(subsRaw)을 스크립트에 그대로 넣어 전달용으로 씀
-        const script = subsRaw ? REFRAME_SCRIPT.replace("var HHSUBS = null;", "var HHSUBS = " + JSON.stringify(String(subsRaw)) + ";") : REFRAME_SCRIPT;
+        const script = subsRaw ? REFRAME_SCRIPT.replace("var HHSUBS = null;", () => "var HHSUBS = " + JSON.stringify(String(subsRaw)) + ";") : REFRAME_SCRIPT;
         const o = await this.runWebview(playUrl, pageUrl, script, 35);
         if (o && o.u && /^https?:\/\//.test(String(o.u)) && !PLAY_RE.test(String(o.u))) {
             return { media: String(o.u), referer: playUrl, subs: subs && subs.length ? subs : undefined };
