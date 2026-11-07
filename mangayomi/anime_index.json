@@ -332,7 +332,7 @@
   {
     "name": "후후티비",
     "id": 1543270632,
-    "baseUrl": "https://cm.hoohootv464.xyz",
+    "baseUrl": "https://db.hoohootv464.xyz",
     "lang": "ko",
     "typeSource": "single",
     "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
@@ -342,7 +342,7 @@
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/mangayomi/javascript/anime/src/ko/hoohootv.js",
     "apiUrl": "",
-    "version": "0.1.20",
+    "version": "0.1.21",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
