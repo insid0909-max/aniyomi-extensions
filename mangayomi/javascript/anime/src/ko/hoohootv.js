@@ -1,14 +1,14 @@
 const mangayomiSources = [{
     "name": "후후티비",
     "lang": "ko",
-    "baseUrl": "https://cm.hoohootv464.xyz",
+    "baseUrl": "https://db.hoohootv464.xyz",
     "apiUrl": "",
     "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
     "typeSource": "single",
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.20",
+    "version": "0.1.21",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -20,11 +20,14 @@ const mangayomiSources = [{
 // 영상: 회차 화면의 플레이어(iframe)에서 찾고, 없으면 숨은 웹뷰로 플레이어를 열어 영상 요청 주소를 받음.
 // jwpcdn 회차: creatorofvideo.com HLS / JW ping 의 mu= 파라미터를 우선 추출.
 const HH_KIND = 0; // 0 = 전체, 1 = 영화, 2 = 드라마
-const DEFAULT_BASE_URL = "https://cm.hoohootv464.xyz";
+const DEFAULT_BASE_URL = "https://db.hoohootv464.xyz";
 const SUB_RE = /^([a-z])([a-z])\.hoohootv(\d+)\.([a-z]{2,6})$/;
 const DOMAIN_RE = /^https:\/\/(?:[a-z0-9-]+\.)*hoohootv\d*\.[a-z]{2,6}$/;
 const HOST_RE = /^https?:\/\/(?:[a-z0-9-]+\.)*hoohootv\d*\.[a-z]{2,6}(?=\/|$)/;
 const PORTAL_URL = "https://hoohootv1.com/";
+// 주소 안내 글(텔레그래프, 어디서나 열림)·저장소 주소 목록 — 애니요미 후후티비와 같게 (0.1.21)
+const GUIDE_URL = "https://telegra.ph/%ED%9B%84%ED%9B%84%ED%8B%B0%EB%B9%84-%EC%B5%9C%EC%8B%A0-%EC%A3%BC%EC%86%8C-09-03";
+const DOMAIN_LIST_URL = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/domains.json";
 const SITE_MARKER = "HOOHOO TV";
 const LABEL = "후후티비";
 const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
@@ -473,12 +476,20 @@ class DefaultExtension extends MProvider {
             const x = SUB_RE.exec(h);
             return x ? parseInt(x[3], 10) : 0;
         };
-        let announced = [];
-        try {
-            const r = await this.client.get(PORTAL_URL, { "User-Agent": UA });
-            const found = String(r.body || "").match(/[a-z]{2}\.hoohootv\d+\.[a-z]{2,6}/gi) || [];
-            announced = [...new Set(found.map((x) => x.toLowerCase()))].filter((h) => SUB_RE.test(h)).sort((x, y) => numOf(y) - numOf(x));
-        } catch (e) {}
+        // 저장소 주소 목록 → 텔레그래프 안내 글 → 안내 사이트 순으로 적힌 주소를 모음 (0.1.21: 앞 글자까지 바뀌는 주소(cm→db) 대비)
+        let found = [];
+        const texts = await Promise.all([
+            DOMAIN_LIST_URL + "?t=" + Math.floor(Date.now() / 60000), GUIDE_URL, PORTAL_URL + "home", PORTAL_URL,
+        ].map(async (u) => {
+            try {
+                const r = await this.client.get(u, { "User-Agent": UA, "Cache-Control": "no-cache" });
+                return Number(r.statusCode) === 200 ? String(r.body || "") : "";
+            } catch (e) {
+                return "";
+            }
+        }));
+        for (const t of texts) found = found.concat(t.match(/[a-z]{2}\.hoohootv\d+\.[a-z]{2,6}/gi) || []);
+        const announced = [...new Set(found.map((x) => x.toLowerCase()))].filter((h) => SUB_RE.test(h)).sort((x, y) => numOf(y) - numOf(x));
         const fromPortal = announced.filter((h) => h !== currentHost &&
             (!newerOnly || numOf(h) > n || (numOf(h) === n && !announced.includes(currentHost))));
         const hit = await this.probeHosts(fromPortal, currentHost);
