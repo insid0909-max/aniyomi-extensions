@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.52",
+    "version": "0.1.53",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -427,7 +427,8 @@ class DefaultExtension extends MProvider {
                 res = await this.client.get(url, this.headers());
                 // 사이트가 응답했으면(빈 응답·보안 확인 화면 포함, 5xx 제외) 주소는 그대로 → 주소 찾기 안 함.
                 // 보안 확인 화면은 getPage 가 웹뷰로 처리 (사용자 기록 2026-11-03: 보안확인 2.2 + 주소찾기 2.6 — 빈 응답에도 주소 찾기를 돌렸음)
-                if (res.statusCode < 500) {
+                // 접근 차단(451)은 주소가 막힌 것 → 주소 찾기 (2026-11-07)
+                if (res.statusCode < 500 && res.statusCode !== 451) {
                     const body = String(res.body || "");
                     notice = res.statusCode === 200 && body.length > 0 && this.autoOn() ? await noticeTarget(this, body, base, "/vod/detail/") : null;
                     if (!notice) return { html: body, base, res };
