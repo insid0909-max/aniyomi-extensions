@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.23",
+    "version": "0.1.24",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli24.js"
@@ -449,7 +449,9 @@ class DefaultExtension extends MProvider {
             if ((kind === "1" || kind === "2") && year && !title.includes(`(${year})`)) title = `${title} (${year})`;
             list.push({ name: title, imageUrl: img ? img.attr("src") : "", link: path });
         }
-        const hasNextPage = doc.select("li.next a").length > 0;
+        // 방영중 목록(ong)은 "다음" 표시가 없어 1쪽(25개)에서 멈췄음(2026-11-07 목록 점검, 실제로는 12쪽 넘게 있음)
+        // → 쪽이 꽉 차면(25개) 다음 쪽이 있는 것으로, 빈 쪽이면 끝
+        const hasNextPage = list.length > 0 && (doc.select("li.next a").length > 0 || list.length >= 25);
         return { list, hasNextPage };
     }
 
