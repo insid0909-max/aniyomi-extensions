@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.26",
+    "version": "0.1.27",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -17,7 +17,9 @@ const mangayomiSources = [{
 // Aniyomi HoohooTV.kt(후후티비)를 망가요미용으로 옮긴 소스.
 // 목록: /tv/분류, /movie/분류 (?page=N), 인기 /popular, 검색 /search?sfl=…&query=,
 // 작품: /detail/ID/ (회차 목록은 script#episodes-data JSON, 회차는 ?season=S&episode=E),
-// 영상: 회차 화면의 플레이어(iframe)에서 찾고, 없으면 숨은 웹뷰로 플레이어를 열어 영상 요청 주소를 받음.
+// 영상: ① 회차 화면/플레이어 글자에서 m3u8·mu= 직접 추출
+//   ② play 주소(creatorofvideo.com/play/…)를 같은 오리진 재프레이밍 웹뷰로 열어 안쪽 플레이어의 실제 요청 관찰 (0.1.27)
+//   ③ v3 도청 웹뷰: 바깥 화면에 머물며 요청·신호(양방향)·JW 사건 관찰 + 자막 신호(subtitlesData) 캡처
 // jwpcdn 회차: creatorofvideo.com HLS / JW ping 의 mu= 파라미터를 우선 추출.
 const HH_KIND = 0; // 0 = 전체, 1 = 영화, 2 = 드라마
 const DEFAULT_BASE_URL = "https://db.hoohootv464.xyz";
@@ -58,6 +60,8 @@ const NEWER_CHECK_MS = 3600000;
 const MEDIA_RE = /https?:\/\/[^"'\s<>\\]+(?:\.(?:m3u8|mp4)|creatorofvideo\.com\/hls\/[^"'\s<>\\]+)(?:\?[^"'\s<>\\]*)?/i;
 const CREATOR_M3U8_RE = /https?:\/\/(?:[^/]+\.)?creatorofvideo\.com\/hls\/[^\s"'<>\\]+\.m3u8(?:\?[^"'\s<>\\]*)?/i;
 const MU_RE = /[?&]mu=([^&"'\s<>\\]+)/i;
+// 안쪽 플레이어 화면 주소(creatorofvideo.com/play/…) — 재프레이밍(v4) 대상
+const PLAY_RE = /https?:\/\/(?:[a-z0-9-]+\.)*creatorofvideo\.com\/play\/[A-Za-z0-9_-]+/i;
 
 const CATEGORIES = [
     ["TV 전체", "/tv/all"],
@@ -363,6 +367,244 @@ function hlsHint(list) {
     }
     return list;
 }
+
+/** 재프레이밍(v4): play 화면(creatorofvideo.com/play/…)을 최상위로 열고
+ *  같은 오리진 iframe으로 다시 넣어 프레임 검사를 통과시킨 뒤
+ *  안쪽 플레이어의 실제 요청(fetch/XHR/PerformanceObserver/JW/video)을 관찰 */
+const REFRAME_SCRIPT = `(function(){
+  var n = 0, played = false, hooked = false;
+  var urls = [], rx = [];
+  var inner = null, frame = null;
+
+  function isReady(){
+    return !!(window.flutter_inappwebview && window.flutter_inappwebview.callHandler);
+  }
+  function send(obj){
+    try { if (isReady()) window.flutter_inappwebview.callHandler('setResponse', JSON.stringify(obj)); } catch(e){}
+  }
+  function add(u){
+    if(!u) return;
+    u = String(u);
+    if(urls.indexOf(u) === -1) urls.push(u);
+  }
+  function norm(u){
+    try { return new URL(u, location.href).href; } catch(e){ return u; }
+  }
+  function isMedia(u){
+    if(!u) return false;
+    u = String(u);
+    return /\.m3u8|creatorofvideo\.com\/hls\/|\.mp4/i.test(u);
+  }
+  function fromMu(u){
+    try {
+      var m = /[?&]mu=([^&]+)/i.exec(u);
+      if(!m) return null;
+      var d = decodeURIComponent(m[1].replace(/\+/g,' '));
+      if(/creatorofvideo\.com.*\.m3u8|\.m3u8/i.test(d)) return d.split('&')[0];
+    } catch(e){}
+    return null;
+  }
+  function pickFile(it){
+    if(!it) return null;
+    if(it.file) return norm(it.file);
+    if(it.sources && it.sources.length){
+      for(var i=0;i<it.sources.length;i++){
+        if(it.sources[i] && it.sources[i].file) return norm(it.sources[i].file);
+      }
+    }
+    return null;
+  }
+
+  window.addEventListener('message', function(e){
+    try {
+      var s = typeof e.data === 'string' ? e.data : JSON.stringify(e.data);
+      rx.push('IN>' + s);
+      add(s);
+    } catch(x){}
+  });
+
+  function buildFrame(){
+    var f = document.createElement('iframe');
+    f.src = location.href;
+    f.allow = 'autoplay; fullscreen';
+    f.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;border:0;z-index:2147483647;background:#000';
+    (document.body || document.documentElement).appendChild(f);
+    return f;
+  }
+
+  function installHooks(w){
+    try {
+      var of = w.fetch;
+      if (of) {
+        w.fetch = function(){
+          try {
+            var a = arguments[0];
+            add(a && a.url ? a.url : a);
+          } catch(e){}
+          return of.apply(w, arguments);
+        };
+      }
+    } catch(e){}
+    try {
+      var oo = w.XMLHttpRequest.prototype.open;
+      if (oo) {
+        w.XMLHttpRequest.prototype.open = function(m,u){
+          var x = this;
+          try { add(u); } catch(e){}
+          try {
+            x.addEventListener('load', function(){
+              try { add(x.responseURL); } catch(e2){}
+            });
+          } catch(e){}
+          return oo.apply(this, arguments);
+        };
+      }
+    } catch(e){}
+    try {
+      var po = new w.PerformanceObserver(function(list){
+        list.getEntries().forEach(function(en){ add(en.name); });
+      });
+      po.observe({ type: 'resource', buffered: true });
+    } catch(e){}
+    try {
+      w.addEventListener('message', function(e){
+        try {
+          var s = typeof e.data === 'string' ? e.data : JSON.stringify(e.data);
+          rx.push('TOIN>' + s);
+          add(s);
+        } catch(x){}
+      });
+    } catch(e){}
+  }
+
+  function hookJwIn(w){
+    try {
+      if (!w.jwplayer) return false;
+      var p = null;
+      try { p = w.jwplayer(); } catch(e){}
+      if (!p || !p.on || !p.id) return false;
+      var grab = function(){
+        try { add(pickFile(p.getPlaylistItem && p.getPlaylistItem())); } catch(e){}
+      };
+      p.on('ready', grab);
+      p.on('playlist', function(e){
+        try {
+          var pl = (e && e.playlist) ? e.playlist : (p.getPlaylist && p.getPlaylist());
+          if (pl) for (var i=0;i<pl.length;i++) add(pickFile(pl[i]));
+        } catch(e){}
+      });
+      p.on('playlistItem', grab);
+      p.on('play', grab);
+      return true;
+    } catch(e){ return false; }
+  }
+
+  function scanInner(w){
+    try {
+      var r = w.performance.getEntriesByType('resource');
+      for (var i=0;i<r.length;i++){
+        var name = r[i].name;
+        if (isMedia(name)) return name;
+        var mu = fromMu(name);
+        if (mu) return mu;
+      }
+    } catch(e){}
+    try {
+      var v = w.document.querySelector('video');
+      var s = v && (v.currentSrc || v.src);
+      if (s && /^https?:/.test(s) && isMedia(s)) return s;
+    } catch(e){}
+    try {
+      if (w.jwplayer) {
+        var p = w.jwplayer();
+        if (p && p.getPlaylistItem) {
+          var f = pickFile(p.getPlaylistItem());
+          if (f) return f;
+        }
+      }
+    } catch(e){}
+    return null;
+  }
+
+  function tryPlayIn(w){
+    played = true;
+    try {
+      if (w.jwplayer) {
+        var p = w.jwplayer();
+        if (p) { if (p.setMute) p.setMute(true); if (p.play) p.play(); }
+      }
+    } catch(e){}
+    try {
+      var v = w.document.querySelector('video');
+      if (v) {
+        v.muted = true;
+        var q = v.play();
+        if (q && q.catch) q.catch(function(){});
+      }
+    } catch(e){}
+    try {
+      var b = w.document.querySelector('.jw-icon-display,.jw-display-icon-container,.vjs-big-play-button,[aria-label="Play"],.play-button');
+      if (b) b.click();
+    } catch(e){}
+  }
+
+  function muteIn(w){
+    try {
+      w.document.querySelectorAll('video,audio').forEach(function(v){
+        v.muted = true; v.volume = 0;
+      });
+    } catch(e){}
+  }
+
+  if (window.parent === window) {
+    frame = buildFrame();
+  } else {
+    inner = window;
+    installHooks(window);
+  }
+
+  var t = setInterval(function(){
+    n++;
+    if (frame && !inner) {
+      try {
+        var w = frame.contentWindow;
+        if (w && w.document && w.document.readyState !== 'loading') {
+          inner = w;
+          installHooks(inner);
+        }
+      } catch(e){}
+    }
+    if (inner) {
+      if (!hooked && n % 2 === 0) hooked = hookJwIn(inner);
+      muteIn(inner);
+      var u = scanInner(inner);
+      if (u) {
+        clearInterval(t);
+        send({ u: u, p: played, r: (inner.location && inner.location.href) || location.href });
+        return;
+      }
+      if (n === 12 || n === 30 || n === 50 || n === 70) tryPlayIn(inner);
+    }
+    if (n === 110) {
+      clearInterval(t);
+      var iv = null, ij = false;
+      try { iv = inner && inner.document && inner.document.querySelector('video'); } catch(e){}
+      try { ij = !!(inner && inner.jwplayer); } catch(e2){}
+      send({
+        u: null,
+        p: played,
+        d: (frame ? 'reframed' : 'inframe') +
+           ' | jw:' + (ij ? 'Y' : 'N') +
+           ' | hook:' + (hooked ? 'Y' : 'N') +
+           ' | video:' + (iv ? 'Y' : 'N') +
+           ' | urls:' + urls.length +
+           ' | sample:' + urls.slice(0,5).join(' | ').substring(0,180) +
+           ' | rx:' + rx.length +
+           ' | rxdata:' + rx.slice(0,6).join(' // ').substring(0,240)
+      });
+    }
+  }, 300);
+})();`;
 
 class DefaultExtension extends MProvider {
     constructor() {
@@ -889,25 +1131,41 @@ class DefaultExtension extends MProvider {
         return out.filter((u) => !/jwpcdn/i.test(u)).concat(out.filter((u) => /jwpcdn/i.test(u)));
     }
 
-    /** 플레이어 하나: 글자에서 바로 → 숨은 웹뷰 */
+    /** 플레이어 하나: 글자에서 바로 → (play 주소 있으면) 재프레이밍 → v3 도청 웹뷰 → 재프레이밍 (0.1.27) */
     async tryPlayer(player, playerHost, pageUrl, html) {
         this.lastDiag = "";
         let direct = null;
+        let playUrl = null;
         try {
             const res = await this.client.get(player, { "User-Agent": UA, "Referer": pageUrl });
-            const media = extractMediaUrl(String(res.body || ""));
+            const body = String(res.body || "");
+            const media = extractMediaUrl(body);
             if (media) direct = { media, referer: player };
+            // 안쪽 플레이어 화면 주소(creatorofvideo.com/play/…)를 미리 뽑아 둠 (글자 안에 \/ 로 흩어져 있는 경우도 합침)
+            const pm = PLAY_RE.exec(body.replace(/\\\//g, "/"));
+            if (pm) playUrl = pm[0];
         } catch (e) {}
         if (!direct) {
             const media = extractMediaUrl(html);
             if (media) direct = { media, referer: pageUrl };
         }
         if (direct && await mediaWorks(this.client, direct.media, this.videoHeaders(direct.referer))) return direct;
-        // jwpcdn 은 끝까지 시도해 봐도 망가요미에서 영상 주소를 받을 수 없었음(0.1.17 휴대폰 확인: 서버 1개, 안쪽 신호는 contentChecked 뿐)
-        // → 30초씩 기다리지 않고 바로 안내
-        // 0.1.19 시험: jwpcdn 도 웹뷰로 끝까지 시도 (사용자가 준 스크립트 — fetch·XHR·PerformanceObserver 로 주소 모으기)
-        // 0.1.25(사용자 v3): 바깥 화면에 머물며 바깥→안쪽 신호를 엿들음 (안쪽으로 옮기면 플레이어가 멈춤 — 0.1.22~24 확인)
-        return (await this.viaWebview(player, pageUrl, playerHost, true)) || direct;
+        // 0.1.17 확인: 안쪽 플레이어는 "내가 틀 안에 들어 있나" 검사(contentChecked)를 통과해야 영상 설정을 시작함
+        // 0.1.22~24 확인: 안쪽 화면을 그대로 열면(틀 밖) JW 는 뜨지만 영상 설정이 시작되지 않음
+        // A) play 주소를 이미 알면: 같은 오리진 재프레이밍(v4)으로 먼저 시도
+        if (playUrl) {
+            const found = await this.reframePlay(playUrl, pageUrl, null);
+            if (found) return found;
+        }
+        // B) v3 도청 웹뷰(0.1.19~26): 바깥 화면에 머물며 요청·양방향 신호·JW 사건 관찰
+        //    → m3u8 을 직접 얻거나, play 주소 + 자막 신호(subtitlesData)를 얻으면 재프레이밍으로 넘김
+        const wv = await this.viaWebview(player, pageUrl, playerHost, true);
+        if (wv) {
+            if (!PLAY_RE.test(wv.media)) return wv;
+            const found = await this.reframePlay(wv.media, pageUrl, wv.subs && wv.subs.length ? wv.subs : null);
+            if (found) return found;
+        }
+        return direct;
     }
 
     async toVideos(media, referer) {
@@ -931,7 +1189,7 @@ class DefaultExtension extends MProvider {
     async viaWebview(player, pageUrl, playerHost, stay) {
         if (typeof evaluateJavascriptViaWebview !== "function") return null;
         const playAt = this.autoplayHosts().includes(playerHost) ? 2 : 12;
-        const script = "(function(){var n=0,played=false,rx=[],urls=[];" +
+        const script = "(function(){var n=0,played=false,rx=[],urls=[],playUrl=null;" +
             // 0.1.19 시험(사용자 제안): 이 화면이 요청한 주소를 fetch·XHR·PerformanceObserver 로 모음
             "function add(u){if(!u)return;u=String(u);if(urls.indexOf(u)===-1)urls.push(u);}" +
             // 0.1.24(사용자 v2): 응답 주소(넘겨준 뒤 최종 주소)도 모음
@@ -939,6 +1197,11 @@ class DefaultExtension extends MProvider {
             "try{var oo=XMLHttpRequest.prototype.open;if(oo){XMLHttpRequest.prototype.open=function(m,u){var x=this;try{add(u);}catch(e){}try{x.addEventListener('load',function(){try{add(x.responseURL);}catch(e2){}});}catch(e){}return oo.apply(this,arguments);};}}catch(e){}" +
             "try{new PerformanceObserver(function(l){l.getEntries().forEach(function(e){add(e.name);});}).observe({type:'resource',buffered:true});}catch(e){}" +
             "function fromUrls(){for(var i=0;i<urls.length;i++){var x=urls[i];if(/creatorofvideo\\.com.*\\.m3u8|\\.(m3u8|mp4)(\\?|$)/i.test(x))return x;var m=fromMu(x);if(m)return m;}return null;}" +
+            // 0.1.27: 안쪽 플레이어 화면 주소(creatorofvideo.com/play/…) 찾기 — 틀 src · 성능 기록 · 모은 주소에서
+            "var PR=/https?:\\/\\/[^\\\"'\\s<>]*creatorofvideo\\.com\\/play\\/[A-Za-z0-9_-]+/i;" +
+            "function findPlay(){try{var f=document.querySelectorAll('iframe');for(var i=0;i<f.length;i++){var m=PR.exec(f[i].src||f[i].getAttribute('data-src')||'');if(m)return m[0];}}catch(e){}" +
+            "try{var r=performance.getEntriesByType('resource');for(var j=0;j<r.length;j++){var m2=PR.exec(r[j].name);if(m2)return m2[0];}}catch(e){}" +
+            "for(var k=0;k<urls.length;k++){var m3=PR.exec(urls[k]);if(m3)return m3[0];}return null;}" +
             // 안쪽 플레이어가 바깥 화면으로 보내는 신호(postMessage)를 모아 둠. 영상 주소가 들어 있으면 그 주소를 씀
             "window.addEventListener('message',function(e){try{var s=typeof e.data==='string'?e.data:JSON.stringify(e.data);rx.push('IN>'+s);add(s);}catch(x){}});" +
             // 0.1.25(사용자 v3): 바깥 화면이 안쪽 플레이어에 보내는 신호를 기록만 하고 그대로 전달 (신호를 만들지 않음).
@@ -995,6 +1258,10 @@ class DefaultExtension extends MProvider {
             "if(n===" + playAt + "||n===" + (playAt + 15) + "||n===" + (playAt + 30) + ")tryPlay();" +
             // 15초 동안 영상 주소가 안 잡히면(첫 신호는 스크립트가 들어가기 전에 지나감) 안쪽 플레이어를 한 번 새로고침해 주고받기를 다시 하게 함 (0.1.26: 자막 신호만 잡혀도 새로고침)
             "if(n===50&&!window.__hhRe){window.__hhRe=1;try{var fr=document.querySelector('iframe');if(fr&&fr.src)fr.src=fr.src;}catch(e){}}" +
+            // 0.1.27: 21초쯤까지 영상 주소를 못 찾으면 안쪽 play 주소를 돌려주고 재프레이밍으로 넘김 (자막 신호도 함께)
+            "if(n===70&&!playUrl){playUrl=findPlay();if(playUrl){clearInterval(t);var sb2=null;" +
+            "for(var si2=rx.length-1;si2>=0;si2--){if(/subtitlesData/.test(rx[si2])){sb2=rx[si2].replace(/^OUT>|^IN>/,'');break;}}" +
+            "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:playUrl,p:played,r:location.href,sb:sb2}));return;}}" +
             "if(n===110){clearInterval(t);var v=document.querySelector('video');" +
             "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:null,p:played," +
             "d:location.host+' | jw:'+(window.jwplayer?'Y':'N')+jwst()+' | hook:'+(hooked?'Y':'N')+' | video:'+(v?'Y':'N')+' | 주소'+urls.length+' | 신호'+rx.length+'(바깥→안 '+outN+')'+(rx.length?' '+rx.map(function(x){var m=/\"type\"\\s*:\\s*\"([^\"]+)\"/.exec(x);return (m?'['+m[1]+'] ':'')+x.substring(0,160);}).join(' || ').substring(0,1200):'')" +
@@ -1022,6 +1289,38 @@ class DefaultExtension extends MProvider {
         } catch (e) {
             return null;
         }
+    }
+
+    /** 웹뷰 호출을 감싸 Promise 로 받기 (재프레이밍용) */
+    async runWebview(url, pageUrl, script, timeoutSec) {
+        if (typeof evaluateJavascriptViaWebview !== "function") return null;
+        try {
+            const sec = timeoutSec || 35;
+            const timeout = new Promise((res) => setTimeout(() => res(null), sec * 1000 + 2000));
+            const res = await Promise.race([
+                evaluateJavascriptViaWebview(url, { "Referer": pageUrl }, [script], sec),
+                timeout,
+            ]);
+            if (!res) return null;
+            return JSON.parse(String(res));
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /** 같은 오리진 재프레이밍(v4): play 화면을 최상위로 열고 같은 오리진 iframe 으로 다시 넣어
+     *  프레임 검사를 통과시킨 뒤 안쪽 플레이어의 실제 요청을 관찰.
+     *  성공: { media, referer: playUrl, subs } / 실패: null (진단은 hoohootv_diag 에 저장) */
+    async reframePlay(playUrl, pageUrl, subs) {
+        const o = await this.runWebview(playUrl, pageUrl, REFRAME_SCRIPT, 35);
+        if (o && o.u && /^https?:\/\//.test(String(o.u)) && !PLAY_RE.test(String(o.u))) {
+            return { media: String(o.u), referer: playUrl, subs: subs && subs.length ? subs : undefined };
+        }
+        if (o && o.d) {
+            this.lastDiag = `재프레이밍 ${o.d}`;
+            this.setPref("hoohootv_diag", `${new Date().toISOString().substring(5, 16).replace("T", " ")} 재프레이밍 ${String(o.d)}`);
+        }
+        return null;
     }
 
     getFilterList() {
