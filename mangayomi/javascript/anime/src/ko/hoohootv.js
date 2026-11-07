@@ -1,14 +1,14 @@
 const mangayomiSources = [{
     "name": "후후티비",
     "lang": "ko",
-    "baseUrl": "https://db.hoohootv464.xyz",
+    "baseUrl": "https://dc.hoohootv464.xyz",
     "apiUrl": "",
     "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
     "typeSource": "single",
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.27",
+    "version": "0.1.28",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -20,9 +20,11 @@ const mangayomiSources = [{
 // 영상: ① 회차 화면/플레이어 글자에서 m3u8·mu= 직접 추출
 //   ② play 주소(creatorofvideo.com/play/…)를 같은 오리진 재프레이밍 웹뷰로 열어 안쪽 플레이어의 실제 요청 관찰 (0.1.27)
 //   ③ v3 도청 웹뷰: 바깥 화면에 머물며 요청·신호(양방향)·JW 사건 관찰 + 자막 신호(subtitlesData) 캡처
+// 0.1.28: 재프레이밍에서 안쪽이 보낸 확인 신호(contentChecked)에 진짜 자막 신호(subtitlesData)를 그대로 전달(악수 완성)
+//   + 모든 실패 경로에 진단 기록(재프레이밍 무응답·웹뷰 오류·플레이어 가져오기 실패) + 웹뷰 현재 주소 표시
 // jwpcdn 회차: creatorofvideo.com HLS / JW ping 의 mu= 파라미터를 우선 추출.
 const HH_KIND = 0; // 0 = 전체, 1 = 영화, 2 = 드라마
-const DEFAULT_BASE_URL = "https://db.hoohootv464.xyz";
+const DEFAULT_BASE_URL = "https://dc.hoohootv464.xyz";
 const SUB_RE = /^([a-z])([a-z])\.hoohootv(\d+)\.([a-z]{2,6})$/;
 const DOMAIN_RE = /^https:\/\/(?:[a-z0-9-]+\.)*hoohootv\d*\.[a-z]{2,6}$/;
 const HOST_RE = /^https?:\/\/(?:[a-z0-9-]+\.)*hoohootv\d*\.[a-z]{2,6}(?=\/|$)/;
@@ -371,10 +373,11 @@ function hlsHint(list) {
 /** 재프레이밍(v4): play 화면(creatorofvideo.com/play/…)을 최상위로 열고
  *  같은 오리진 iframe으로 다시 넣어 프레임 검사를 통과시킨 뒤
  *  안쪽 플레이어의 실제 요청(fetch/XHR/PerformanceObserver/JW/video)을 관찰 */
-const REFRAME_SCRIPT = `(function(){
+const REFRAME_SCRIPT = String.raw`(function(){
   var n = 0, played = false, hooked = false;
   var urls = [], rx = [];
   var inner = null, frame = null;
+  var HHSUBS = null; // 0.1.28: 진짜 체인에서 받아 둔 자막 신호(subtitlesData) 원문. 확인 신호(contentChecked)에 그대로 전달(내용 수정 없음)
 
   function isReady(){
     return !!(window.flutter_inappwebview && window.flutter_inappwebview.callHandler);
@@ -420,6 +423,11 @@ const REFRAME_SCRIPT = `(function(){
       var s = typeof e.data === 'string' ? e.data : JSON.stringify(e.data);
       rx.push('IN>' + s);
       add(s);
+      // 0.1.28: 안쪽 플레이어가 "틀 안에 들어 있나" 확인 신호(contentChecked)를 보내면
+      // 진짜 체인에서 받아 둔 실제 자막 신호(subtitlesData)를 받은 그대로 되돌려 줌(악수 완성). 신호를 새로 만들지는 않음
+      if (HHSUBS && e.source && /contentChecked/i.test(s)) {
+        try { e.source.postMessage(HHSUBS, '*'); rx.push('RELAY>subtitlesData'); } catch(x){}
+      }
     } catch(x){}
   });
 
@@ -600,7 +608,9 @@ const REFRAME_SCRIPT = `(function(){
            ' | urls:' + urls.length +
            ' | sample:' + urls.slice(0,5).join(' | ').substring(0,180) +
            ' | rx:' + rx.length +
-           ' | rxdata:' + rx.slice(0,6).join(' // ').substring(0,240)
+           ' | rxdata:' + rx.slice(0,6).join(' // ').substring(0,240) +
+           ' | 여기:' + location.href.split('?')[0].replace('https://','').replace('http://','').substring(0,60) +
+           ' | 틀:' + (function(){ try { return inner && inner.location ? inner.location.href.split('?')[0].replace('https://','').replace('http://','').substring(0,60) : '없음'; } catch(e){ return '차단'; } })()
       });
     }
   }, 300);
@@ -1136,6 +1146,7 @@ class DefaultExtension extends MProvider {
         this.lastDiag = "";
         let direct = null;
         let playUrl = null;
+        let getPageErr = null; // 0.1.28: 플레이어 페이지 가져오기 실패 이유 기록
         try {
             const res = await this.client.get(player, { "User-Agent": UA, "Referer": pageUrl });
             const body = String(res.body || "");
@@ -1144,7 +1155,7 @@ class DefaultExtension extends MProvider {
             // 안쪽 플레이어 화면 주소(creatorofvideo.com/play/…)를 미리 뽑아 둠 (글자 안에 \/ 로 흩어져 있는 경우도 합침)
             const pm = PLAY_RE.exec(body.replace(/\\\//g, "/"));
             if (pm) playUrl = pm[0];
-        } catch (e) {}
+        } catch (e) { getPageErr = String(e && e.message ? e.message : e).substring(0, 90); }
         if (!direct) {
             const media = extractMediaUrl(html);
             if (media) direct = { media, referer: pageUrl };
@@ -1162,8 +1173,14 @@ class DefaultExtension extends MProvider {
         const wv = await this.viaWebview(player, pageUrl, playerHost, true);
         if (wv) {
             if (!PLAY_RE.test(wv.media)) return wv;
-            const found = await this.reframePlay(wv.media, pageUrl, wv.subs && wv.subs.length ? wv.subs : null);
+            // 0.1.28: 받아 둔 진짜 자막 신호 원문(sbRaw)도 함께 넘겨 재프레이밍에서 악수에 그대로 쓰게 함
+            const found = await this.reframePlay(wv.media, pageUrl, wv.subs && wv.subs.length ? wv.subs : null, wv.sbRaw);
             if (found) return found;
+        }
+        if (!this.lastDiag && getPageErr) {
+            // 0.1.28: 웹뷰 진단이 하나도 없고 플레이어 페이지 가져오기부터 실패한 경우 그 이유를 보여 줌
+            this.lastDiag = `플레이어 페이지 가져오기 실패: ${getPageErr}`;
+            this.setPref("hoohootv_diag", `${new Date().toISOString().substring(5, 16).replace("T", " ")} 플레이어 페이지 가져오기 실패: ${getPageErr} [${playerHost}]`);
         }
         return direct;
     }
@@ -1275,6 +1292,7 @@ class DefaultExtension extends MProvider {
             ]);
             if (!res) {
                 this.lastDiag = "웹뷰 응답 없음";
+                this.setPref("hoohootv_diag", `${new Date().toISOString().substring(5, 16).replace("T", " ")} 웹뷰 응답 없음 [${playerHost}]`); // 0.1.28: 진단 저장
                 return null;
             }
             const o = JSON.parse(String(res));
@@ -1285,8 +1303,12 @@ class DefaultExtension extends MProvider {
             }
             if (!o || !/^https?:\/\//.test(String(o.u || ""))) return null;
             if (o.p && playerHost && playAt > 2) this.rememberAutoplay(playerHost);
-            return { media: String(o.u), referer: /^https?:\/\//.test(String(o.r || "")) ? String(o.r) : player, subs: subsOf(o.sb) };
+            // 0.1.28: 자막 신호 원문(sbRaw)도 함께 돌려줌(재프레이밍 악수 전달용)
+            return { media: String(o.u), referer: /^https?:\/\//.test(String(o.r || "")) ? String(o.r) : player, subs: subsOf(o.sb), sbRaw: o.sb ? String(o.sb) : null };
         } catch (e) {
+            // 0.1.28: 웹뷰 호출 자체가 실패한 경우도 진단에 남김(조용히 죽지 않게)
+            this.lastDiag = `웹뷰 오류: ${String(e && e.message ? e.message : e).substring(0, 90)}`;
+            this.setPref("hoohootv_diag", `${new Date().toISOString().substring(5, 16).replace("T", " ")} 웹뷰 오류: ${String(e && e.message ? e.message : e).substring(0, 90)} [${playerHost}]`);
             return null;
         }
     }
@@ -1311,14 +1333,20 @@ class DefaultExtension extends MProvider {
     /** 같은 오리진 재프레이밍(v4): play 화면을 최상위로 열고 같은 오리진 iframe 으로 다시 넣어
      *  프레임 검사를 통과시킨 뒤 안쪽 플레이어의 실제 요청을 관찰.
      *  성공: { media, referer: playUrl, subs } / 실패: null (진단은 hoohootv_diag 에 저장) */
-    async reframePlay(playUrl, pageUrl, subs) {
-        const o = await this.runWebview(playUrl, pageUrl, REFRAME_SCRIPT, 35);
+    async reframePlay(playUrl, pageUrl, subs, subsRaw) {
+        // 0.1.28: 진짜 체인에서 받아 둔 자막 신호 원문(subsRaw)을 스크립트에 그대로 넣어 전달용으로 씀
+        const script = subsRaw ? REFRAME_SCRIPT.replace("var HHSUBS = null;", "var HHSUBS = " + JSON.stringify(String(subsRaw)) + ";") : REFRAME_SCRIPT;
+        const o = await this.runWebview(playUrl, pageUrl, script, 35);
         if (o && o.u && /^https?:\/\//.test(String(o.u)) && !PLAY_RE.test(String(o.u))) {
             return { media: String(o.u), referer: playUrl, subs: subs && subs.length ? subs : undefined };
         }
         if (o && o.d) {
             this.lastDiag = `재프레이밍 ${o.d}`;
             this.setPref("hoohootv_diag", `${new Date().toISOString().substring(5, 16).replace("T", " ")} 재프레이밍 ${String(o.d)}`);
+        } else if (!o) {
+            // 0.1.28: 재프레이밍 웹뷰가 아예 응답하지 않은 경우도 진단에 남김(페이지 로드 실패 가능성)
+            this.lastDiag = "재프레이밍 응답 없음(페이지 로드 실패 가능)";
+            this.setPref("hoohootv_diag", `${new Date().toISOString().substring(5, 16).replace("T", " ")} 재프레이밍 응답 없음(페이지 로드 실패 가능) ${String(playUrl).replace(/^https?:\/\//, "").substring(0, 60)}`);
         }
         return null;
     }
