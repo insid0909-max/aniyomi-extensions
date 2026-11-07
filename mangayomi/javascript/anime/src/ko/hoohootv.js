@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.19",
+    "version": "0.1.20",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -662,13 +662,32 @@ class DefaultExtension extends MProvider {
         return latest;
     }
 
-    episodesData(html) {
-        const m = /<script[^>]*id=["']episodes-data["'][^>]*>([\s\S]*?)<\/script>/.exec(html);
-        if (!m) return [];
-        let o = null;
+    /** 회차 자료 칸 글자: 애니요미처럼 화면 구조(script#episodes-data)로 먼저, 안 되면 글자 모양으로 (0.1.20) */
+    episodesRaw(html, doc) {
         try {
-            o = JSON.parse(m[1].trim());
-        } catch (e) {
+            const el = (doc || new Document(html)).select("script#episodes-data, script[id=episodes-data]");
+            if (el.length) {
+                const t = String(el[0].innerHtml || el[0].text || "").trim();
+                if (t) return t;
+            }
+        } catch (e) {}
+        const m = /<script[^>]*\bid\s*=\s*["']?episodes-data\b["']?[^>]*>([\s\S]*?)<\/script>/i.exec(html);
+        return m ? m[1].trim() : "";
+    }
+
+    episodesData(html, doc) {
+        const raw = this.episodesRaw(html, doc);
+        this.epDiag = raw ? `회차칸 ${raw.length}자` : "회차칸 없음";
+        if (!raw) return [];
+        let o = null;
+        for (const t of [raw, decodeHtml(raw), raw.replace(/^<!--|-->$/g, "").trim()]) {
+            try {
+                o = JSON.parse(t);
+                break;
+            } catch (e) {}
+        }
+        if (!o) {
+            this.epDiag += ` · 읽기 실패 [${raw.substring(0, 60)}]`;
             return [];
         }
         const out = [];
@@ -683,12 +702,33 @@ class DefaultExtension extends MProvider {
         return out;
     }
 
+    episodesFromLinks(doc) {
+        const out = [];
+        const seen = {};
+        for (const a of doc.select("a[href*='episode=']")) {
+            const href = a.attr("href") || "";
+            const m = /[?&]season=(\d+)[^#]*?[?&]episode=([^&#]*)/.exec(href) || /[?&]episode=([^&#]*)/.exec(href);
+            if (!m) continue;
+            const season = m.length > 2 ? parseInt(m[1], 10) || 1 : 1;
+            const ep = safeDecode(m.length > 2 ? m[2] : m[1]);
+            const key = `${season}:${ep}`;
+            if (seen[key]) continue;
+            seen[key] = 1;
+            const text = a.text.replace(/\s+/g, " ").trim();
+            out.push({ season, episode: ep, label: /\d/.test(text) && text.length < 40 ? text : `${ep}화`, date: dateOf(text) });
+        }
+        if (out.length) this.epDiag = `링크 ${out.length}개`;
+        return out;
+    }
+
     async getDetail(url) {
         const id = this.idOf(url) || String(url).replace(/[^A-Za-z0-9_-]/g, "");
         const path = `/detail/${id}/`;
         const html = await this.get(path);
         const doc = new Document(html);
-        const eps = this.episodesData(html);
+        let eps = this.episodesData(html, doc);
+        // 회차 칸이 없으면 화면의 회차 링크(?season=S&episode=E)에서 읽음 (0.1.20)
+        if (!eps.length) eps = this.episodesFromLinks(doc);
         const latest = this.saveAir(id, eps);
         const og = /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']*)["']/.exec(html);
         let raw = og ? decodeHtml(og[1]).replace(/\s*-\s*후후티비\s*$/, "").trim() : "";
@@ -713,10 +753,22 @@ class DefaultExtension extends MProvider {
         if (!poster) poster = (/["'(]([^"'()\s]*\/media\/poster_image\/[^"'()\s]+)/.exec(html) || [null, ""])[1];
         let episodes;
         if (!eps.length) {
+            // 회차 칸은 있는데 못 읽었으면 "본편"으로 숨기지 말고 이유를 보여 줌 (0.1.20)
+            if (this.epDiag && this.epDiag !== "회차칸 없음") {
+                throw new Error(`회차를 읽지 못했어요 [${this.epDiag} · 제목 ${raw || "?"} · 화면 ${String(html).length}자]`);
+            }
             episodes = [{ name: "1 · 본편", url: path, dateUpload: null }];
         } else {
             const multi = new Set(eps.map((e) => e.season)).size > 1;
-            const sorted = eps.slice().sort((x, y) => x.season - y.season || (parseFloat(x.episode) || 0) - (parseFloat(y.episode) || 0));
+            // 같은 (시즌, 회)가 두 번 오면 날짜 있는 쪽 하나만 (애니요미 8755 와 같게)
+            const seenEp = {};
+            const sorted = eps.slice().sort((x, y) => x.season - y.season || (parseFloat(x.episode) || 0) - (parseFloat(y.episode) || 0) || (y.date ? 1 : 0) - (x.date ? 1 : 0))
+                .filter((e) => {
+                    const k = `${e.season}:${e.episode}`;
+                    if (seenEp[k]) return false;
+                    seenEp[k] = 1;
+                    return true;
+                });
             episodes = sorted.map((e) => {
                 const base = e.label.replace(/\s*\(\d{2,4}[./-]\d{1,2}[./-]\d{1,2}\)/, "").trim();
                 const name = e.date ? `${base} (${mmdd(e.date)})` : e.label;
