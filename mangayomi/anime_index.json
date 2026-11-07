@@ -78,7 +78,7 @@
     "hasCloudflare": true,
     "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/mangayomi/javascript/anime/src/ko/tvchak.js",
     "apiUrl": "",
-    "version": "0.1.52",
+    "version": "0.1.53",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
