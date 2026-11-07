@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.24",
+    "version": "0.1.25",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -27,6 +27,7 @@ const HOST_RE = /^https?:\/\/(?:[a-z0-9-]+\.)*hoohootv\d*\.[a-z]{2,6}(?=\/|$)/;
 const PORTAL_URL = "https://hoohootv1.com/";
 // 주소 안내 글(텔레그래프, 어디서나 열림)·저장소 주소 목록 — 애니요미 후후티비와 같게 (0.1.21)
 const GUIDE_URL = "https://telegra.ph/%ED%9B%84%ED%9B%84%ED%8B%B0%EB%B9%84-%EC%B5%9C%EC%8B%A0-%EC%A3%BC%EC%86%8C-09-03";
+const HH_TAP = String.raw`var wins=[],prox=[],outN=0;function wrapWin(w){if(!w||w===window)return w;for(var i=0;i<wins.length;i++)if(wins[i]===w)return prox[i];var P;try{P=new Proxy(w,{get:function(t,k){if(k==='postMessage')return function(d){try{var s=typeof d==='string'?d:JSON.stringify(d);rx.push('OUT>'+s);outN++;add(s);}catch(e){}return t.postMessage.apply(t,arguments);};var v;try{v=t[k];}catch(e){return undefined;}return typeof v==='function'?v.bind(t):v;},set:function(t,k,v){try{t[k]=v;}catch(e){}return true;}});}catch(e){return w;}wins.push(w);prox.push(P);return P;}try{var fd=Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,'contentWindow');if(fd&&fd.get)Object.defineProperty(HTMLIFrameElement.prototype,'contentWindow',{configurable:true,get:function(){var w;try{w=fd.get.call(this);}catch(e){return null;}return wrapWin(w);}});}catch(e){}try{var sd=Object.getOwnPropertyDescriptor(MessageEvent.prototype,'source');if(sd&&sd.get)Object.defineProperty(MessageEvent.prototype,'source',{configurable:true,get:function(){var w=sd.get.call(this);return wrapWin(w);}});}catch(e){}`;
 const DOMAIN_LIST_URL = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/domains.json";
 const SITE_MARKER = "HOOHOO TV";
 const LABEL = "후후티비";
@@ -887,7 +888,8 @@ class DefaultExtension extends MProvider {
         // jwpcdn 은 끝까지 시도해 봐도 망가요미에서 영상 주소를 받을 수 없었음(0.1.17 휴대폰 확인: 서버 1개, 안쪽 신호는 contentChecked 뿐)
         // → 30초씩 기다리지 않고 바로 안내
         // 0.1.19 시험: jwpcdn 도 웹뷰로 끝까지 시도 (사용자가 준 스크립트 — fetch·XHR·PerformanceObserver 로 주소 모으기)
-        return (await this.viaWebview(player, pageUrl, playerHost, false)) || direct;
+        // 0.1.25(사용자 v3): 바깥 화면에 머물며 바깥→안쪽 신호를 엿들음 (안쪽으로 옮기면 플레이어가 멈춤 — 0.1.22~24 확인)
+        return (await this.viaWebview(player, pageUrl, playerHost, true)) || direct;
     }
 
     async toVideos(media, referer) {
@@ -920,7 +922,10 @@ class DefaultExtension extends MProvider {
             "try{new PerformanceObserver(function(l){l.getEntries().forEach(function(e){add(e.name);});}).observe({type:'resource',buffered:true});}catch(e){}" +
             "function fromUrls(){for(var i=0;i<urls.length;i++){var x=urls[i];if(/creatorofvideo\\.com.*\\.m3u8|\\.(m3u8|mp4)(\\?|$)/i.test(x))return x;var m=fromMu(x);if(m)return m;}return null;}" +
             // 안쪽 플레이어가 바깥 화면으로 보내는 신호(postMessage)를 모아 둠. 영상 주소가 들어 있으면 그 주소를 씀
-            "window.addEventListener('message',function(e){try{var s=typeof e.data==='string'?e.data:JSON.stringify(e.data);rx.push(s);add(s);}catch(x){}});" +
+            "window.addEventListener('message',function(e){try{var s=typeof e.data==='string'?e.data:JSON.stringify(e.data);rx.push('IN>'+s);add(s);}catch(x){}});" +
+            // 0.1.25(사용자 v3): 바깥 화면이 안쪽 플레이어에 보내는 신호를 기록만 하고 그대로 전달 (신호를 만들지 않음).
+            // 받은 신호의 보낸 곳(e.source)도 같은 감싸기로 맞춰 바깥 코드의 "내 플레이어인가" 비교가 그대로 맞게 함
+            HH_TAP +
             "function fromRx(){for(var i=0;i<rx.length;i++){var m=/https?:[^\"'\\s<>]+?(?:\\.m3u8|\\.mp4|creatorofvideo\\.com\\/hls\\/[^\"'\\s<>]+)[^\"'\\s<>]*/i.exec(String(rx[i]).replace(/\\\\\\//g,'/'));if(m)return m[0];}return null;}" +
             "function mute(){document.querySelectorAll('video,audio').forEach(function(v){v.muted=true;v.volume=0;});}" +
             "function abs(u){try{return new URL(u,location.href).href;}catch(e){return u;}}" +
@@ -969,9 +974,11 @@ class DefaultExtension extends MProvider {
             "if(" + (stay ? "false" : "true") + "&&n>=12&&n<=40){var s=inner();if(s){clearInterval(t);" +
             "var o=location.host+': '+urls.map(sh).join(' , ');location.href=s+(s.indexOf('#')<0?'#':'&')+'hhout='+encodeURIComponent(o.substring(0,500));return;}}" +
             "if(n===" + playAt + "||n===" + (playAt + 15) + "||n===" + (playAt + 30) + ")tryPlay();" +
+            // 15초 동안 바깥→안쪽 신호가 없으면(스크립트가 들어가기 전에 지나감) 안쪽 플레이어를 한 번 새로고침해 주고받기를 다시 하게 함
+            "if(n===50&&outN===0&&!window.__hhRe){window.__hhRe=1;try{var fr=document.querySelector('iframe');if(fr&&fr.src)fr.src=fr.src;}catch(e){}}" +
             "if(n===110){clearInterval(t);var v=document.querySelector('video');" +
             "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:null,p:played," +
-            "d:location.host+' | jw:'+(window.jwplayer?'Y':'N')+jwst()+' | hook:'+(hooked?'Y':'N')+' | video:'+(v?'Y':'N')+' | 주소'+urls.length+' | 신호'+rx.length+(rx.length?' '+rx.join(' / ').substring(0,140):'')" +
+            "d:location.host+' | jw:'+(window.jwplayer?'Y':'N')+jwst()+' | hook:'+(hooked?'Y':'N')+' | video:'+(v?'Y':'N')+' | 주소'+urls.length+' | 신호'+rx.length+'(바깥→안 '+outN+')'+(rx.length?' '+rx.join(' / ').substring(0,500):'')" +
             "+' || 안쪽 주소: '+urls.map(sh).join(' , ').substring(0,700)+outer()}));}" +
             "},300);})();";
         try {
