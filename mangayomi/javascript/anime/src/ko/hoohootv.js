@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.21",
+    "version": "0.1.22",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -954,11 +954,17 @@ class DefaultExtension extends MProvider {
             "var b=document.querySelector('.jw-icon-display,.jw-display-icon-container,.vjs-big-play-button,[aria-label=\"Play\"],.play-button');if(b)b.click();}" +
             "var t=setInterval(function(){n++;mute();var u=find();" +
             "if(u){clearInterval(t);window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:u,p:played,r:location.href}));return;}" +
-            "if(" + (stay ? "false" : "true") + "&&n>=12&&n<=40){var s=inner();if(s){clearInterval(t);location.href=s;return;}}" +
+            // 0.1.22 진단: 짧은 주소 모양, 안쪽으로 옮기기 전 바깥 화면 주소는 # 뒤에 담아 감(서버로 안 감)
+            "function jwst(){try{var j=window.jwplayer&&window.jwplayer();if(!j)return '';var pl=(j.getPlaylist&&j.getPlaylist())||[];return ' (상태 '+(j.getState?j.getState():'?')+' · 목록 '+pl.length+' · 설정 '+(j.getConfig&&j.getConfig()?'Y':'N')+')';}catch(e){return ' (상태 오류)';}}" +
+            "function outer(){try{var m=/[#&]hhout=([^&]*)/.exec(location.hash);return m?' || 바깥 '+decodeURIComponent(m[1]):'';}catch(e){return '';}}" +
+            "function sh(u){u=String(u).replace(/^https?:\\/\\//,'');var q=u.indexOf('?');return (q>0?u.substring(0,q)+'?…':u).substring(0,45);}" +
+            "if(" + (stay ? "false" : "true") + "&&n>=12&&n<=40){var s=inner();if(s){clearInterval(t);" +
+            "var o=location.host+': '+urls.map(sh).join(' , ');location.href=s+(s.indexOf('#')<0?'#':'&')+'hhout='+encodeURIComponent(o.substring(0,500));return;}}" +
             "if(n===" + playAt + "||n===" + (playAt + 15) + "||n===" + (playAt + 30) + ")tryPlay();" +
             "if(n===70){clearInterval(t);var v=document.querySelector('video');" +
             "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({u:null,p:played," +
-            "d:location.host+' | jw:'+(window.jwplayer?'Y':'N')+' | video:'+(v?'Y':'N')+' | 주소'+urls.length+' | 신호'+rx.length+(rx.length?' '+rx.join(' / ').substring(0,140):'')}));}" +
+            "d:location.host+' | jw:'+(window.jwplayer?'Y':'N')+jwst()+' | video:'+(v?'Y':'N')+' | 주소'+urls.length+' | 신호'+rx.length+(rx.length?' '+rx.join(' / ').substring(0,140):'')" +
+            "+' || 안쪽 주소: '+urls.map(sh).join(' , ').substring(0,700)+outer()}));}" +
             "},300);})();";
         try {
             const timeout = new Promise((res) => setTimeout(() => res(null), 36000));
