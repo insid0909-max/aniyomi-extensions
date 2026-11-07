@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.22",
+    "version": "0.1.23",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -977,7 +977,11 @@ class DefaultExtension extends MProvider {
                 return null;
             }
             const o = JSON.parse(String(res));
-            if (o && o.d) this.lastDiag = String(o.d);
+            if (o && o.d) {
+                this.lastDiag = String(o.d);
+                // 오류 칸은 몇 줄만 보여 줌 → 전체 진단을 저장해 필터 맨 위 🩺 줄에 보여 줌 (0.1.23)
+                this.setPref("hoohootv_diag", `${new Date().toISOString().substring(5, 16).replace("T", " ")} ${this.lastDiag}`);
+            }
             if (!o || !/^https?:\/\//.test(String(o.u || ""))) return null;
             if (o.p && playerHost && playAt > 2) this.rememberAutoplay(playerHost);
             return { media: String(o.u), referer: /^https?:\/\//.test(String(o.r || "")) ? String(o.r) : player };
@@ -988,7 +992,23 @@ class DefaultExtension extends MProvider {
 
     getFilterList() {
         const host = this.getBaseUrl().replace(/^https?:\/\//, "");
-        const head = [{ type_name: "HeaderFilter", name: `📡 주소: ${host}` }, { type_name: "SeparatorFilter" }];
+        const head = [{ type_name: "HeaderFilter", name: `📡 주소: ${host}` }];
+        // 🩺 마지막 재생 진단(시험판): 긴 글을 여러 줄로 나눠 전부 보여 줌
+        const diag = this.pref("hoohootv_diag", "");
+        if (diag) {
+            const parts = diag.split(/ \|\| | , | \| /);
+            let line = "🩺 마지막 재생 진단:";
+            for (const p of parts) {
+                if ((line + " " + p).length > 70) {
+                    head.push({ type_name: "HeaderFilter", name: line });
+                    line = "🩺 " + p;
+                } else {
+                    line += " " + p;
+                }
+            }
+            head.push({ type_name: "HeaderFilter", name: line });
+        }
+        head.push({ type_name: "SeparatorFilter" });
         if (HH_KIND === 2) {
             return head.concat([{ type_name: "HeaderFilter", name: "드라마 목록입니다 (분류 선택 없음). 작품 주소를 검색창에 붙여 넣으면 바로 열기" }]);
         }
