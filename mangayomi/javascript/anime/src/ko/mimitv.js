@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/mimitv.js"
@@ -534,7 +534,8 @@ class DefaultExtension extends MProvider {
             // 쪽 번호는 10개씩 묶음 → 10·20쪽 뒤에는 숫자 대신 "다음" 링크 (2026-11-06, 전엔 10쪽·240개에서 멈춤)
             hasNextPage = /<a\s+href="[^"]*page=\d+"[^>]*>\s*(?:\d+|다음)\s*<\/a>/.test(after);
         }
-        return { list, hasNextPage };
+        // 인기순은 사이트가 4~5쪽(약 95개)까지만 주고 뒤는 빈 쪽 → 빈 쪽이면 끝
+        return { list, hasNextPage: hasNextPage && list.length > 0 };
     }
 
     // ================= 상세 / 회차 =================

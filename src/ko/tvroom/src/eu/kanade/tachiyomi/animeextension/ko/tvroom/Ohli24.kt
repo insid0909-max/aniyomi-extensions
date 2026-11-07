@@ -193,7 +193,8 @@ class Ohli24 : AnimeHttpSource(), ConfigurableAnimeSource {
                 }
             }
         }
-        val hasNext = doc.selectFirst("li.next a[href], a.next[href]") != null
+        // 방영중 목록은 "다음" 표시가 없어 1쪽(25개)에서 멈췄음(2026-11-07) → 쪽이 꽉 차면 다음 쪽 있음, 빈 쪽이면 끝
+        val hasNext = animes.isNotEmpty() && (doc.selectFirst("li.next a[href], a.next[href]") != null || animes.size >= 25)
         return AnimesPage(animes, hasNext)
     }
 
