@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.29",
+    "version": "0.1.30",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/hoohootv.js"
@@ -23,6 +23,8 @@ const mangayomiSources = [{
 // 0.1.28: 재프레이밍에서 안쪽이 보낸 확인 신호(contentChecked)에 진짜 자막 신호(subtitlesData)를 그대로 전달(악수 완성)
 //   + 모든 실패 경로에 진단 기록(재프레이밍 무응답·웹뷰 오류·플레이어 가져오기 실패) + 웹뷰 현재 주소 표시
 // 0.1.29: 프레임 문서가 바뀔 때 관찰 코드 다시 연결, 로딩 상태·제목·본문 일부 진단
+// 0.1.30: 요청관찰 시험 앱에서는 원래 회차 화면의 실제 영상 요청을 앱 기능으로 받음.
+// 순정 앱에는 이 함수가 없으므로 기존 동작을 유지함.
 // jwpcdn 회차: creatorofvideo.com HLS / JW ping 의 mu= 파라미터를 우선 추출.
 const HH_KIND = 0; // 0 = 전체, 1 = 영화, 2 = 드라마
 const DEFAULT_BASE_URL = "https://dc.hoohootv464.xyz";
@@ -1098,7 +1100,9 @@ class DefaultExtension extends MProvider {
         return hlsHint(await this.videoListInner(url));
     }
 
-    videoHeaders(referer) {
+    videoHeaders(referer, observed) {
+        // 앱에서 관찰한 실제 요청 헤더가 있으면 임의의 출처·쿠키를 만들지 않음.
+        if (observed && Object.keys(observed).length) return Object.assign({}, observed);
         const origin = (/^(https?:\/\/[^/?#]+)/.exec(String(referer || "")) || [null, ""])[1];
         const h = { "User-Agent": UA, "Referer": referer };
         if (origin) h["Origin"] = origin;
@@ -1107,12 +1111,44 @@ class DefaultExtension extends MProvider {
 
     async videoListInner(url) {
         const path = /^https?:\/\//.test(url) ? url.replace(HOST_RE, "") : url;
-        const pageUrl = this.getBaseUrl() + path;
+        let pageUrl = this.getBaseUrl() + path;
         const hit = MEDIA_CACHE[path];
-        if (hit && Date.now() - hit.at < 1200000 && await mediaWorks(this.client, hit.media, this.videoHeaders(hit.referer))) {
-            return this.toVideos(hit.media, hit.referer);
+        if (hit && Date.now() - hit.at < 1200000 && await mediaWorks(this.client, hit.media, this.videoHeaders(hit.referer, hit.headers))) {
+            const videos = await this.toVideos(hit.media, hit.referer, hit.headers);
+            if (hit.subs && hit.subs.length) for (const video of videos) video.subtitles = hit.subs;
+            return videos;
         }
+        // 기존 주소 자동 찾기를 먼저 거친 뒤 바뀐 주소의 실제 회차를 엶.
         const html = await this.get(path);
+        pageUrl = this.getBaseUrl() + path;
+        // 새 앱 전용: 별도 플레이어로 이동하지 않고 원래 회차의 재생 흐름을 유지함.
+        if (typeof captureMediaViaWebview === "function") {
+            let captured = null;
+            try {
+                const raw = await captureMediaViaWebview(pageUrl, {}, 55);
+                captured = typeof raw === "string" ? JSON.parse(raw) : raw;
+            } catch (e) {
+                captured = { d: "앱 요청관찰 호출 실패: " + String(e && e.message ? e.message : e).substring(0, 90) };
+            }
+            this.lastDiag = String(captured && captured.d || "앱 요청관찰 응답 없음");
+            this.setPref("hoohootv_diag", `${new Date().toISOString().substring(5, 16).replace("T", " ")} ${this.lastDiag}`);
+            if (!captured || !/^https?:\/\//.test(String(captured.u || ""))) {
+                throw new Error(this.lastDiag + " / 원래 회차를 앱 웹뷰에서 열어 재생 여부를 확인해 주세요");
+            }
+            const found = {
+                media: String(captured.u),
+                referer: /^https?:\/\//.test(String(captured.r || "")) ? String(captured.r) : pageUrl,
+                headers: captured.h && typeof captured.h === "object" ? captured.h : {},
+                subs: Array.isArray(captured.subs) ? captured.subs : [],
+                at: Date.now(),
+            };
+            const keys = Object.keys(MEDIA_CACHE);
+            if (keys.length >= 30) delete MEDIA_CACHE[keys[0]];
+            MEDIA_CACHE[path] = found;
+            const videos = await this.toVideos(found.media, found.referer, found.headers);
+            if (found.subs.length) for (const video of videos) video.subtitles = found.subs;
+            return videos;
+        }
         const doc = new Document(html);
         // 회차 화면에 있는 플레이어(서버)를 모두 모아 차례로 시도: jwpcdn 이 아닌 서버 먼저 (jwpcdn 은 망가요미에서 막히는 경우가 많음)
         const players = this.playerCandidates(doc, html);
@@ -1208,9 +1244,9 @@ class DefaultExtension extends MProvider {
         return direct;
     }
 
-    async toVideos(media, referer) {
+    async toVideos(media, referer, observed) {
         const label = media.includes(".m3u8") || /creatorofvideo\.com/i.test(media) ? `${LABEL} (HLS)` : LABEL;
-        return qualitySort("hoohootv_quality", await hlsExpand(this.client, media, label, this.videoHeaders(referer)));
+        return qualitySort("hoohootv_quality", await hlsExpand(this.client, media, label, this.videoHeaders(referer, observed)));
     }
 
     autoplayHosts() {
