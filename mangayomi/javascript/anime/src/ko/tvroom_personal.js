@@ -4,7 +4,7 @@ const mangayomiSources = [
       name: "티비룸(개인)",
       lang: "ko",
       baseUrl: "https://tvroom46.org",
-      version: "1.0.2",
+      version: "1.0.3",
       isNsfw: !1,
       itemType: 1,
       isManga: !1,
@@ -321,8 +321,14 @@ class DefaultExtension extends MProvider {
         "HLS 프록시를 시작하지 못했습니다. Mangayomi를 업데이트해 주세요.",
       );
     const key = h["X-Hls-Key"] || "";
-    const playback = key ? this.localHls(String(l.body), c, g, u, key) : g;
-    return [{ url: playback, originalUrl: c, quality: "자동 (HLS)", headers: a }];
+    if (!key) return [{ url: g, originalUrl: c, quality: "자동 (HLS)", headers: a }];
+    const list = [];
+    try {
+      list.push({ url: this.localHls(String(l.body), c, g, u, key), originalUrl: c, quality: "A 키내장 (HLS)", headers: a });
+    } catch (t) {}
+    const g2 = await createHlsProxyUrl(c, h);
+    list.push({ url: g2, originalUrl: c, quality: "B 헤더키 (HLS)", headers: a });
+    return list;
   }
   localHls(playlist, base, proxy, keyUrl, keyHex) {
     if (!/^[0-9a-f]{32}$/i.test(keyHex)) throw new Error("재생 키는 16바이트여야 합니다.");
