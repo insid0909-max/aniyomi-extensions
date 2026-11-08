@@ -4,7 +4,7 @@ const mangayomiSources = [
       name: "티비룸",
       lang: "ko",
       baseUrl: "https://tvroom46.org",
-      version: "1.0.6",
+      version: "1.0.7",
       isNsfw: !1,
       itemType: 1,
       isManga: !1,
@@ -315,12 +315,67 @@ class DefaultExtension extends MProvider {
       throw new Error(
         "티비룸 재생에는 HLS 프록시를 지원하는 최신 Mangayomi가 필요합니다. 앱을 업데이트해 주세요.",
       );
-    const g = await createHlsProxyUrl(c, h);
+    const g = await createHlsProxyUrl(c, a);
     if ("string" != typeof g || !/^http:\/\/127\.0\.0\.1:\d+\//.test(g))
       throw new Error(
         "HLS 프록시를 시작하지 못했습니다. Mangayomi를 업데이트해 주세요.",
       );
-    return [{ url: g, originalUrl: c, quality: "자동 (HLS)", headers: a }];
+    const key = h["X-Hls-Key"] || "";
+    const playback = key ? this.localHls(String(l.body), c, g, u, key) : g;
+    return [{ url: playback, originalUrl: c, quality: "자동 (HLS)", headers: a }];
+  }
+  localHls(playlist, base, proxy, keyUrl, keyHex) {
+    if (!/^[0-9a-f]{32}$/i.test(keyHex)) throw new Error("재생 키는 16바이트여야 합니다.");
+    if (!/^#EXTM3U(?:\r?\n|$)/.test(playlist) || !/#EXT-X-ENDLIST\b/.test(playlist) || /#EXT-X-(?:STREAM-INF|MEDIA):/.test(playlist))
+      throw new Error("현재 키 전달 방식은 완성된 단일 HLS 재생목록만 지원합니다.");
+    if (playlist.length > 1024 * 1024) throw new Error("재생목록 용량이 너무 큽니다.");
+    const prefix = /^(http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]+\/)playlist\.m3u8\?url=[A-Za-z0-9_-]+$/.exec(proxy)?.[1];
+    if (!prefix) throw new Error("지원하지 않는 HLS 프록시 주소 형식입니다.");
+    const fmp4 = /#EXT-X-MAP:/.test(playlist);
+    const absolute = (value) => {
+      value = String(value).trim();
+      if (/^https?:\/\//i.test(value)) return value;
+      if (value.startsWith("//")) return /^https?:/.exec(base)[0] + value;
+      const origin = /^https?:\/\/[^/]+/i.exec(base)[0];
+      const clean = base.replace(/[?#].*$/, "");
+      if (value.startsWith("?")) return clean + value;
+      const joined = value.startsWith("/") ? value : clean.slice(origin.length).replace(/[^/]*$/, "") + value;
+      const parts = /^([^?#]*)([\s\S]*)$/.exec(joined), stack = [];
+      for (const part of parts[1].split("/")) {
+        if (part === "..") { if (stack.length > 1) stack.pop(); }
+        else if (part !== ".") stack.push(part);
+      }
+      return origin + stack.join("/") + parts[2];
+    };
+    const resource = (value, type) => {
+      const target = absolute(value);
+      if (!/^https?:\/\/[^\s]+$/i.test(target)) throw new Error("영상 조각 주소가 올바르지 않습니다.");
+      const path = target.replace(/[?#].*$/, "").toLowerCase();
+      const name = type === "map" || fmp4 || /\.(?:mp4|m4s|m4a)$/.test(path) ? "segment.mp4" : "segment.ts";
+      return prefix + name + "?url=" + encode64Text(target, true);
+    };
+    const keyBytes = [];
+    for (let i = 0; i < keyHex.length; i += 2) keyBytes.push(parseInt(keyHex.slice(i, i + 2), 16));
+    const keyData = "data:application/octet-stream;base64," + encode64Bytes(keyBytes);
+    let keys = 0;
+    const output = playlist.split(/\r?\n/).map((raw) => {
+      const line = raw.trim();
+      if (!line || line.startsWith("#")) {
+        return raw.replace(/URI="([^"]+)"/g, (all, value) => {
+          if (line.startsWith("#EXT-X-KEY:")) {
+            if (!/METHOD=AES-128(?:,|$)/.test(line) || absolute(value) !== keyUrl)
+              throw new Error("키 교체 또는 지원하지 않는 암호화 방식입니다.");
+            keys++;
+            return 'URI="' + keyData + '"';
+          }
+          if (line.startsWith("#EXT-X-MAP:")) return 'URI="' + resource(value, "map") + '"';
+          throw new Error("추가 재생목록 URI는 지원하지 않습니다.");
+        });
+      }
+      return resource(line, "segment");
+    }).join("\n");
+    if (!keys) throw new Error("재생목록에 키를 연결하지 못했습니다.");
+    return "av://hls:data:application/vnd.apple.mpegurl;base64," + encode64Text(output + "\n", false);
   }
   unscramble(t) {
     const e = String(t || "");
@@ -382,3 +437,23 @@ function base64Bytes(t) {
   return r;
 }
 
+
+function encode64Bytes(bytes) {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b = i + 1 < bytes.length, c = i + 2 < bytes.length;
+    const n = (bytes[i] << 16) | ((b ? bytes[i + 1] : 0) << 8) | (c ? bytes[i + 2] : 0);
+    out += chars[(n >>> 18) & 63] + chars[(n >>> 12) & 63] + (b ? chars[(n >>> 6) & 63] : "=") + (c ? chars[n & 63] : "=");
+  }
+  return out;
+}
+function encode64Text(text, urlSafe) {
+  const encoded = encodeURIComponent(String(text)), bytes = [];
+  for (let i = 0; i < encoded.length; i++) {
+    if (encoded[i] === "%") { bytes.push(parseInt(encoded.slice(i + 1, i + 3), 16)); i += 2; }
+    else bytes.push(encoded.charCodeAt(i));
+  }
+  const out = encode64Bytes(bytes);
+  return urlSafe ? out.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") : out;
+}
