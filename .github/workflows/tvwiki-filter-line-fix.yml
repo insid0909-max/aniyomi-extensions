@@ -1,0 +1,36 @@
+name: 티비위키 필터 상태 한 줄 표시
+on:
+  push:
+    branches: [master]
+    paths: ['.github/workflows/tvwiki-filter-line-fix.yml']
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 필터 표시 한 군데 수정과 보존 검사
+        run: |
+          node <<'NODE'
+          const fs=require('node:fs'),crypto=require('node:crypto'),cp=require('node:child_process');
+          const vm=require('node:vm'),assert=require('node:assert/strict');
+          function verify(fn){const latest={d:'2026-11-08',t:'1.0.12: 필터 상태 한 줄 표시'},older={d:'2026-11-07',t:'이전 내역'},cases=[['1.0.12',[latest,older],'📝 🆕 NEW 1.0.12 · 11.08 필터 상태 한 줄 표시'],['1.0.13',[latest],'📝 OLD 1.0.12 · 11.08 필터 상태 한 줄 표시'],['',[latest],'📝 확인 전 1.0.12 · 11.08 필터 상태 한 줄 표시'],['1.0.12',[],'📝 🆕 NEW 1.0.12 · 내역 확인 전']];for(const [v,notes,expected] of cases){const c={P:{},S:{version:'1.0.12',name:'티비위키'},C:[['drama','드라마']],T:[['subidx','최근 방영순']],k:'tvwiki',rule:()=>null,read:(key,d='')=>key==='version'?v:key==='notes'?JSON.stringify(notes):d,F:()=>[{type_name:'HeaderFilter',name:'기존 안내'},{type_name:'SelectFilter',type:'category',name:'분류'},{type_name:'SelectFilter',type:'sort',name:'정렬'}]};vm.createContext(c);vm.runInContext(fn,c);const out=c.P.getFilterList.call({baseUrl:'https://tvwiki57.net'});assert.equal(out[0].name,expected);assert.equal(out.filter(x=>String(x.name).startsWith('📝')).length,1);assert(!out.some(x=>String(x.name).startsWith('2026-')));assert(!out[0].name.includes('\n'));for(const type of ['category','sort','rule'])assert(out.some(x=>x.type===type));assert(out.slice(-3).every(x=>x.type_name==='HeaderFilter'&&x.name===' '))}return cases.length}
+
+          (async()=>{const file='mangayomi/javascript/anime/src/ko/tvwiki.js',before=fs.readFileSync(file,'utf8'),b=Buffer.from(before),sha=crypto.createHash('sha1').update('blob '+b.length+'\0').update(b).digest('hex');assert.equal(sha,'4dcb8068c791ea65fd185219f2f16c32747161b1','원본이 바뀌어 재검토가 필요합니다.');const from="{type_name:'HeaderFilter',name:'📝 '+S.name+' '+S.version+' · '+(v?(cmp(v,S.version)>0?'OLD':'NEW'):'확인 전')},...n.map(x=>({type_name:'HeaderFilter',name:String(x.d||'')+' '+String(x.t||'')})),",to="{type_name:'HeaderFilter',name:'📝 '+(v?(cmp(v,S.version)>0?'OLD':'🆕 NEW'):'확인 전')+' '+S.version+(n[0]?' · '+[String(n[0].d||'').slice(5).replace(/-/g,'.'),String(n[0].t||'').replace(/^\\s*\\d+(?:\\.\\d+)+\\s*[:：]?\\s*/,'').replace(/\\s+/g,' ').trim().slice(0,18)].filter(Boolean).join(' '):' · 내역 확인 전')},";assert.equal(before.split(from).length,2,'필터 표시 위치는 한 군데여야 합니다.');const after=before.replace(from,to).replace(/version:\s*["']1\.0\.11["']/,'version:"1.0.12"'),mask=s=>s.replace(to,from).replace(/version:\s*["']1\.0\.(?:11|12)["']/,'VERSION');assert.equal(mask(before),mask(after),'필터 표시와 버전 외 변경 금지');const start=after.indexOf('P.getFilterList=function(){'),end=after.indexOf(';function date(s)',start);assert(start>=0&&end>start);assert.equal(verify(after.slice(start,end+1)),4);const tmp=file+'.check.js';fs.writeFileSync(tmp,after);try{cp.execFileSync(process.execPath,['--check',tmp],{stdio:'inherit'})}finally{fs.unlinkSync(tmp)}const index=JSON.parse(fs.readFileSync('mangayomi/anime_index.json','utf8')),row=index.find(x=>x.id===1720450905);assert(row&&row.version==='1.0.11');row.version='1.0.12';row.sourceCodeUrl='https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/mangayomi/javascript/anime/src/ko/tvwiki.js?v=1.0.12';const notes=JSON.parse(fs.readFileSync('changelog.json','utf8')),{addNote,render}=require('./mangayomi/tools/monitor/changelog.js');addNote(notes,'tvwiki','2026-11-08','1.0.12: 필터 상태 한 줄 표시');fs.writeFileSync(file,after);fs.writeFileSync('mangayomi/anime_index.json',JSON.stringify(index,null,1)+'\n');fs.writeFileSync('changelog.json',JSON.stringify(notes,null,1)+'\n');fs.writeFileSync('업데이트내역.md',render(notes));console.log('필터 한 줄·NEW/OLD·확인 전·빈 내역·기존 필터/빈 줄 보존 검사 통과')})().catch(e=>{console.error(e);process.exitCode=1});
+          NODE
+      - name: 검사된 표시 수정만 반영
+        run: |
+          node --check mangayomi/javascript/anime/src/ko/tvwiki.js
+          git config user.name "insid0909-max"
+          git config user.email "266083559+insid0909-max@users.noreply.github.com"
+          git add -- mangayomi/javascript/anime/src/ko/tvwiki.js mangayomi/anime_index.json changelog.json 업데이트내역.md
+          git diff --cached --check
+          git commit -m "티비위키 1.0.12 필터 상태와 최근 내역 한 줄로 통일"
+          git push origin HEAD:master
