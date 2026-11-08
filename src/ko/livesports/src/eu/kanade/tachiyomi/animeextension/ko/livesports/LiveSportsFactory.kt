@@ -12,5 +12,5 @@ class LiveSportsFactory : AnimeSourceFactory {
         LiveSports1(), // 실시간스포츠1 (굿라이브티비 gltv88.com)
         LiveSports2(), // 실시간스포츠2 (tongtv.net)
         SamsungTvPlus(), // 삼성 TV 플러스 (삼성 공식 무료 실시간 채널)
-    ) + SamsungTvPlus.SOURCE_GROUPS.map { SamsungTvPlus(it) } // 삼성 TV 플러스 · 분류별 (설정은 기본 소스와 같이 씀)
+    ) // 삼성 TV 플러스 분류별 소스(실시간·드라마·영화·뉴스·예능)는 2026-11-08 사용자 요청으로 뺌
 }
