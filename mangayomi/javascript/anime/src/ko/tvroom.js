@@ -4,7 +4,7 @@ const mangayomiSources = [
       name: "티비룸",
       lang: "ko",
       baseUrl: "https://tvroom46.org",
-      version: "1.0.7",
+      version: "1.0.8",
       isNsfw: !1,
       itemType: 1,
       isManga: !1,
@@ -356,7 +356,7 @@ class DefaultExtension extends MProvider {
     };
     const keyBytes = [];
     for (let i = 0; i < keyHex.length; i += 2) keyBytes.push(parseInt(keyHex.slice(i, i + 2), 16));
-    const keyData = "data:application/octet-stream;base64," + encode64Bytes(keyBytes);
+    const keyData = "data:application/octet-stream;base64," + encode64Bytes(keyBytes) + "#key.mp4";
     let keys = 0;
     const output = playlist.split(/\r?\n/).map((raw) => {
       const line = raw.trim();
