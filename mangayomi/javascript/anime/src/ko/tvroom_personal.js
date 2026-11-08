@@ -4,7 +4,7 @@ const mangayomiSources = [
       name: "티비룸(개인)",
       lang: "ko",
       baseUrl: "https://tvroom46.org",
-      version: "1.0.3",
+      version: "1.0.4",
       isNsfw: !1,
       itemType: 1,
       isManga: !1,
@@ -12,6 +12,8 @@ const mangayomiSources = [
   ],
   USER_AGENT =
     "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36",
+  PLAYER_UA =
+    "Mozilla/5.0 (Linux; Android 13; Pixel 7 Build/TQ3A.230805.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/143.0.0.0 Mobile Safari/537.36",
   CATEGORIES = [
     ["드라마", "드라마"],
     ["영화", "영화"],
@@ -273,43 +275,77 @@ class DefaultExtension extends MProvider {
       chapters: a,
     };
   }
+  absUrl(base, value) {
+    value = String(value || "").trim().replace(/\\\//g, "/").replace(/&amp;/g, "&");
+    if (/^https?:\/\//i.test(value)) return value;
+    if (value.startsWith("//")) return /^https?:/.exec(base)[0] + value;
+    const origin = /^https?:\/\/[^/]+/i.exec(base)[0];
+    const clean = base.replace(/[?#].*$/, "");
+    if (value.startsWith("?")) return clean + value;
+    const joined = value.startsWith("/") ? value : clean.slice(origin.length).replace(/[^/]*$/, "") + value;
+    const parts = /^([^?#]*)([\s\S]*)$/.exec(joined), stack = [];
+    for (const part of parts[1].split("/")) {
+      if (part === "..") { if (stack.length > 1) stack.pop(); }
+      else if (part !== ".") stack.push(part);
+    }
+    return origin + stack.join("/") + parts[2];
+  }
   async getVideoList(t) {
     const { series: e, episode: r } = this.path(t, !0),
+      episodeUrl = this.baseUrl + this.encode(`${e}/${r}`),
       s = await this.document(`${e}/${r}`),
-      i = attr(s.selectFirst("iframe#view_iframe"), "src");
+      frame = attr(s.selectFirst("iframe#view_iframe"), "src");
+    if (!frame)
+      throw new Error(
+        "재생 정보를 찾지 못했습니다. WebView에서 회차 페이지를 확인하세요.",
+      );
+    const i = this.absUrl(episodeUrl, frame);
     if (!/^https:\/\//.test(i))
       throw new Error(
         "재생 정보를 찾지 못했습니다. WebView에서 회차 페이지를 확인하세요.",
       );
-    const n = i.replace(/^(https?:\/\/[^/]+).*/, "$1"),
+    const n = /^https?:\/\/[^/]+/i.exec(i)[0],
       a = {
-        "User-Agent": USER_AGENT,
-        Referer: n + "/",
-        Origin: n,
         Accept: "*/*",
+        Referer: i,
+        Origin: n,
+        "User-Agent": PLAYER_UA,
       },
       o = await this.client.get(i, {
-        "User-Agent": USER_AGENT,
-        Referer: this.baseUrl + "/",
+        "User-Agent": PLAYER_UA,
+        Referer: episodeUrl,
+        Origin: this.baseUrl,
       });
     if (200 !== o.statusCode)
       throw new Error(
         `플레이어 페이지 요청에 실패했습니다 (HTTP ${o.statusCode}).`,
       );
-    const c = /https?:\/\/[^"'\s<>\\]+\/stream\/m3u8\/[^"'\s<>\\]+/.exec(
-      String(o.body).replace(/\\\//g, "/"),
-    )?.[0];
-    if (!c) throw new Error("영상 주소(m3u8)를 찾지 못했습니다.");
+    const body = String(o.body),
+      dm = /data-m3u8=["']([^"']+)["']/i.exec(body)?.[1],
+      c = this.absUrl(
+        i,
+        dm ||
+          /https?:\/\/[^"'\s<>\\]+\.m3u8(?:\?[^"'\s<>\\]*)?/i.exec(
+            body.replace(/\\\//g, "/"),
+          )?.[0] ||
+          /https?:\/\/[^"'\s<>\\]+\/stream\/m3u8\/[^"'\s<>\\]+/.exec(
+            body.replace(/\\\//g, "/"),
+          )?.[0] ||
+          "",
+      );
+    if (!/^https?:\/\//.test(c)) throw new Error("영상 주소(m3u8)를 찾지 못했습니다.");
     const l = await this.client.get(c, a);
     if (200 !== l.statusCode || !/^#EXTM3U/.test(String(l.body).trim()))
       throw new Error("재생 목록을 받지 못했습니다. 회차를 다시 열어 주세요.");
-    const h = { ...a },
-      u = /#EXT-X-KEY:[^\n]*URI="(https?:\/\/[^"]+)"/.exec(l.body)?.[1];
+    const km = /#EXT-X-KEY:[^\r\n]*URI="([^"]+)"/i.exec(l.body),
+      u = km ? this.absUrl(c, km[1]) : "";
+    let key = "";
     if (u) {
+      if (/^data:/i.test(km[1])) throw new Error("지원하지 않는 재생 키 형식입니다.");
       const t = await this.client.get(u, a);
       if (200 !== t.statusCode)
         throw new Error(`재생 키를 받지 못했습니다 (HTTP ${t.statusCode}).`);
-      h["X-Hls-Key"] = this.unscramble(t.body);
+      key = this.unscramble(t.body);
     }
     if ("function" != typeof createHlsProxyUrl)
       throw new Error(
@@ -320,15 +356,17 @@ class DefaultExtension extends MProvider {
       throw new Error(
         "HLS 프록시를 시작하지 못했습니다. Mangayomi를 업데이트해 주세요.",
       );
-    const key = h["X-Hls-Key"] || "";
-    if (!key) return [{ url: g, originalUrl: c, quality: "자동 (HLS)", headers: a }];
-    const list = [];
-    try {
-      list.push({ url: this.localHls(String(l.body), c, g, u, key), originalUrl: c, quality: "A 키내장 (HLS)", headers: a });
-    } catch (t) {}
-    const g2 = await createHlsProxyUrl(c, h);
-    list.push({ url: g2, originalUrl: c, quality: "B 헤더키 (HLS)", headers: a });
-    return list;
+    const playback = key ? this.localHls(String(l.body), c, g, u, key) : g;
+    return [
+      {
+        url: playback,
+        originalUrl: c,
+        quality: "휴대폰 중계 (권장)",
+        headers: a,
+        subtitles: [],
+        audios: [],
+      },
+    ];
   }
   localHls(playlist, base, proxy, keyUrl, keyHex) {
     if (!/^[0-9a-f]{32}$/i.test(keyHex)) throw new Error("재생 키는 16바이트여야 합니다.");
@@ -338,21 +376,7 @@ class DefaultExtension extends MProvider {
     const prefix = /^(http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]+\/)playlist\.m3u8\?url=[A-Za-z0-9_-]+$/.exec(proxy)?.[1];
     if (!prefix) throw new Error("지원하지 않는 HLS 프록시 주소 형식입니다.");
     const fmp4 = /#EXT-X-MAP:/.test(playlist);
-    const absolute = (value) => {
-      value = String(value).trim();
-      if (/^https?:\/\//i.test(value)) return value;
-      if (value.startsWith("//")) return /^https?:/.exec(base)[0] + value;
-      const origin = /^https?:\/\/[^/]+/i.exec(base)[0];
-      const clean = base.replace(/[?#].*$/, "");
-      if (value.startsWith("?")) return clean + value;
-      const joined = value.startsWith("/") ? value : clean.slice(origin.length).replace(/[^/]*$/, "") + value;
-      const parts = /^([^?#]*)([\s\S]*)$/.exec(joined), stack = [];
-      for (const part of parts[1].split("/")) {
-        if (part === "..") { if (stack.length > 1) stack.pop(); }
-        else if (part !== ".") stack.push(part);
-      }
-      return origin + stack.join("/") + parts[2];
-    };
+    const absolute = (value) => this.absUrl(base, value);
     const resource = (value, type) => {
       const target = absolute(value);
       if (!/^https?:\/\/[^\s]+$/i.test(target)) throw new Error("영상 조각 주소가 올바르지 않습니다.");
@@ -381,7 +405,7 @@ class DefaultExtension extends MProvider {
       return resource(line, "segment");
     }).join("\n");
     if (!keys) throw new Error("재생목록에 키를 연결하지 못했습니다.");
-    return "av://hls:data:application/vnd.apple.mpegurl;base64," + encode64Text(output + "\n", false);
+    return "av://hls:data:application/vnd.apple.mpegurl;base64," + encode64Text(output + "\n", false) + "#local.m3u8";
   }
   unscramble(t) {
     const e = String(t || "");
