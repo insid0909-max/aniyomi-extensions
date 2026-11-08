@@ -4,7 +4,7 @@ const mangayomiSources = [
       name: "티비룸",
       lang: "ko",
       baseUrl: "https://tvroom46.org",
-      version: "1.0.1",
+      version: "1.0.2",
       isNsfw: !1,
       itemType: 1,
       isManga: !1,
@@ -203,6 +203,8 @@ class DefaultExtension extends MProvider {
   }
   getFilterList() {
     return [
+      ...String(this.pref("tvroom_last_diag") || "재생 진단 기록 없음").split("\n").slice(-16)
+        .map((name) => ({ type_name: "HeaderFilter", name: "진단: " + name })),
       { type_name: "HeaderFilter", name: "검색어가 있으면 분류는 무시됩니다" },
       {
         type_name: "SelectFilter",
@@ -273,10 +275,61 @@ class DefaultExtension extends MProvider {
       chapters: a,
     };
   }
+  _tvroomMark(stage, status) {
+    this._tvroomStage = stage;
+    const line = stage + " | " + status;
+    this._tvroomTrace = (this._tvroomTrace || []).concat(line).slice(-16);
+    try {
+      new SharedPreferences().setString("tvroom_last_diag", this._tvroomTrace.join("\n"));
+    } catch (e) {}
+    try { console.log("[TVRoom 1.0.2] " + line); } catch (e) {}
+  }
+  async _tvroomStep(stage, run, limit = 25000) {
+    this._tvroomMark(stage, "시작");
+    const started = Date.now();
+    let timer = null;
+    try {
+      const task = Promise.resolve().then(run);
+      let result;
+      if (typeof setTimeout === "function" && typeof clearTimeout === "function") {
+        result = await Promise.race([
+          task,
+          new Promise((resolve, reject) => {
+            timer = setTimeout(() => reject(new Error("응답 시간 초과")), limit);
+          }),
+        ]);
+      } else {
+        this._tvroomMark(stage, "타이머 미지원: 원래 요청 대기");
+        result = await task;
+      }
+      this._tvroomMark(stage, "완료 " + (Date.now() - started) + "ms");
+      return result;
+    } catch (e) {
+      const reason = e && e.message === "응답 시간 초과" ? "응답 시간 초과" : "요청 오류";
+      this._tvroomMark(stage, reason + " " + (Date.now() - started) + "ms");
+      throw new Error("[티비룸 " + stage + "] " + reason);
+    } finally {
+      if (timer !== null) clearTimeout(timer);
+    }
+  }
   async getVideoList(t) {
+    this._tvroomTrace = [];
+    this._tvroomMark("00 회차 주소", "시작");
+    try {
+      return await this._tvroomVideoList(t);
+    } catch (e) {
+      this._tvroomMark(this._tvroomStage || "00 회차 주소", "실패: 재생 중단");
+      const message = String(e && e.message || "알 수 없는 오류")
+        .replace(/https?:\/\/[^\s"'<>]+/gi, "[URL 생략]")
+        .slice(0, 300);
+      throw new Error("[TVRoom 1.0.2 " + this._tvroomStage + "] " + message);
+    }
+  }
+  async _tvroomVideoList(t) {
     const { series: e, episode: r } = this.path(t, !0),
-      s = await this.document(`${e}/${r}`),
+      s = await this._tvroomStep("01 회차 HTML", () => this.document(`${e}/${r}`), 30000),
       i = attr(s.selectFirst("iframe#view_iframe"), "src");
+    this._tvroomMark("02 iframe 확인", "검사");
     if (!/^https:\/\//.test(i))
       throw new Error(
         "재생 정보를 찾지 못했습니다. WebView에서 회차 페이지를 확인하세요.",
@@ -288,10 +341,10 @@ class DefaultExtension extends MProvider {
         Origin: n,
         Accept: "*/*",
       },
-      o = await this.client.get(i, {
+      o = await this._tvroomStep("03 플레이어 HTML", () => this.client.get(i, {
         "User-Agent": USER_AGENT,
         Referer: this.baseUrl + "/",
-      });
+      }));
     if (200 !== o.statusCode)
       throw new Error(
         `플레이어 페이지 요청에 실패했습니다 (HTTP ${o.statusCode}).`,
@@ -299,27 +352,31 @@ class DefaultExtension extends MProvider {
     const c = /https?:\/\/[^"'\s<>\\]+\/stream\/m3u8\/[^"'\s<>\\]+/.exec(
       String(o.body).replace(/\\\//g, "/"),
     )?.[0];
+    this._tvroomMark("04 영상 주소", c ? "발견" : "미발견");
     if (!c) throw new Error("영상 주소(m3u8)를 찾지 못했습니다.");
-    const l = await this.client.get(c, a);
+    const l = await this._tvroomStep("05 HLS 재생목록", () => this.client.get(c, a));
     if (200 !== l.statusCode || !/^#EXTM3U/.test(String(l.body).trim()))
       throw new Error("재생 목록을 받지 못했습니다. 회차를 다시 열어 주세요.");
     const h = { ...a },
       u = /#EXT-X-KEY:[^\n]*URI="(https?:\/\/[^"]+)"/.exec(l.body)?.[1];
     if (u) {
-      const t = await this.client.get(u, a);
+      const t = await this._tvroomStep("06 키 응답", () => this.client.get(u, a));
       if (200 !== t.statusCode)
         throw new Error(`재생 키를 받지 못했습니다 (HTTP ${t.statusCode}).`);
       h["X-Hls-Key"] = this.unscramble(t.body);
+      this._tvroomMark("06 키 처리", "완료");
     }
+    this._tvroomMark("07 프록시 지원", typeof createHlsProxyUrl === "function" ? "함수 있음" : "함수 없음");
     if ("function" != typeof createHlsProxyUrl)
       throw new Error(
         "티비룸 재생에는 HLS 프록시를 지원하는 최신 Mangayomi가 필요합니다. 앱을 업데이트해 주세요.",
       );
-    const g = await createHlsProxyUrl(c, h);
+    const g = await this._tvroomStep("07 프록시 생성", () => createHlsProxyUrl(c, h), 15000);
     if ("string" != typeof g || !/^http:\/\/127\.0\.0\.1:\d+\//.test(g))
       throw new Error(
         "HLS 프록시를 시작하지 못했습니다. Mangayomi를 업데이트해 주세요.",
       );
+    this._tvroomMark("08 영상 반환", "완료: 실제 재생 성공 여부는 미확인");
     return [{ url: g, originalUrl: c, quality: "자동 (HLS)", headers: a }];
   }
   unscramble(t) {
