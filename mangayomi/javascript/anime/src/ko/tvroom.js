@@ -4,7 +4,7 @@ const mangayomiSources = [
       name: "티비룸",
       lang: "ko",
       baseUrl: "https://tvroom46.org",
-      version: "1.0.4",
+      version: "1.0.5",
       isNsfw: !1,
       itemType: 1,
       isManga: !1,
@@ -206,10 +206,10 @@ class DefaultExtension extends MProvider {
     const lines = !diag.ok
       ? ["기록 읽기 실패"]
       : diag.value
-        ? diag.value.split("\n").slice(-28)
+        ? diag.value.split("\n").slice(-40)
         : ["재생 진단 기록 없음"];
     return [
-      { type_name: "HeaderFilter", name: "진단판: 1.0.4" },
+      { type_name: "HeaderFilter", name: "진단판: 1.0.5" },
       ...lines.map((name) => ({ type_name: "HeaderFilter", name: "진단: " + name })),
       { type_name: "HeaderFilter", name: "검색어가 있으면 분류는 무시됩니다" },
       {
@@ -284,11 +284,11 @@ class DefaultExtension extends MProvider {
   _tvroomMark(stage, status) {
     this._tvroomStage = stage;
     const line = stage + " | " + status;
-    this._tvroomTrace = (this._tvroomTrace || []).concat(line).slice(-28);
+    this._tvroomTrace = (this._tvroomTrace || []).concat(line).slice(-40);
     try {
       new SharedPreferences().setString("tvroom_last_diag", this._tvroomTrace.join("\n"));
     } catch (e) {}
-    try { console.log("[TVRoom 1.0.4] " + line); } catch (e) {}
+    try { console.log("[TVRoom 1.0.5] " + line); } catch (e) {}
   }
   _tvroomRead() {
     try {
@@ -326,7 +326,49 @@ class DefaultExtension extends MProvider {
       if (timer !== null) clearTimeout(timer);
     }
   }
-  async _tvroomProbe(proxyUrl, rawKey) {
+  _tvroomKind(body) {
+    const s = String(body === null || body === undefined ? "" : body);
+    if (s.length === 16 && !/^[A-Za-z0-9+/=\s]+$/.test(s)) return "16바이트 원문";
+    try {
+      const o = JSON.parse(String.fromCharCode(...base64Bytes(s)));
+      if (o && o.rule) return "스크램블 JSON";
+    } catch (e) {}
+    return "기타";
+  }
+  async _tvroomKeyCheck(probe, ctx) {
+    const line = /#EXT-X-KEY:([^\n]*)/.exec(String(ctx.playlist || ""))?.[1] || "";
+    const method = /METHOD=([^,\s]+)/.exec(line)?.[1] || "없음";
+    const fmt = /KEYFORMAT="([^"]*)"/.exec(line)?.[1];
+    this._tvroomMark(
+      "13 키줄 속성",
+      "METHOD " + method + ", IV " + (/IV=/.test(line) ? "있음" : "없음") + ", KEYFORMAT " + (fmt === undefined ? "없음" : fmt.slice(0, 24) || "빈값"),
+    );
+    const raw = ctx.rawKey === null || ctx.rawKey === undefined ? null : String(ctx.rawKey);
+    let info = "형식 " + this._tvroomKind(raw) + ", 길이 " + (raw === null ? 0 : raw.length);
+    try {
+      const rule = JSON.parse(String.fromCharCode(...base64Bytes(raw))).rule;
+      if (rule) info += ", key_length " + rule.key_length + ", 조각 " + (rule.segment_sizes || []).length + ", noise " + rule.noise_length;
+    } catch (e) {}
+    info += ", 변환값 길이 " + String((ctx.h && ctx.h["X-Hls-Key"]) || "").length;
+    this._tvroomMark("13 키 응답 형식", info);
+    const again = async (stage, headers) => {
+      this._tvroomMark(stage, "시작");
+      try {
+        const r = await probe.get(ctx.u, headers);
+        const body = String(r.body === null || r.body === undefined ? "" : r.body);
+        this._tvroomMark(
+          stage,
+          "HTTP " + r.statusCode + ", 형식 " + this._tvroomKind(body) + ", 길이 " + body.length + ", " + (raw !== null && body === raw ? "첫 응답과 동일" : "첫 응답과 다름"),
+        );
+      } catch (e) {
+        this._tvroomMark(stage, "요청 오류");
+      }
+    };
+    await again("14 키 재요청(기본 헤더)", ctx.a);
+    await again("15 키 재요청(X-Hls-Key 포함)", ctx.h);
+  }
+  async _tvroomProbe(proxyUrl, ctx) {
+    const rawKey = ctx.rawKey;
     let probe = this.client;
     try { probe = new Client({ timeout: 8, connectTimeout: 4 }); } catch (e) {}
     const local = /^http:\/\/127\.0\.0\.1:\d+\//;
@@ -373,6 +415,9 @@ class DefaultExtension extends MProvider {
     } else {
       this._tvroomMark("11 첫 항목", first ? "로컬 주소 아님" : "항목 없음");
     }
+    if (ctx.u) {
+      try { await this._tvroomKeyCheck(probe, ctx); } catch (e) {}
+    }
   }
   async getVideoList(t) {
     this._tvroomTrace = [];
@@ -384,7 +429,7 @@ class DefaultExtension extends MProvider {
       const message = String(e && e.message || "알 수 없는 오류")
         .replace(/https?:\/\/[^\s"'<>]+/gi, "[URL 생략]")
         .slice(0, 300);
-      throw new Error("[TVRoom 1.0.4 " + this._tvroomStage + "] " + message);
+      throw new Error("[TVRoom 1.0.5 " + this._tvroomStage + "] " + message);
     }
   }
   async _tvroomVideoList(t) {
@@ -441,7 +486,7 @@ class DefaultExtension extends MProvider {
         "HLS 프록시를 시작하지 못했습니다. Mangayomi를 업데이트해 주세요.",
       );
     this._tvroomMark("08 프록시 주소", "확보");
-    try { await this._tvroomProbe(g, rawKey); } catch (e) {}
+    try { await this._tvroomProbe(g, { rawKey, u, a, h, playlist: String(l.body) }); } catch (e) {}
     this._tvroomMark("12 영상 반환", "완료: 실제 재생 성공 여부는 미확인");
     return [{ url: g, originalUrl: c, quality: "자동 (HLS)", headers: a }];
   }
