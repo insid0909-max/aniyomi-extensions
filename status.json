@@ -5,8 +5,8 @@
    "domain": "alive",
    "domainSince": "2026-11-02T02:43:54.905Z",
    "ok": true,
-   "msg": "목록 24개, 회차 9개, 연재",
-   "checkedAt": "2026-11-07T03:11:51.671Z"
+   "msg": "목록 24개, 회차 10개, 연재",
+   "checkedAt": "2026-11-08T02:41:57.176Z"
   },
   "mimitv": {
    "origin": "https://mimitv12.com",
@@ -14,22 +14,22 @@
    "domainSince": "2026-11-07T03:11:50.658Z",
    "ok": true,
    "msg": "목록 24개, 회차 74개, 연재",
-   "checkedAt": "2026-11-07T03:11:53.262Z"
+   "checkedAt": "2026-11-08T02:41:58.597Z"
   },
   "ohli24": {
    "ok": true,
    "msg": "목록 25개, 회차 2개, 연재",
-   "checkedAt": "2026-11-07T03:11:52.673Z"
+   "checkedAt": "2026-11-08T02:41:57.996Z"
   },
   "livesports1": {
    "ok": true,
-   "msg": "목록 5개",
-   "checkedAt": "2026-11-07T03:11:54.109Z"
+   "msg": "목록 7개",
+   "checkedAt": "2026-11-08T02:41:58.846Z"
   },
   "livesports2": {
    "ok": true,
    "msg": "목록 7개",
-   "checkedAt": "2026-11-07T03:11:54.750Z"
+   "checkedAt": "2026-11-08T02:41:59.326Z"
   }
  }
 }
