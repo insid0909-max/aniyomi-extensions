@@ -4,7 +4,7 @@ const mangayomiSources = [
       name: "티비룸(개인)",
       lang: "ko",
       baseUrl: "https://tvroom46.org",
-      version: "1.0.6",
+      version: "1.0.7",
       isNsfw: !1,
       itemType: 1,
       isManga: !1,
@@ -14,6 +14,7 @@ const mangayomiSources = [
     "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36",
   PLAYER_UA =
     "Mozilla/5.0 (Linux; Android 13; Pixel 7 Build/TQ3A.230805.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/143.0.0.0 Mobile Safari/537.36",
+  BRIDGE = "https://dc-toki-mangayomi-media.pages.dev",
   CATEGORIES = [
     ["드라마", "드라마"],
     ["영화", "영화"],
@@ -347,91 +348,51 @@ class DefaultExtension extends MProvider {
         throw new Error(`재생 키를 받지 못했습니다 (HTTP ${t.statusCode}).`);
       key = this.unscramble(t.body);
     }
-    let g = "";
-    if ("function" == typeof createHlsProxyUrl) {
-      try {
-        g = await createHlsProxyUrl(c, a);
-      } catch (t) {
-        g = "";
-      }
-      if ("string" != typeof g || !/^http:\/\/127\.0\.0\.1:\d+\//.test(g)) g = "";
-    }
-    const mk = (url, quality) => ({
+    const mk = (url, quality, orig) => ({
       url,
-      originalUrl: c,
+      originalUrl: orig || c,
       quality,
       headers: a,
       subtitles: [],
       audios: [],
     });
     if (!key) {
-      if (!g)
+      let g = "";
+      if ("function" == typeof createHlsProxyUrl) {
+        try {
+          g = await createHlsProxyUrl(c, a);
+        } catch (t) {
+          g = "";
+        }
+      }
+      if ("string" != typeof g || !/^http:\/\/127\.0\.0\.1:\d+\//.test(g))
         throw new Error(
           "HLS 프록시를 시작하지 못했습니다. Mangayomi를 업데이트해 주세요.",
         );
       return [mk(g, "휴대폰 중계")];
     }
-    const out = [];
-    let last = null;
-    for (const [av, px, label] of [
-      [!0, !0, "A av+중계"],
-      [!0, !1, "B av+직접"],
-      [!1, !0, "C data+중계"],
-      [!1, !1, "D data+직접"],
-    ]) {
-      if (px && !g) continue;
-      try {
-        out.push(mk(this.localHls(String(l.body), c, g, u, key, av, px), label));
-      } catch (t) {
-        last = t;
-      }
-    }
-    if (!out.length) throw last || new Error("재생 주소를 만들지 못했습니다.");
-    return out;
-  }
-  localHls(playlist, base, proxy, keyUrl, keyHex, av, px) {
-    if (!/^[0-9a-f]{32}$/i.test(keyHex)) throw new Error("재생 키는 16바이트여야 합니다.");
-    if (!/^#EXTM3U(?:\r?\n|$)/.test(playlist) || !/#EXT-X-ENDLIST\b/.test(playlist) || /#EXT-X-(?:STREAM-INF|MEDIA):/.test(playlist))
-      throw new Error("현재 키 전달 방식은 완성된 단일 HLS 재생목록만 지원합니다.");
-    if (playlist.length > 1024 * 1024) throw new Error("재생목록 용량이 너무 큽니다.");
-    let prefix = "";
-    if (px) {
-      prefix = /^(http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]+\/)playlist\.m3u8\?url=[A-Za-z0-9_-]+$/.exec(proxy)?.[1] || "";
-      if (!prefix) throw new Error("지원하지 않는 HLS 프록시 주소 형식입니다.");
-    }
-    const fmp4 = /#EXT-X-MAP:/.test(playlist);
-    const absolute = (value) => this.absUrl(base, value);
-    const resource = (value, type) => {
-      const target = absolute(value);
-      if (!/^https?:\/\/[^\s]+$/i.test(target)) throw new Error("영상 조각 주소가 올바르지 않습니다.");
-      if (!px) return target;
-      const path = target.replace(/[?#].*$/, "").toLowerCase();
-      const name = type === "map" || fmp4 || /\.(?:mp4|m4s|m4a)$/.test(path) ? "segment.mp4" : "segment.ts";
-      return prefix + name + "?url=" + encode64Text(target, true);
-    };
     const keyBytes = [];
-    for (let i = 0; i < keyHex.length; i += 2) keyBytes.push(parseInt(keyHex.slice(i, i + 2), 16));
-    const keyData = "data:application/octet-stream;base64," + encode64Bytes(keyBytes) + "#key.mp4";
-    let keys = 0;
-    const output = playlist.split(/\r?\n/).map((raw) => {
-      const line = raw.trim();
-      if (!line || line.startsWith("#")) {
-        return raw.replace(/URI="([^"]+)"/g, (all, value) => {
-          if (line.startsWith("#EXT-X-KEY:")) {
-            if (!/METHOD=AES-128(?:,|$)/.test(line) || absolute(value) !== keyUrl)
-              throw new Error("키 교체 또는 지원하지 않는 암호화 방식입니다.");
-            keys++;
-            return 'URI="' + keyData + '"';
-          }
-          if (line.startsWith("#EXT-X-MAP:")) return 'URI="' + resource(value, "map") + '"';
-          throw new Error("추가 재생목록 URI는 지원하지 않습니다.");
-        });
-      }
-      return resource(line, "segment");
-    }).join("\n");
-    if (!keys) throw new Error("재생목록에 키를 연결하지 못했습니다.");
-    const dataUrl = "data:application/vnd.apple.mpegurl;base64," + encode64Text(output + "\n", false) + "#local.m3u8";
-    return av ? "av://hls:" + dataUrl : dataUrl;
+    for (let k = 0; k < key.length; k += 2) keyBytes.push(parseInt(key.slice(k, k + 2), 16));
+    const b64url = (bytes) =>
+      encode64Bytes(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const bridge = (mode) => {
+      const q = [
+        "v=3",
+        "m=" + mode,
+        "u=" + encodeURIComponent(b64url(bytesOf(c))),
+        "r=" + encodeURIComponent(b64url(bytesOf(i))),
+        "k=" + encodeURIComponent(b64url(keyBytes)),
+      ].join("&");
+      const url = BRIDGE + "/api/tvroom-playlist.m3u8?" + q;
+      if (url.length > 1800) throw new Error("HLS 재생목록 주소가 너무 깁니다.");
+      return url;
+    };
+    const fast = bridge("f"),
+      compat = bridge("p");
+    return [
+      mk(fast, "외부 빠른 재생 (키 외부 전송)", fast + "#download.m3u8"),
+      mk(compat, "외부 호환 재생 (키 외부 전송)", compat + "#download.m3u8"),
+    ];
   }
   unscramble(t) {
     const e = String(t || "");
@@ -503,13 +464,4 @@ function encode64Bytes(bytes) {
     out += chars[(n >>> 18) & 63] + chars[(n >>> 12) & 63] + (b ? chars[(n >>> 6) & 63] : "=") + (c ? chars[n & 63] : "=");
   }
   return out;
-}
-function encode64Text(text, urlSafe) {
-  const encoded = encodeURIComponent(String(text)), bytes = [];
-  for (let i = 0; i < encoded.length; i++) {
-    if (encoded[i] === "%") { bytes.push(parseInt(encoded.slice(i + 1, i + 3), 16)); i += 2; }
-    else bytes.push(encoded.charCodeAt(i));
-  }
-  const out = encode64Bytes(bytes);
-  return urlSafe ? out.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") : out;
 }
