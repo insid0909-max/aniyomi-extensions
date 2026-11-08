@@ -4,7 +4,7 @@ const mangayomiSources = [
       name: "티비룸(개인)",
       lang: "ko",
       baseUrl: "https://tvroom46.org",
-      version: "1.0.4",
+      version: "1.0.6",
       isNsfw: !1,
       itemType: 1,
       isManga: !1,
@@ -347,39 +347,64 @@ class DefaultExtension extends MProvider {
         throw new Error(`재생 키를 받지 못했습니다 (HTTP ${t.statusCode}).`);
       key = this.unscramble(t.body);
     }
-    if ("function" != typeof createHlsProxyUrl)
-      throw new Error(
-        "티비룸 재생에는 HLS 프록시를 지원하는 최신 Mangayomi가 필요합니다. 앱을 업데이트해 주세요.",
-      );
-    const g = await createHlsProxyUrl(c, a);
-    if ("string" != typeof g || !/^http:\/\/127\.0\.0\.1:\d+\//.test(g))
-      throw new Error(
-        "HLS 프록시를 시작하지 못했습니다. Mangayomi를 업데이트해 주세요.",
-      );
-    const playback = key ? this.localHls(String(l.body), c, g, u, key) : g;
-    return [
-      {
-        url: playback,
-        originalUrl: c,
-        quality: "휴대폰 중계 (권장)",
-        headers: a,
-        subtitles: [],
-        audios: [],
-      },
-    ];
+    let g = "";
+    if ("function" == typeof createHlsProxyUrl) {
+      try {
+        g = await createHlsProxyUrl(c, a);
+      } catch (t) {
+        g = "";
+      }
+      if ("string" != typeof g || !/^http:\/\/127\.0\.0\.1:\d+\//.test(g)) g = "";
+    }
+    const mk = (url, quality) => ({
+      url,
+      originalUrl: c,
+      quality,
+      headers: a,
+      subtitles: [],
+      audios: [],
+    });
+    if (!key) {
+      if (!g)
+        throw new Error(
+          "HLS 프록시를 시작하지 못했습니다. Mangayomi를 업데이트해 주세요.",
+        );
+      return [mk(g, "휴대폰 중계")];
+    }
+    const out = [];
+    let last = null;
+    for (const [av, px, label] of [
+      [!0, !0, "A av+중계"],
+      [!0, !1, "B av+직접"],
+      [!1, !0, "C data+중계"],
+      [!1, !1, "D data+직접"],
+    ]) {
+      if (px && !g) continue;
+      try {
+        out.push(mk(this.localHls(String(l.body), c, g, u, key, av, px), label));
+      } catch (t) {
+        last = t;
+      }
+    }
+    if (!out.length) throw last || new Error("재생 주소를 만들지 못했습니다.");
+    return out;
   }
-  localHls(playlist, base, proxy, keyUrl, keyHex) {
+  localHls(playlist, base, proxy, keyUrl, keyHex, av, px) {
     if (!/^[0-9a-f]{32}$/i.test(keyHex)) throw new Error("재생 키는 16바이트여야 합니다.");
     if (!/^#EXTM3U(?:\r?\n|$)/.test(playlist) || !/#EXT-X-ENDLIST\b/.test(playlist) || /#EXT-X-(?:STREAM-INF|MEDIA):/.test(playlist))
       throw new Error("현재 키 전달 방식은 완성된 단일 HLS 재생목록만 지원합니다.");
     if (playlist.length > 1024 * 1024) throw new Error("재생목록 용량이 너무 큽니다.");
-    const prefix = /^(http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]+\/)playlist\.m3u8\?url=[A-Za-z0-9_-]+$/.exec(proxy)?.[1];
-    if (!prefix) throw new Error("지원하지 않는 HLS 프록시 주소 형식입니다.");
+    let prefix = "";
+    if (px) {
+      prefix = /^(http:\/\/127\.0\.0\.1:\d+\/[A-Za-z0-9_-]+\/)playlist\.m3u8\?url=[A-Za-z0-9_-]+$/.exec(proxy)?.[1] || "";
+      if (!prefix) throw new Error("지원하지 않는 HLS 프록시 주소 형식입니다.");
+    }
     const fmp4 = /#EXT-X-MAP:/.test(playlist);
     const absolute = (value) => this.absUrl(base, value);
     const resource = (value, type) => {
       const target = absolute(value);
       if (!/^https?:\/\/[^\s]+$/i.test(target)) throw new Error("영상 조각 주소가 올바르지 않습니다.");
+      if (!px) return target;
       const path = target.replace(/[?#].*$/, "").toLowerCase();
       const name = type === "map" || fmp4 || /\.(?:mp4|m4s|m4a)$/.test(path) ? "segment.mp4" : "segment.ts";
       return prefix + name + "?url=" + encode64Text(target, true);
@@ -405,7 +430,8 @@ class DefaultExtension extends MProvider {
       return resource(line, "segment");
     }).join("\n");
     if (!keys) throw new Error("재생목록에 키를 연결하지 못했습니다.");
-    return "av://hls:data:application/vnd.apple.mpegurl;base64," + encode64Text(output + "\n", false) + "#local.m3u8";
+    const dataUrl = "data:application/vnd.apple.mpegurl;base64," + encode64Text(output + "\n", false) + "#local.m3u8";
+    return av ? "av://hls:" + dataUrl : dataUrl;
   }
   unscramble(t) {
     const e = String(t || "");
