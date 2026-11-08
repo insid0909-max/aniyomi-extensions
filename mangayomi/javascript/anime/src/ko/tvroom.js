@@ -4,7 +4,7 @@ const mangayomiSources = [
       name: "티비룸",
       lang: "ko",
       baseUrl: "https://tvroom46.org",
-      version: "1.0.2",
+      version: "1.0.3",
       isNsfw: !1,
       itemType: 1,
       isManga: !1,
@@ -202,9 +202,15 @@ class DefaultExtension extends MProvider {
     return this.listing(`/video/${i?.values?.[i.state]?.value || "드라마"}`, e);
   }
   getFilterList() {
+    const diag = this._tvroomRead();
+    const lines = !diag.ok
+      ? ["기록 읽기 실패"]
+      : diag.value
+        ? diag.value.split("\n").slice(-16)
+        : ["재생 진단 기록 없음"];
     return [
-      ...String(this.pref("tvroom_last_diag") || "재생 진단 기록 없음").split("\n").slice(-16)
-        .map((name) => ({ type_name: "HeaderFilter", name: "진단: " + name })),
+      { type_name: "HeaderFilter", name: "진단판: 1.0.3" },
+      ...lines.map((name) => ({ type_name: "HeaderFilter", name: "진단: " + name })),
       { type_name: "HeaderFilter", name: "검색어가 있으면 분류는 무시됩니다" },
       {
         type_name: "SelectFilter",
@@ -282,7 +288,16 @@ class DefaultExtension extends MProvider {
     try {
       new SharedPreferences().setString("tvroom_last_diag", this._tvroomTrace.join("\n"));
     } catch (e) {}
-    try { console.log("[TVRoom 1.0.2] " + line); } catch (e) {}
+    try { console.log("[TVRoom 1.0.3] " + line); } catch (e) {}
+  }
+  _tvroomRead() {
+    try {
+      const v = new SharedPreferences().getString("tvroom_last_diag", "");
+      if (v !== null && typeof v === "object") return { ok: false, value: "" };
+      return { ok: true, value: String(v === null || v === undefined ? "" : v) };
+    } catch (e) {
+      return { ok: false, value: "" };
+    }
   }
   async _tvroomStep(stage, run, limit = 25000) {
     this._tvroomMark(stage, "시작");
@@ -322,7 +337,7 @@ class DefaultExtension extends MProvider {
       const message = String(e && e.message || "알 수 없는 오류")
         .replace(/https?:\/\/[^\s"'<>]+/gi, "[URL 생략]")
         .slice(0, 300);
-      throw new Error("[TVRoom 1.0.2 " + this._tvroomStage + "] " + message);
+      throw new Error("[TVRoom 1.0.3 " + this._tvroomStage + "] " + message);
     }
   }
   async _tvroomVideoList(t) {
