@@ -49,6 +49,7 @@
 - 직접 넣은 주소·자동 찾은 주소 따로 저장, 번호 큰 진짜 사이트 확인되면 교체(+설정 칸 고침), 주소 찾기는 맨 먼저 저장소 domains.json → 안내 페이지(텔레그래프·tvchak.org 등) → 번호 짐작 → 비상 주소(출처: 후후티비·티비착·고고티비).
 - 검색창에 사이트 주소 붙여 넣기(https:// 없어도) → 확인 후 적용, 작품 주소면 바로 그 작품.
 - 사이트가 넘겨 준 주소는 200 + 표시 글자 확인 뒤에만 저장(뉴엑스툰).
+- 망가요미도 넘겨 준 주소를 읽을 수 있음(2026-11-08): `new Client({useDartHttpClient:true, followRedirects:false})` 면 301·302 와 location 머리글을 그대로 줌(순정 m_client.dart). 웹툰 JS 10개 공통 movedOrigin·movedTarget·movedSelf — 주소 찾기는 저장소 목록 다음에 지금 주소·안내 주소(블랙툰 blacktoon.cc·굿툰 goodtoon.top·툰코 toonkor.site)가 넘겨 주는 주소, 정상으로 열릴 때는 앱을 켤 때 주소마다 한 번 HEAD 로 확인. 둘 다 AUTO_HOST 모양 + 첫 화면 200 + 표시 글자일 때만 저장. 새 JS 소스도 넣기. 시험 런타임(monitor/runtime.js)도 followRedirects:false·head 흉내.
 - 주소 찾기는 5xx·연결 실패·목록 0개+표시 글자 없음일 때만. Cloudflare 보안 확인(403 "Just a moment")·재생 API 403·차단 응답 없음은 주소 바뀜 아님(티비착·애니라이프·머니툰).
 - 못 찾으면 할 일 안내(잠시 뒤·앱 재시작·DNS·새 주소 붙여 넣기), UnknownHost 는 쉬운 말로.
 
@@ -78,6 +79,7 @@
 - .m3u8 로 안 끝나는 HLS 는 originalUrl 끝에 "#download.m3u8"(hlsHint), 화질 라벨·정렬·대체 서버.
 - cdndania·firePlayer 계열은 애니24 dcVideos 그대로(new Client({persistentConnection:false,noProxy:true}) POST getVideo → securedLink).
 - 재생 API 가 앱에서 403 이면 웹뷰로 화면 열어 그 요청·m3u8 받기(애니라이프·미미티비).
+- 순정 망가요미 0.9.9+ 에 `createHlsProxyUrl(주소, 머리글)`(앱 안 127.0.0.1 중계, 2026-10-08 추가): 재생 목록·조각·열쇠 요청 모두에 같은 머리글을 붙여 그대로 전달(내용은 안 바꿈). 재생기가 조각·열쇠 요청에서 Referer·Origin 을 빠뜨려 403 일 때만 쓰고(없으면 지금 방식), 잘 되는 소스엔 넣지 않음(2026-11-08 점검: 해당 소스 없음). Glitch 의 X-Hls-Key(열쇠 바꿔 넣기)는 순정에 없음 — 티비룸·티비위키가 순정에서 안 되는 이유.
 
 ### 검색·필터·화면
 - 검색 0개면 띄어쓰기 빼고·앞부분·두 글자씩 다시 찾기(SearchSpacing). 2026-11-06 검색 검사(사이트 목록에서 확장마다 60개 뽑아 확장 검색으로 찾기, 12개 확장 약 690개 중 22개 실패) → ⓪ 기호(쉼표·쌍점·물결·괄호·한자)를 뺀 검색어·앞쪽 단어만으로 먼저 다시 찾기(사이트 검색이 기호 있으면 0개), 다시 찾기 건너뛰기는 사이트 주소 붙여 넣기일 때만(전엔 . : 가 든 제목도 건너뜀), 최대 8번, 비교는 글자·숫자만. JS 17개+미미티비(TVroom 8758, 웹툰 Kotlin SearchSpacing 같음). 고친 뒤 실패 확장 다시 검사 60/60. 검사 도구: 스크래치 stest.js 방식(같은 모양으로 다시 만들면 됨). 한 글자 제목("궁")은 결과가 많아 첫 쪽에 없을 뿐 정상.
