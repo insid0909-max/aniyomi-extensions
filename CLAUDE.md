@@ -37,6 +37,7 @@
 ### Mangayomi (JS, mangayomi/javascript/anime/src/ko + anime_index.json)
 - 위와 같은 기능 동일 적용(도메인 자동 찾기, 날짜/연도 표시, 화질 라벨·정렬, 대체 서버)
 - 회차 이름은 회차 번호로 시작(맨 앞 숫자를 회차로 인식), 시즌은 `scanlator`에
+- 망가요미 JS 실행 환경에는 `clearTimeout` 이 없음(애니야24 0.1.2 "ReferenceError: 'clearTimeout' is not defined", 2026-11-09) → 시간 제한은 `Promise.race` 에 setTimeout 이 표시 값을 돌려주게 하고 그 값인지로 판단. 새 확장 id 는 애니·웹툰·개인(my-ext) 저장소에서 쓴 적 있는 번호(옮긴 확장 포함)와 겹치지 않게(애니야24 가 티비위키 1720450905 와 겹쳐 앱이 같은 확장으로 봄).
 - `selectFirst`는 비어도 truthy → `select().length` 사용; appClient는 UA 제거됨(원래 망가요미가 웹뷰 UA를 넣어 줌. 변형 앱 Mangayomi Glitch는 안 넣어 줘서 연결 끊김/403 → appClient가 UA 넣어 한 번 다시 보내고 이후 계속 넣음); followRedirects 옵션 무시됨
 - 영상: getVideoList 는 `hlsHint(await this.videoListInner(url))` — .m3u8 로 안 끝나는 HLS(.txt·/hls/·/m3/·master·playlist·jmp2.uk) 는 originalUrl 끝에 "#download.m3u8"(망가요미 재생기가 originalUrl 모양으로 HLS 판단; mp4 등엔 붙이지 않음)
 - appClient: 기본 client 가 연결 오류면 UA 넣어 재시도 → 그래도 실패하면 `new Client({persistentConnection:false,noProxy:true,timeout:25,connectTimeout:10})`(APP_ALT)로 한 번 더 (애니·웹툰 망가요미 18개 파일 같은 코드, 웹툰 저장소에 마루마루 웹툰·만화·소설 3개 추가(2026-10-22))
