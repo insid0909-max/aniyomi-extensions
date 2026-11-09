@@ -200,7 +200,7 @@
  {
   "name": "미미티비",
   "id": 1543270639,
-  "baseUrl": "https://mimitv12.com",
+  "baseUrl": "https://mimitv13.com",
   "lang": "ko",
   "typeSource": "single",
   "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
@@ -210,7 +210,7 @@
   "hasCloudflare": false,
   "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/mangayomi/javascript/anime/src/ko/mimitv.js",
   "apiUrl": "",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "isManga": false,
   "itemType": 1,
   "isFullData": false,
