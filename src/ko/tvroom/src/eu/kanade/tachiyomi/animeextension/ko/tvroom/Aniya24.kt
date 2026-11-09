@@ -38,7 +38,7 @@ import java.util.TimeZone
  * 워드프레스(vidmov 테마). 목록 /series/ · /series-category/{분류}/ + page/N/ + ?orderby=, 검색 /?s=&post_type=vidmov_series,
  * 작품 /series/{이름}/ (회차 .main-series-items .series-item), 재생 Bunny Stream —
  * 회차 그림 주소(vz-….b-cdn.net/{영상ID}/thumbnail.jpg)의 영상ID → {영상ID}/playlist.m3u8 (Referer iframe.mediadelivery.net 필요, AES-128).
- * 사이트가 Cloudflare 보안 확인을 걸 때가 있음 → 앱의 보안 확인 처리(웹뷰)와 통과 쿠키가 맞도록 User-Agent 는 앱 기본값 그대로 둠.
+ * 사이트가 Cloudflare 보안 확인을 걸 때가 있음 → 웹뷰와 통과 쿠키가 맞도록 User-Agent 는 휴대폰 웹뷰의 실제 값(WebUa).
  */
 class Aniya24 : AnimeHttpSource(), ConfigurableAnimeSource {
 
@@ -80,8 +80,9 @@ class Aniya24 : AnimeHttpSource(), ConfigurableAnimeSource {
         .addInterceptor(RetryOnce(HOST_REGEX))
         .build()
 
-    // User-Agent 는 앱 기본값(웹뷰와 같은 값) 그대로 — 보안 확인 통과 쿠키가 그 값에 묶여 있음
+    // User-Agent 는 휴대폰 웹뷰의 실제 값(WebUa) — 앱 기본값(PC 크롬 이름)이면 웹뷰에서 푼 Cloudflare 확인이 계속 다시 걸림
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
+        .apply { WebUa.value()?.let { set("User-Agent", it) } }
         .set("Referer", "$baseUrl/")
 
     private fun h(): Headers = headersBuilder().build()
