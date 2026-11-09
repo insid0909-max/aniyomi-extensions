@@ -1,0 +1,56 @@
+name: Combined index
+
+# 웹툰·애니·소설 망가요미 확장 목록을 하나로 합쳐 repo 가지의 index.json 에 둠 (2026-11-09)
+# master 에 두지 않는 이유: 바뀔 때마다 애니요미 빌드(build_push)가 돌지 않게
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'mangayomi/anime_index.json'
+      - 'mangayomi/tools/repo/**'
+  schedule:
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: combined-index
+  cancel-in-progress: false
+
+jobs:
+  combine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Combine
+        run: node mangayomi/tools/repo/combine.js mangayomi/anime_index.json "$RUNNER_TEMP/out"
+
+      - name: Publish to repo branch
+        run: |
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          DIR="$RUNNER_TEMP/repo"
+          if git ls-remote --exit-code --heads "$REMOTE" repo >/dev/null 2>&1; then
+            git clone -q --depth 1 -b repo "$REMOTE" "$DIR"
+          else
+            mkdir -p "$DIR" && cd "$DIR" && git init -q -b repo && git remote add origin "$REMOTE" && cd -
+          fi
+          cp "$RUNNER_TEMP/out/index.json" "$DIR/index.json"
+          cp mangayomi/tools/repo/README.md "$DIR/README.md"
+          cd "$DIR"
+          git config user.name "insid0909-max"
+          git config user.email "266083559+insid0909-max@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "바뀐 것 없음"; exit 0; fi
+          git commit -q -m "합친 확장 목록 갱신"
+          git push -q origin repo
