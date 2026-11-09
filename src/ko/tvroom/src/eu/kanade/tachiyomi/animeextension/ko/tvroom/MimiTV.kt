@@ -1,14 +1,7 @@
 package eu.kanade.tachiyomi.animeextension.ko.tvroom
 
-import android.annotation.SuppressLint
 import android.app.Application
 import android.content.SharedPreferences
-import android.os.Handler
-import android.os.Looper
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
@@ -36,12 +29,10 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import rx.Observable
-import java.io.ByteArrayInputStream
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
@@ -462,86 +453,26 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
         if (ep.links.isEmpty()) throw Exception("이 회차에는 재생 주소가 없어요")
         val siteRef = "$baseUrl/"
         val fails = mutableListOf<String>()
-        // 서버(링크)를 차례로 열어 보고, 영상이 나오는 첫 번째를 씀
+        // 서버(링크)를 차례로 숨은 웹뷰로 열어 플레이어가 요청한 m3u8 과 그때 머리글을 모으고, 실제로 열리는 것만 씀
+        // (2026-11-09 사용자 화면 "502 Bad Gateway": 처음 잡힌 주소를 확인 없이 넘겼음)
         for ((i, link) in ep.links.withIndex()) {
-            val media = sniffWithWebView(link, siteRef)
-            if (media == null) {
-                fails.add("서버${i + 1} 못 찾음")
+            val decoy = link.toHttpUrlOrNull()?.queryParameter("url")
+            val r = WebSniff.m3u8(link, siteRef, USER_AGENT, 20)
+            // 플레이어 주소 안의 url= 주소·/pop/ 는 가짜, 진짜는 /hls/ → 진짜 모양 먼저
+            val hits = r.hits.filter { it.url != decoy && !it.url.contains("onet.php") && !it.url.contains("/pop/") }
+                .sortedByDescending { it.url.contains("/hls/") }
+            if (hits.isEmpty()) {
+                fails.add("서버${i + 1} 못 찾음 (잡힌 주소 ${r.hits.size}개)")
                 continue
             }
             val origin = link.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" } ?: siteRef.trimEnd('/')
-            val vh = Headers.Builder()
-                .set("User-Agent", USER_AGENT)
-                .set("Referer", "$origin/")
-                .set("Origin", origin)
-                .build()
             val label = if (i == 0) LABEL else "$LABEL (대체 $i)"
-            return@withContext HlsQuality.sort(prefs(), HlsQuality.expand(client, media, label, vh))
+            WebSniff.firstWorking(client, hits, origin, label, fails)?.let { return@withContext HlsQuality.sort(prefs(), it) }
         }
-        throw Exception("영상 주소를 찾지 못했어요. 잠시 뒤 다시 시도해 주세요 [${fails.joinToString(", ")}]")
+        throw Exception("영상 주소를 찾지 못했어요. 잠시 뒤 다시 시도해 주세요 [${fails.joinToString(", ").take(160)}]")
     }
 
     override fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()
-
-    /**
-     * 숨은 화면으로 플레이어를 열고 플레이어가 요청한 m3u8 주소를 받음 (최대 20초).
-     * 그림·광고는 받지 않음. 6초 안에 못 찾으면 소리를 끈 채 재생을 눌러 봄(소리가 나 음량 막대가 뜨지 않게).
-     */
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun sniffWithWebView(url: String, referer: String): String? {
-        val latch = CountDownLatch(1)
-        var found: String? = null
-        val handler = Handler(Looper.getMainLooper())
-        var webViewRef: WebView? = null
-        // 플레이어 주소 안에 적힌 영상 주소(url=…)는 실제로는 열리지 않는 가짜라 뺌
-        val decoy = url.toHttpUrlOrNull()?.queryParameter("url")
-
-        handler.post {
-            try {
-                val context = Class.forName("android.app.ActivityThread")
-                    .getMethod("currentApplication").invoke(null) as Application
-                val webView = WebView(context)
-                webViewRef = webView
-                webView.settings.javaScriptEnabled = true
-                webView.settings.domStorageEnabled = true
-                webView.settings.mediaPlaybackRequiresUserGesture = false
-                webView.settings.userAgentString = USER_AGENT
-                webView.settings.blockNetworkImage = true
-                webView.webViewClient = object : WebViewClient() {
-                    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-                        val reqUrl = request.url.toString()
-                        val path = request.url.path?.lowercase().orEmpty()
-                        if (found == null && path.endsWith(".m3u8") && reqUrl != decoy && !reqUrl.contains("onet.php")) {
-                            found = reqUrl
-                            latch.countDown()
-                        }
-                        val host = request.url.host.orEmpty()
-                        if (BLOCKED_HOSTS.any { host.endsWith(it) } || IMAGE_PATH.containsMatchIn(path)) {
-                            return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
-                        }
-                        return super.shouldInterceptRequest(view, request)
-                    }
-                }
-                webView.loadUrl(url, mapOf("Referer" to referer))
-            } catch (e: Throwable) {
-                latch.countDown()
-            }
-        }
-
-        if (!latch.await(6, TimeUnit.SECONDS)) {
-            handler.post {
-                runCatching { webViewRef?.evaluateJavascript(PLAY_SCRIPT, null) }
-            }
-            latch.await(14, TimeUnit.SECONDS)
-        }
-        handler.post {
-            runCatching {
-                webViewRef?.stopLoading()
-                webViewRef?.destroy()
-            }
-        }
-        return found
-    }
 
     // ================= 필터 =================
     override fun getFilterList(): AnimeFilterList = ExtStatus.prepend("mimitv", baseUrl, autoDomain(), baseFilters())
@@ -616,10 +547,6 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
             "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/124.0.0.0 Mobile Safari/537.36"
 
-        private const val PLAY_SCRIPT =
-            "(function(){var v=document.querySelector('video');if(v){v.muted=true;try{v.play();}catch(e){}}" +
-                "var b=document.querySelector('.art-state,.art-control-play');if(b)b.click();})();"
-
         private val DOMAIN_REGEX = Regex("""^https://(?:www\.)?mimitv\d+\.com$""")
         private val HOST_REGEX = Regex("""^(?:www\.)?mimitv\d+\.com$""")
         private val PASTE_HOST_REGEX = Regex("""^(?:https?://)?(?:www\.)?(mimitv\d+\.com)(?:[/?#]|$)""", RegexOption.IGNORE_CASE)
@@ -635,7 +562,6 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
         private val YEAR_ANY = Regex("""(?:19|20)\d{2}""")
         private val TITLE_YEAR = Regex("""\((?:19|20)\d{2}\)\s*$""")
         private val SPACES = Regex("""\s+""")
-        private val IMAGE_PATH = Regex("""\.(?:png|jpe?g|gif|webp|svg|ico)$""")
 
         private val KST = TimeZone.getTimeZone("Asia/Seoul")
         private val OUT_FMT = SimpleDateFormat("yyyy.MM.dd (E)", Locale.KOREA).apply { timeZone = KST }
@@ -667,13 +593,5 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
         // 기본: 인기 = 드라마 인기순, 최신 = 드라마 최신순 (망가요미판과 같음)
         private val DEFAULT_POPULAR = intArrayOf(4, 0, 1)
         private val DEFAULT_LATEST = intArrayOf(4, 0, 0)
-
-        private val BLOCKED_HOSTS = listOf(
-            "googletagmanager.com",
-            "google-analytics.com",
-            "shinystat.com",
-            "waust.at",
-            "cokcok.stream",
-        )
     }
 }

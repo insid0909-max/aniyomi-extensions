@@ -336,7 +336,7 @@ class XHamster : AnimeHttpSource(), ConfigurableAnimeSource {
         if (out.isEmpty()) {
             // 화면에 주소가 없으면 숨은 WebView 로 열어 플레이어가 불러온 m3u8
             val r = WebSniff.m3u8(url, "$origin/", h()["User-Agent"], 20)
-            r.urls.firstOrNull()?.let { out.addAll(fromHls(it, headers, " (웹뷰)")) }
+            r.hits.firstOrNull()?.let { out.addAll(fromHls(it.url, headers, " (웹뷰)")) }
         }
         if (out.isEmpty()) throw Exception("영상 주소를 못 찾았어요 [화면에 영상 주소 없음 · 웹뷰에서도 못 찾음]")
         HlsQuality.sort(prefs(), out)
