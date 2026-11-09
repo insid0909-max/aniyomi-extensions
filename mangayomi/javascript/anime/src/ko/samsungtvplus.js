@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.7",
+    "version": "0.1.8",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/samsungtvplus.js"
@@ -27,6 +27,7 @@ const UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Geck
 const THUMB = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/thumbs/tv.png";
 const STV_JSON = "https://i.mjh.nz/SamsungTVPlus/.channels.json";
 const STV_M3U = "https://dc-toki-aniyomi-media.pages.dev/playlist/samsung-tv-plus.m3u";
+const STV_EPG = "https://raw.githubusercontent.com/matthuisman/i.mjh.nz/master/SamsungTVPlus/kr.xml";
 const STV_STREAM = "https://jmp2.uk/stvp-";
 const STV_ALL = "전체";
 const STV_LIVE = "실시간";
@@ -220,6 +221,14 @@ class DefaultExtension extends MProvider {
             } catch (e) {
                 list = [];
             }
+            // 예비 목록엔 편성이 없음 → 편성표(kr.xml)를 붙여 지금·다음 편성 (2026-11-09)
+            if (list.length) {
+                try {
+                    await this.addEpg(list);
+                } catch (e) {
+                    // 편성 없이
+                }
+            }
         }
         if (!list.length) {
             if (this._cache.length) return this._cache;
@@ -238,7 +247,8 @@ class DefaultExtension extends MProvider {
     async fromJson() {
         const res = await this.client.get(STV_JSON, { "User-Agent": UA });
         if (res.statusCode !== 200) return [];
-        const body = String(res.body || "");
+        // 2026-11-09: 이 파일은 압축 받기(gzip)를 허용한 요청에만 주고, 글자 방식(charset) 표시 없이 application/json → 한글 되돌림
+        const body = fixUtf8(res.body);
         const data = JSON.parse(body.substring(Math.max(0, body.indexOf("{"))));
         const kr = (((data || {}).regions || {}).kr || {}).channels || {};
         return Object.keys(kr).map((id) => {
@@ -259,7 +269,7 @@ class DefaultExtension extends MProvider {
         const res = await this.client.get(STV_M3U, { "User-Agent": UA });
         if (res.statusCode !== 200) return [];
         const out = [];
-        for (const line of String(res.body || "").replace(/\r/g, "").split("\n")) {
+        for (const line of fixUtf8(res.body).replace(/\r/g, "").split("\n")) {
             if (!line.startsWith("#EXTINF")) continue;
             const attr = (k) => (new RegExp(`${k}="([^"]*)"`).exec(line) || [])[1] || "";
             const id = attr("tvg-id");
@@ -268,6 +278,27 @@ class DefaultExtension extends MProvider {
             out.push({ id, name: name || id, chno: Number(attr("tvg-chno")) || 9999, logo: attr("tvg-logo"), group: attr("group-title") || "기타", programs: [] });
         }
         return out;
+    }
+
+    // XMLTV 편성표: <programme channel="ID" start="20261109083659 +0000" …><title>제목</title>
+    async addEpg(list) {
+        const res = await this.client.get(STV_EPG, { "User-Agent": UA });
+        if (res.statusCode !== 200) return;
+        const byId = {};
+        for (const c of list) byId[c.id] = c;
+        const unesc = (t) => String(t || "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#0*39;|&apos;/g, "'").replace(/&amp;/g, "&");
+        const re = /<programme channel="([^"]+)" start="(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2}) ([+-])(\d{2})(\d{2})"[^>]*>\s*<title[^>]*>([^<]*)<\/title>/g;
+        const now = Date.now() / 1000;
+        let m;
+        const body = fixUtf8(res.body);
+        while ((m = re.exec(body))) {
+            const c = byId[m[1]];
+            if (!c) continue;
+            const off = (m[8] === "-" ? -1 : 1) * (Number(m[9]) * 3600 + Number(m[10]) * 60);
+            const t = Date.UTC(Number(m[2]), Number(m[3]) - 1, Number(m[4]), Number(m[5]), Number(m[6]), Number(m[7])) / 1000 - off;
+            if (t > now + 86400) continue;
+            c.programs.push([t, unesc(m[11]).trim()]);
+        }
     }
 
     // ---------- 편성 (지금 · 다음) ----------
@@ -474,4 +505,31 @@ function notesFilters(key) {
     }
     return list.filter((n) => n && n.t).slice(0, 3)
         .map((n) => ({ type_name: "HeaderFilter", name: `📝 ${String(n.d || "").substring(5).replace("-", ".")} ${n.t}`, _status: true }));
+}
+
+// 응답에 글자 방식(charset)이 없으면 망가요미가 한글을 Latin-1 로 넘김(예비 목록 m3u 는 audio/x-mpegurl) → 되돌림 (북코·애니마루와 같은 코드)
+function fixUtf8(s) {
+    s = String(s || "");
+    if (/[^\u0000-\u00ff]/.test(s) || !/[\u0080-\u00ff]/.test(s)) return s;
+    let out = "";
+    for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+        let n = 0;
+        let cp = 0;
+        if (c >= 0xc2 && c <= 0xdf) { n = 1; cp = c & 0x1f; }
+        else if (c >= 0xe0 && c <= 0xef) { n = 2; cp = c & 0x0f; }
+        else if (c >= 0xf0 && c <= 0xf4) { n = 3; cp = c & 0x07; }
+        let ok = n > 0 && i + n < s.length;
+        for (let k = 1; ok && k <= n; k++) {
+            const t = s.charCodeAt(i + k);
+            if ((t & 0xc0) !== 0x80) ok = false; else cp = (cp << 6) | (t & 0x3f);
+        }
+        if (ok) {
+            out += String.fromCodePoint(cp);
+            i += n;
+        } else {
+            out += s[i];
+        }
+    }
+    return out;
 }
