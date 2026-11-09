@@ -1,14 +1,14 @@
 const mangayomiSources = [{
     "name": "실시간스포츠1",
     "lang": "ko",
-    "baseUrl": "https://gltv88.com",
+    "baseUrl": "https://goodlivetv2.com",
     "apiUrl": "",
     "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/livesports/res/mipmap-xxhdpi/tv_icon.png",
     "typeSource": "single",
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.6",
+    "version": "0.1.7",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/livesports1.js"
@@ -18,7 +18,7 @@ const mangayomiSources = [{
 // 사이트의 "스포츠중계 A·B채널" 화면(/bbs/content.php?co_id=streamA) 안 iframe#player 가 중계 화면(gltv77.r2onframe.com/cli/mobile)
 // 중계 화면 글자 안에 경기 목록이 그대로 있음: window.r2onframe.data2 = '[{ssid, chcd, ctgr(종목), leag, name, dttm(세계 표준시 UTC),
 // oair(1=방송 중), surl·surl2·surl3(m3u8)}]' → 그대로 읽음 (암호 풀기 없음). 영상 서버(gltv.oncahot.com)는 해외에서 Cloudflare 가 막음
-const DEFAULT_BASE_URL = "https://gltv88.com";
+const DEFAULT_BASE_URL = "https://goodlivetv2.com";
 const DEFAULT_FRAME = "https://gltv77.r2onframe.com/cli/mobile";
 const SITE_RE = /^https:\/\/(?:www\.)?[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 const FRAME_RE = /^https:\/\/[A-Za-z0-9.-]+\/[^\s]*$/;
@@ -184,9 +184,10 @@ class DefaultExtension extends MProvider {
 
     /** 사이트의 중계 A·B 화면에서 중계 화면(iframe#player) 주소를 읽음 */
     async frameFromSite(base) {
-        for (const id of ["streamA", "streamB", "stram"]) {
+        // 2026-11-09: 사이트 이름이 goodlivetv2.com 으로 바뀌며 중계 화면이 /live.php?ch=a·b (iframe#gl_live_player) 로 옮김
+        for (const path of ["/live.php?ch=a", "/live.php?ch=b", "/bbs/content.php?co_id=streamA", "/bbs/content.php?co_id=streamB", "/bbs/content.php?co_id=stram"]) {
             try {
-                const r = await this.get(`${base}/bbs/content.php?co_id=${id}`, `${base}/`);
+                const r = await this.get(`${base}${path}`, `${base}/`);
                 if (r.code !== 200) continue;
                 const m = /<iframe[^>]*id=["']player["'][^>]*>/i.exec(r.body) || /<iframe[^>]*src=["'](https:\/\/[^"']*\/cli\/[^"']*)["']/i.exec(r.body);
                 const src = m ? (/src=["']([^"']+)["']/i.exec(m[0]) || [])[1] : "";
@@ -198,7 +199,7 @@ class DefaultExtension extends MProvider {
         return "";
     }
 
-    /** 중계 화면이 안 열리면: 사이트 화면에서 새 중계 화면 주소 → 사이트 주소 번호(gltvN.com)를 바꿔 가며 */
+    /** 중계 화면이 안 열리면: 사이트 화면에서 새 중계 화면 주소 → 사이트 주소 번호(goodlivetvN.com)를 바꿔 가며 */
     async discover() {
         const last = Number(this.saved("ls1_auto_at")) || 0;
         if (Date.now() - last < 60000) return null;
@@ -273,7 +274,7 @@ class DefaultExtension extends MProvider {
             const hit = await this.discover();
             if (hit) list = await this.readFrame(hit.frame, hit.base);
         }
-        if (!list) throw new Error("경기 목록을 받지 못했어요. 사이트 주소가 바뀌었으면 새 주소(예: gltv89.com)를 검색창에 붙여 넣어 주세요.");
+        if (!list) throw new Error("경기 목록을 받지 못했어요. 사이트 주소가 바뀌었으면 새 주소(예: goodlivetv3.com)를 검색창에 붙여 넣어 주세요.");
         return list;
     }
 
@@ -587,7 +588,7 @@ class DefaultExtension extends MProvider {
                 key: "ls1_domain",
                 editTextPreference: {
                     title: "사이트 주소 직접 지정 (선택)",
-                    summary: "비워 두면 기본 주소(https://gltv88.com) 또는 자동으로 찾은 주소를 사용합니다.",
+                    summary: "비워 두면 기본 주소(https://goodlivetv2.com) 또는 자동으로 찾은 주소를 사용합니다.",
                     value: "",
                     dialogTitle: "사이트 주소",
                     dialogMessage: "https:// 로 시작하는 주소 (또는 검색창에 붙여 넣기)",
@@ -605,7 +606,7 @@ class DefaultExtension extends MProvider {
             },
             {
                 key: "ls1_auto_on",
-                switchPreferenceCompat: { title: "주소 자동 찾기", summary: "목록을 못 받으면 사이트 화면에서 중계 화면 주소를 다시 찾고, 사이트 주소 번호(gltvN.com)도 바꿔 봅니다.", value: true },
+                switchPreferenceCompat: { title: "주소 자동 찾기", summary: "목록을 못 받으면 사이트 화면에서 중계 화면 주소를 다시 찾고, 사이트 주소 번호(goodlivetvN.com)도 바꿔 봅니다.", value: true },
             },
             {
                 key: "ls1_headers",
