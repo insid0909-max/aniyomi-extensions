@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": true,
-    "version": "0.0.2",
+    "version": "0.0.3",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/aniya24.js"
@@ -504,7 +504,31 @@ class DefaultExtension extends MProvider {
 
     async getPopular(page) {
         await notesRefresh(this.client);
-        return this.listPage(ruleRead(KEY, true, RULE_SIZES) || DEFAULT_POPULAR, page);
+        const r = await this.listPage(ruleRead(KEY, true, RULE_SIZES) || DEFAULT_POPULAR, page);
+        if (page === 1 && r.list.length) await this.coverCheck(r.list[0].imageUrl);
+        return r;
+    }
+
+    // [임시 진단] 표지가 안 떠서: 첫 표지를 확장 통신으로 받아 본 결과를 필터 맨 위 🩺 줄에 (원인 찾으면 뺄 것)
+    async coverCheck(img) {
+        const one = async (name, headers, client) => {
+            try {
+                const res = await client.get(img, headers);
+                const ct = String((res.headers && (res.headers["content-type"] || res.headers["Content-Type"])) || "?").split(";")[0];
+                const b = String(res.body || "");
+                return `${name} ${res.statusCode} ${ct} ${b.length}자${/Just a moment|cf-chl/i.test(b) ? " 보안확인" : ""}`;
+            } catch (e) {
+                return `${name} 실패 ${String((e && e.message) || e).substring(0, 40)}`;
+            }
+        };
+        const out = [
+            await one("확장헤더", this.getHeaders(img), new Client()),
+            await one("UA넣음", { "User-Agent": UA, "Referer": `${this.getBaseUrl()}/` }, new Client()),
+            await one("헤더없음", {}, new Client()),
+        ];
+        try {
+            new SharedPreferences().setString("aniya24_cover_diag", `${img.substring(0, 90)} → ${out.join(" / ")}`);
+        } catch (e) {}
     }
 
     get supportsLatest() {
@@ -663,10 +687,27 @@ class DefaultExtension extends MProvider {
             // 목록을 읽었으면(화질이 붙음) 바로, 아니면 회차 화면에서 찾음
             if (list.length > 1 || /\d+p$/.test(list[0].quality)) {
                 this.fast = true;
+                if (list.length === 1) {
+                    // 화질이 하나뿐이면 그 화질 목록 주소를 바로 넘김 (재생기가 한 단계 덜 거침)
+                    const v = await this.singleVariant(u, mh);
+                    if (v) list[0].url = list[0].originalUrl = v;
+                }
                 return tag(qualitySort("aniya24_quality", list));
             }
         }
         return tag(await this.videoListSlow(url));
+    }
+
+    async singleVariant(master, headers) {
+        try {
+            const res = await this.client.get(master, headers);
+            const lines = String(res.body || "").replace(/\r/g, "").split("\n").filter((x) => x && !x.startsWith("#"));
+            if (lines.length !== 1) return null;
+            const l = lines[0].trim();
+            return /^https?:\/\//.test(l) ? l : master.replace(/[^/]*(?:\?.*)?$/, "") + l;
+        } catch (e) {
+            return null;
+        }
     }
 
     async videoListSlow(url) {
@@ -731,6 +772,13 @@ class DefaultExtension extends MProvider {
         return [
             { type_name: "HeaderFilter", name: `📡 주소: ${host}` },
             ...notesFilters(KEY),
+            ...(() => {
+                let d = "";
+                try {
+                    d = new SharedPreferences().getString("aniya24_cover_diag", "") || "";
+                } catch (e) {}
+                return d ? [{ type_name: "HeaderFilter", name: `🩺 표지 확인: ${d}`, _status: true }] : [];
+            })(),
             { type_name: "SeparatorFilter" },
             { type_name: "HeaderFilter", name: "검색어가 없을 때만 적용 (작품 주소를 붙여 넣으면 바로 열기)" },
         ].concat(FILTER_DEFS.map(([name, param, values]) => ({
