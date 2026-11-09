@@ -341,7 +341,14 @@ class XHamster : AnimeHttpSource(), ConfigurableAnimeSource {
             r.hits.firstOrNull()?.let { out.addAll(fromHls(it.url, headers, " (웹뷰)")) }
         }
         if (out.isEmpty()) throw Exception("영상 주소를 못 찾았어요 [화면에 영상 주소 없음 · 웹뷰에서도 못 찾음]")
-        HlsQuality.sort(prefs(), out)
+        // 선호 화질이 "자동"(기본값)이면 가장 높은 화질을 맨 앞에 — 재생기가 "자동"(화질 묶음)은 모든 화질 목록을 먼저 열어 봐서 느림
+        // (2026-11-09 사용자: 자동 10초 → 1080p 7초). "자동" 은 목록 뒤에 남김
+        val sorted = HlsQuality.sort(prefs(), out)
+        if ((prefs()?.getString(HlsQuality.KEY, HlsQuality.AUTO) ?: HlsQuality.AUTO) == HlsQuality.AUTO) {
+            sorted.sortedBy { it.quality.contains(HlsQuality.AUTO) }
+        } else {
+            sorted
+        }
     }
 
     private fun unesc(s: String) = s.replace("&amp;", "&").replace("\\/", "/")
