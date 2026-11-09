@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": true,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/aniya24.js"
@@ -402,7 +402,8 @@ class DefaultExtension extends MProvider {
 
     getHeaders(url) {
         if (/b-cdn\.net|mediadelivery\.net/.test(String(url || ""))) return { "User-Agent": UA, "Referer": `${PLAYER_ORIGIN}/` };
-        return { "User-Agent": UA, "Referer": `${this.getBaseUrl()}/` };
+        // 사이트(표지 포함)는 User-Agent 를 넣지 않음 → 앱이 웹뷰 값을 넣어 보안 확인 통과 정보와 맞음
+        return { "Referer": `${this.getBaseUrl()}/` };
     }
 
     /** missingOk: 404 면 빈 글(목록 끝) */
@@ -430,7 +431,8 @@ class DefaultExtension extends MProvider {
     }
 
     abs(u) {
-        u = String(u || "").trim();
+        // 표지 파일 이름이 한글 그대로라 주소 글자로 바꿈 (이미 %XX 인 부분은 그대로)
+        u = String(u || "").trim().replace(/[^\x00-\x7F]+/g, (x) => encodeURIComponent(x));
         if (!u || /^https?:\/\//.test(u)) return u;
         if (u.startsWith("//")) return "https:" + u;
         return this.getBaseUrl() + (u.startsWith("/") ? u : "/" + u);
@@ -462,8 +464,7 @@ class DefaultExtension extends MProvider {
             if (!HOST_RE.test(p)) return null;
             p = p.replace(HOST_RE, "");
         }
-        p = p.split("#")[0];
-        return p.startsWith("/series/") ? p : null;
+        return p.split("#")[0].startsWith("/series/") ? p : null;
     }
 
     // ================= 목록 =================
@@ -561,13 +562,13 @@ class DefaultExtension extends MProvider {
         const banner = first(doc, ".tmdb-movie-banner");
         const bannerText = banner ? banner.text.replace(/\s+/g, " ") : "";
         const status = (/Status:\s*([A-Za-z ]+?)(?:\s+Release|\s+First|$|\s{2})/.exec(bannerText) || [null, ""])[1].trim();
-        const release = (/(?:Release Date|First Air Date):\s*((?:19|20)\d{2})-(\d{2})-(\d{2})/.exec(bannerText) || []);
+        const release = (/(?:Release Date|First Air(?:ed| Date)?):\s*((?:19|20)\d{2})-(\d{2})-(\d{2})/i.exec(bannerText) || []);
         const orig = first(doc, ".tmdb-original-title");
         const genres = [];
         if (banner) {
             for (const s of banner.select(".item-text")) {
                 const t = s.text.trim();
-                if (t && !/^(Status|Release Date|First Air Date|Last Air Date):/.test(t) && !genres.includes(t)) genres.push(t);
+                if (t && !/:/.test(t) && !genres.includes(t)) genres.push(t);
             }
         }
         const modified = Date.parse((/article:modified_time" content="([^"]+)"/.exec(html) || [null, ""])[1]) || 0;
@@ -588,7 +589,10 @@ class DefaultExtension extends MProvider {
             let label = decodeHtml(a.attr("title") || a.text || "").replace(/\s+/g, " ").trim();
             if (title0 && label.startsWith(title0) && label.length > title0.length) label = label.substring(title0.length).trim();
             else if (label === title0) label = "";
-            raw.push({ p, g, label });
+            // 회차 그림 = 그 회차 영상의 미리보기(…b-cdn.net/{영상ID}/thumbnail.jpg) → 재생 때 사이트를 다시 안 받으려고 주소 # 뒤에 적어 둠
+            const im = first(item, "img");
+            const tm = /^https:\/\/([^/]+\.b-cdn\.net)\/([0-9a-f-]{36})\//i.exec(im ? (im.attr("src") || im.attr("data-src") || "") : "");
+            raw.push({ p: tm ? `${p}#bunny=${tm[1]}/${tm[2]}` : p, g, label });
         }
         // 회차 목록이 없으면 작품 화면 자체(첫 영상)를 하나로
         if (!raw.length && /beeteam368_pro_player\(/.test(html)) raw.push({ p: path, g: "0", label: "" });
@@ -647,6 +651,26 @@ class DefaultExtension extends MProvider {
     }
 
     async videoListInner(url) {
+        // [임시 측정] 화질 이름 뒤에 확장 처리 시간 (원인 찾으면 뺄 것)
+        const t0 = Date.now();
+        const tag = (list) => list.map((v) => Object.assign(v, { quality: `${v.quality} [${((Date.now() - t0) / 1000).toFixed(1)}초${this.fast ? " 바로" : ""}]` }));
+        this.fast = false;
+        const fm = /#bunny=([^/]+\.b-cdn\.net)\/([0-9a-f-]{36})/i.exec(String(url || ""));
+        if (fm) {
+            const u = `https://${fm[1]}/${fm[2]}/playlist.m3u8`;
+            const mh = { "User-Agent": UA, "Referer": `${PLAYER_ORIGIN}/`, "Origin": PLAYER_ORIGIN };
+            const list = await hlsExpand(this.client, u, LABEL, mh);
+            // 목록을 읽었으면(화질이 붙음) 바로, 아니면 회차 화면에서 찾음
+            if (list.length > 1 || /\d+p$/.test(list[0].quality)) {
+                this.fast = true;
+                return tag(qualitySort("aniya24_quality", list));
+            }
+        }
+        return tag(await this.videoListSlow(url));
+    }
+
+    async videoListSlow(url) {
+        url = String(url || "").replace(/#.*$/, "");
         const path = this.episodePath(url) || this.seriesPath(url) || url;
         const pageUrl = this.getBaseUrl() + path;
         const html = await this.get(path);
@@ -673,7 +697,8 @@ class DefaultExtension extends MProvider {
             const pm = new RegExp(`^https://([^/]+\\.b-cdn\\.net)/${guid}/`, "i").exec(poster);
             if (pm) cands.push(`https://${pm[1]}/${guid}/playlist.m3u8`);
             for (const c of cands) {
-                if (await mediaWorks(this.client, c, mediaHeaders)) return qualitySort("aniya24_quality", await hlsExpand(this.client, c, label, mediaHeaders));
+                const l = await hlsExpand(this.client, c, label, mediaHeaders);
+                if (l.length > 1 || /\d+p$/.test(l[0].quality)) return qualitySort("aniya24_quality", l);
                 diag.push("직접 주소 안 열림");
             }
             // 플레이어 화면에 적힌 재생 목록 주소
