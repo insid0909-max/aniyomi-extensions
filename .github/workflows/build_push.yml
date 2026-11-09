@@ -90,7 +90,8 @@ jobs:
           }
           echo "VCODE_TVROOM=$(vcode src/ko/tvroom common.gradle)" >> $GITHUB_ENV
           echo "VCODE_LIVESPORTS=$(vcode src/ko/livesports common.gradle)" >> $GITHUB_ENV
-          echo "TVroom: $(vcode src/ko/tvroom common.gradle) / 실시간스포츠: $(vcode src/ko/livesports common.gradle)"
+          echo "VCODE_ADULT=$(vcode src/ko/adult common.gradle)" >> $GITHUB_ENV
+          echo "TVroom: $(vcode src/ko/tvroom common.gradle) / 실시간스포츠: $(vcode src/ko/livesports common.gradle) / Adult: $(vcode src/ko/adult common.gradle)"
 
       # 각 build.gradle.kts 의 extCode / extVersionCode 를 그 확장의 번호로 치환
       - name: Inject version into build.gradle
@@ -103,11 +104,12 @@ jobs:
           }
           inject src/ko/tvroom/build.gradle.kts "$VCODE_TVROOM"
           inject src/ko/livesports/build.gradle.kts "$VCODE_LIVESPORTS"
+          inject src/ko/adult/build.gradle.kts "$VCODE_ADULT"
 
       - name: Build extensions
         run: |
-          mkdir -p src/ko/livesports/build src/ko/tvroom/build
-          ./gradlew :src:ko:tvroom:assembleRelease :src:ko:livesports:assembleRelease \
+          mkdir -p src/ko/livesports/build src/ko/tvroom/build src/ko/adult/build
+          ./gradlew :src:ko:tvroom:assembleRelease :src:ko:livesports:assembleRelease :src:ko:adult:assembleRelease \
             -x lintKotlin -x lint \
             -PsigningStorePassword="aniyomi123" \
             -PsigningKeyPassword="aniyomi123" \
