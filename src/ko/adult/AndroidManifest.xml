@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- 성인 전용 확장 (MissAV · xHamster · AVFLIX, 2026-11-09). TVroom 과 따로 둬서 성인 표시가 이 APK 에만 붙음 -->
+    <application
+        android:label="Adult"
+        android:icon="@mipmap/tv_icon"
+        tools:replace="android:label,android:icon">
+        <meta-data
+            android:name="tachiyomi.animeextension.class"
+            android:value="eu.kanade.tachiyomi.animeextension.ko.adult.AdultFactory"
+            tools:replace="android:value" />
+        <meta-data
+            android:name="tachiyomi.animeextension.version"
+            android:value="14"
+            tools:replace="android:value" />
+        <meta-data
+            android:name="tachiyomi.animeextension.nsfw"
+            android:value="1"
+            tools:replace="android:value" />
+    </application>
+</manifest>

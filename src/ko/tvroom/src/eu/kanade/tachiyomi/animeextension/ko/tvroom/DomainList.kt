@@ -18,7 +18,7 @@ internal object DomainList {
 
     @Volatile private var fetchedAt = 0L
 
-    private val client by lazy {
+    private val CLIENT by lazy {
         OkHttpClient.Builder()
             .connectTimeout(4, TimeUnit.SECONDS)
             .readTimeout(6, TimeUnit.SECONDS)
@@ -33,7 +33,7 @@ internal object DomainList {
             fetchedAt = now
             try {
                 val r = Request.Builder().url("$URL?t=${now / 60_000}").header("Cache-Control", "no-cache").build()
-                client.newCall(r).execute().use { res ->
+                CLIENT.newCall(r).execute().use { res ->
                     if (res.code == 200) json = JSONObject(res.body.string())
                 }
             } catch (e: Throwable) {
