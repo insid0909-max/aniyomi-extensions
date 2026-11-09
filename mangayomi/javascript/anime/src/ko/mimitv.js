@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.7",
+    "version": "0.1.8",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/mimitv.js"
@@ -321,6 +321,8 @@ async function listedDomain(client, key) {
     }
 }
 
+const GUIDE_URL = "https://xn--hg3ba87o95e83l04o.com/";
+
 class DefaultExtension extends MProvider {
     constructor() {
         super();
@@ -386,6 +388,21 @@ class DefaultExtension extends MProvider {
         if (listed && listed !== current && DOMAIN_RE.test(listed) && await real(listed)) {
             p.setString("mimitv_auto_domain", listed);
             return listed;
+        }
+        // 사이트가 알려 주는 평생 주소 안내 페이지(미미티비주소.com, 2026-11-09 사용자 화면 "현재주소 mimitv13 · 다음주소 mimitv14")에 적힌 주소, 큰 번호부터
+        try {
+            const g = await this.client.get(GUIDE_URL, { "User-Agent": UA });
+            const nums = [...new Set((String((g && g.body) || "").match(/mimitv(\d+)\.com/gi) || []).map((x) => num(x.toLowerCase())))]
+                .filter((n) => n > 0).sort((a, b) => b - a).slice(0, 3);
+            for (const n of nums) {
+                const c = `https://mimitv${n}.com`;
+                if (c !== current && await real(c)) {
+                    p.setString("mimitv_auto_domain", c);
+                    return c;
+                }
+            }
+        } catch (e) {
+            // 안내 페이지가 안 열리면 번호 짐작으로
         }
         const cur = num(current) || num(DEFAULT_BASE_URL);
         const cands = [];
