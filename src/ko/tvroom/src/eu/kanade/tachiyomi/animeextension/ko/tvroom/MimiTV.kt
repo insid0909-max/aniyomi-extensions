@@ -37,7 +37,6 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import rx.Observable
-import java.io.ByteArrayInputStream
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Collections
@@ -506,7 +505,7 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
     /**
      * 숨은 웹뷰로 플레이어 화면을 그대로 열고(브라우저 이름도 휴대폰 웹뷰 그대로 — 고정 이름·화면 끼워 넣기는 9243 에서 "웹뷰에서도 HTTP 0"),
      * 화면이 열리는 순간 작은 엿보기 코드를 넣어 플레이어가 받은 m3u8 의 결과(상태·글자)를 알려 받음.
-     * 영상 목록(#EXTINF 있는 것)을 받으면 바로 끝, 아니면 최대 20초. 그림·광고는 받지 않음, 2·6·12초에 소리 끈 채 재생 눌러 봄
+     * 영상 목록(#EXTINF 있는 것)을 받으면 바로 끝, 아니면 최대 20초. 아무것도 막지 않음(망가요미판과 같게), 2·6·12초에 소리 끈 채 재생 눌러 봄
      */
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
     private fun capture(link: String, referer: String): Capture {
@@ -538,7 +537,6 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
                 webView.settings.javaScriptEnabled = true
                 webView.settings.domStorageEnabled = true
                 webView.settings.mediaPlaybackRequiresUserGesture = false
-                webView.settings.blockNetworkImage = true
                 webUa = webView.settings.userAgentString
                 webView.addJavascriptInterface(bridge, "MimiCap")
                 webView.webViewClient = object : WebViewClient() {
@@ -554,10 +552,7 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
                         val reqUrl = request.url.toString()
                         val path = request.url.path?.lowercase().orEmpty()
                         if (path.endsWith(".m3u8")) urls.add(reqUrl)
-                        val host = request.url.host.orEmpty()
-                        if (BLOCKED_AD_HOSTS.any { host.endsWith(it) } || IMAGE_EXT.containsMatchIn(path)) {
-                            return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
-                        }
+                        // 그림·광고를 막지 않음 — 막으면 플레이어가 목록 전에 받는 요청까지 막혀 서버가 목록을 거절(9244 "웹뷰에서도 HTTP 500")
                         return super.shouldInterceptRequest(view, request)
                     }
                 }
@@ -661,8 +656,6 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
         private val HOST_REGEX = Regex("""^(?:www\.)?mimitv\d+\.com$""")
         private val PASTE_HOST_REGEX = Regex("""^(?:https?://)?(?:www\.)?(mimitv\d+\.com)(?:[/?#]|$)""", RegexOption.IGNORE_CASE)
         private val NUM_REGEX = Regex("""mimitv(\d+)\.com""")
-        private val IMAGE_EXT = Regex("""\.(?:png|jpe?g|gif|webp|svg|ico)$""")
-        private val BLOCKED_AD_HOSTS = listOf("googletagmanager.com", "google-analytics.com", "shinystat.com", "waust.at", "cokcok.stream")
         private const val PLAY_SCRIPT =
             "(function(){var v=document.querySelector('video');if(v){v.muted=true;try{v.play();}catch(e){}}" +
                 "var b=document.querySelector('.art-state,.art-control-play');if(b)b.click();})();"
