@@ -36,9 +36,12 @@ internal object WebSniff {
 
     class Result(val hits: List<Hit>, val lastPage: String)
 
-    /** 처음 m3u8 을 찾은 뒤 1.5초 더 모아서 돌려줌 (주 목록과 화질별 목록이 따로 올 수 있음). 최대 timeoutSec 초 */
+    /**
+     * 처음 m3u8 을 찾은 뒤 1.5초 더 모아서 돌려줌 (주 목록과 화질별 목록이 따로 올 수 있음). 최대 timeoutSec 초.
+     * block 에 맞는 주소는 기록만 하고 웹뷰가 실제로 받지는 않게 막음 (한 번 쓰는 표가 붙은 주소를 아껴 둠)
+     */
     @SuppressLint("SetJavaScriptEnabled")
-    fun m3u8(url: String, referer: String, userAgent: String?, timeoutSec: Long = 25): Result {
+    fun m3u8(url: String, referer: String, userAgent: String?, timeoutSec: Long = 25, block: Regex? = null): Result {
         val found = Collections.synchronizedList(mutableListOf<Hit>())
         val first = CountDownLatch(1)
         val handler = Handler(Looper.getMainLooper())
@@ -71,6 +74,9 @@ internal object WebSniff {
                                 .filterKeys { it.equals("Referer", true) || it.equals("Origin", true) || it.equals("User-Agent", true) }
                             found.add(Hit(reqUrl, hs))
                             first.countDown()
+                        }
+                        if (block != null && block.containsMatchIn(reqUrl)) {
+                            return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                         }
                         val host = request.url.host.orEmpty()
                         if (BLOCKED.any { host.endsWith(it) } || IMAGE_PATH.containsMatchIn(path)) {
