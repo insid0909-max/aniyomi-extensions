@@ -86,8 +86,9 @@ class LiveSports1 : AnimeHttpSource(), ConfigurableAnimeSource {
     // ================= 0-1. 중계 화면 읽기 · 주소 찾기 =================
     /** 사이트의 중계 A·B 화면에서 중계 화면(iframe#player) 주소를 읽음 */
     private fun frameFromSite(base: String): String {
-        for (co in listOf("streamA", "streamB", "stram")) {
-            val (code, body) = get("$base/bbs/content.php?co_id=$co", "$base/") ?: continue
+        // 2026-11-09: 사이트 이름이 goodlivetv2.com 으로 바뀌며 중계 화면이 /live.php?ch=a·b (iframe#gl_live_player) 로 옮김
+        for (path in listOf("/live.php?ch=a", "/live.php?ch=b", "/bbs/content.php?co_id=streamA", "/bbs/content.php?co_id=streamB", "/bbs/content.php?co_id=stram")) {
+            val (code, body) = get("$base$path", "$base/") ?: continue
             if (code != 200) continue
             val tag = PLAYER_IFRAME.find(body)?.value ?: CLI_IFRAME.find(body)?.value ?: continue
             val src = SRC_ATTR.find(tag)?.groupValues?.get(1).orEmpty()
@@ -104,7 +105,7 @@ class LiveSports1 : AnimeHttpSource(), ConfigurableAnimeSource {
 
     @Volatile private var lastDiscover = 0L
 
-    /** 중계 화면이 안 열리면: 사이트 화면에서 새 중계 화면 주소 → 사이트 주소 번호(gltvN.com)를 바꿔 가며 */
+    /** 중계 화면이 안 열리면: 사이트 화면에서 새 중계 화면 주소 → 사이트 주소 번호(goodlivetvN.com)를 바꿔 가며 */
     private fun discover(): JSONArray? = synchronized(this) {
         if (System.currentTimeMillis() - lastDiscover < 60_000) return null
         lastDiscover = System.currentTimeMillis()
@@ -157,7 +158,7 @@ class LiveSports1 : AnimeHttpSource(), ConfigurableAnimeSource {
         val body = if (response.isSuccessful) response.body.string() else ""
         parseRaw(body)?.let { return it }
         if (autoOn()) discover()?.let { return it }
-        throw Exception("경기 목록을 받지 못했어요. 사이트 주소가 바뀌었으면 새 주소(예: gltv89.com)를 검색창에 붙여 넣어 주세요.")
+        throw Exception("경기 목록을 받지 못했어요. 사이트 주소가 바뀌었으면 새 주소(예: goodlivetv3.com)를 검색창에 붙여 넣어 주세요.")
     }
 
     // 넘겨 준 응답이면 # 이 빠질 수 있어 첫 요청의 주소에서 읽음
@@ -373,7 +374,7 @@ class LiveSports1 : AnimeHttpSource(), ConfigurableAnimeSource {
 
     // ================= 4. 상세 · 경기 목록 =================
     // 웹뷰 버튼: 사이트의 스포츠중계 화면
-    override fun getAnimeUrl(anime: SAnime): String = "$baseUrl/bbs/content.php?co_id=streamA"
+    override fun getAnimeUrl(anime: SAnime): String = "$baseUrl/live.php?ch=a"
 
     override fun animeDetailsRequest(anime: SAnime): Request = frameRequest("card?" + anime.url.substringAfter('?'))
 
@@ -545,12 +546,12 @@ class LiveSports1 : AnimeHttpSource(), ConfigurableAnimeSource {
             title = "사이트 주소 직접 지정 (선택)"
             summary = "비워 두면 기본 주소($DEFAULT_BASE_URL) 또는 자동으로 찾은 주소를 사용합니다.\n현재 주소: $baseUrl"
             dialogTitle = "기본값: $DEFAULT_BASE_URL"
-            dialogMessage = "https:// 로 시작하는 주소를 입력하세요 (예: https://gltv89.com)."
+            dialogMessage = "https:// 로 시작하는 주소를 입력하세요 (예: https://goodlivetv3.com)."
             setDefaultValue("")
             setOnPreferenceChangeListener { _, newValue ->
                 val input = (newValue as String).trim().trimEnd('/')
                 val ok = input.isEmpty() || DOMAIN_REGEX.matches(input)
-                Toast.makeText(ctx, if (ok) "바꿨습니다. 목록을 새로고침하세요." else "올바른 주소 형식이 아닙니다 (예: https://gltv89.com)", Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, if (ok) "바꿨습니다. 목록을 새로고침하세요." else "올바른 주소 형식이 아닙니다 (예: https://goodlivetv3.com)", Toast.LENGTH_SHORT).show()
                 ok
             }
         }.also(screen::addPreference)
@@ -573,7 +574,7 @@ class LiveSports1 : AnimeHttpSource(), ConfigurableAnimeSource {
             switchPref(
                 PREF_AUTO_DOMAIN,
                 "도메인 자동 찾기",
-                "목록을 못 받으면 사이트 화면에서 새 중계 화면 주소를 찾고, 그래도 안 되면 주소 번호(gltvN.com)를 바꿔 찾습니다.",
+                "목록을 못 받으면 사이트 화면에서 새 중계 화면 주소를 찾고, 그래도 안 되면 주소 번호(goodlivetvN.com)를 바꿔 찾습니다.",
                 true,
             ),
         )
@@ -606,7 +607,7 @@ class LiveSports1 : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val PREF_START_TIME = "pref_start_time"
         private const val PREF_HIDE_ENDED = "pref_hide_ended"
 
-        private const val DEFAULT_BASE_URL = "https://gltv88.com"
+        private const val DEFAULT_BASE_URL = "https://goodlivetv2.com"
         private const val DEFAULT_FRAME = "https://gltv77.r2onframe.com/cli/mobile"
         private const val DEFAULT_FRAME_ORIGIN = "https://gltv77.r2onframe.com"
         private const val THUMB_BASE = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/thumbs"
