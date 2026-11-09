@@ -1,0 +1,12 @@
+# 망가요미 저장소 (웹툰·애니·소설 한 주소)
+
+망가요미 앱의 **웹툰·애니·소설 저장소 칸 세 곳에 아래 주소 하나를 똑같이** 넣으면 됩니다.
+
+```
+https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/repo/index.json
+```
+
+- 망가요미는 이 목록에서 확장마다 적힌 종류(웹툰·애니·소설)에 맞는 칸에만 보여 줍니다.
+- 예전 주소(애니 `anime_index.json`, 웹툰 `index.json`·`novel_index.json`)도 계속 갱신됩니다. **새 주소로 바꾸면 예전 주소는 지워 주세요** — 둘 다 있으면 같은 확장이 두 번 보일 수 있습니다.
+- 개인 저장소(my-ext)는 들어 있지 않습니다.
+- 이 파일은 자동 작업(`.github/workflows/combined-index.yml`)이 만듭니다. 애니 목록이 바뀌면 바로, 웹툰·소설 목록은 30분마다 확인해 반영합니다.
