@@ -55,6 +55,16 @@ class TVroomFactory : AnimeSourceFactory {
         } catch (e: Throwable) {
             list.add(ErrorSource("애니울프 오류", e))
         }
+        try {
+            list.add(Aniya24()) // 애니야24
+        } catch (e: Throwable) {
+            list.add(ErrorSource("애니야24 오류", e))
+        }
+        try {
+            list.add(MimiTV()) // 미미티비 (2026-11-09 다시 넣음)
+        } catch (e: Throwable) {
+            list.add(ErrorSource("미미티비 오류", e))
+        }
         return list
     }
 }
