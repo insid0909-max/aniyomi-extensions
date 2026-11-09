@@ -8,7 +8,7 @@ on:
       - master
     paths:
       - 'mangayomi/anime_index.json'
-      - 'mangayomi/tools/repo/**'
+      - 'mangayomi/tools/combined/**'
   schedule:
     - cron: '7,37 * * * *'
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
           node-version: 20
 
       - name: Combine
-        run: node mangayomi/tools/repo/combine.js mangayomi/anime_index.json "$RUNNER_TEMP/out"
+        run: node mangayomi/tools/combined/combine.js mangayomi/anime_index.json "$RUNNER_TEMP/out"
 
       - name: Publish to repo branch
         run: |
@@ -46,7 +46,7 @@ jobs:
             mkdir -p "$DIR" && cd "$DIR" && git init -q -b repo && git remote add origin "$REMOTE" && cd -
           fi
           cp "$RUNNER_TEMP/out/index.json" "$DIR/index.json"
-          cp mangayomi/tools/repo/README.md "$DIR/README.md"
+          cp mangayomi/tools/combined/README.md "$DIR/README.md"
           cd "$DIR"
           git config user.name "insid0909-max"
           git config user.email "266083559+insid0909-max@users.noreply.github.com"
