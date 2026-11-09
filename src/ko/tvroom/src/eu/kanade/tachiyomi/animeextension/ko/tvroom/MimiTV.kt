@@ -469,13 +469,14 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
         // 암호를 풀거나 내용을 바꾸지 않음
         for ((i, link) in ep.links.withIndex()) {
             val origin = link.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" } ?: siteRef.trimEnd('/')
+            val label = if (i == 0) LABEL else "$LABEL (대체 $i)"
+            val cap = capture(link, siteRef)
+            // 중계도 웹뷰와 같은 브라우저 이름으로
             val vh = Headers.Builder()
-                .set("User-Agent", USER_AGENT)
+                .set("User-Agent", cap.ua ?: USER_AGENT)
                 .set("Referer", "$origin/")
                 .set("Origin", origin)
                 .build()
-            val label = if (i == 0) LABEL else "$LABEL (대체 $i)"
-            val cap = capture(link, siteRef)
             val media = cap.reports.lastOrNull { it.status in 200..299 && it.text.contains("#EXTINF") }
             if (media != null) {
                 val url = LocalProxy.fromText(client, vh, media.text, media.url)
@@ -500,10 +501,11 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
 
     private class Report(val url: String, val status: Int, val text: String)
 
-    private class Capture(val urls: List<String>, val reports: List<Report>, val hooked: Boolean)
+    private class Capture(val urls: List<String>, val reports: List<Report>, val hooked: Boolean, val ua: String?)
 
     /**
-     * 숨은 웹뷰로 플레이어 화면을 열되, 첫 화면 글자 맨 앞에 작은 엿보기 코드를 넣어 플레이어가 받은 m3u8 의 결과(상태·글자)를 알려 받음.
+     * 숨은 웹뷰로 플레이어 화면을 그대로 열고(브라우저 이름도 휴대폰 웹뷰 그대로 — 고정 이름·화면 끼워 넣기는 9243 에서 "웹뷰에서도 HTTP 0"),
+     * 화면이 열리는 순간 작은 엿보기 코드를 넣어 플레이어가 받은 m3u8 의 결과(상태·글자)를 알려 받음.
      * 영상 목록(#EXTINF 있는 것)을 받으면 바로 끝, 아니면 최대 20초. 그림·광고는 받지 않음, 2·6·12초에 소리 끈 채 재생 눌러 봄
      */
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
@@ -514,6 +516,7 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
         val handler = Handler(Looper.getMainLooper())
         var webViewRef: WebView? = null
         var hooked = false
+        var webUa: String? = null
         val bridge = object {
             @JavascriptInterface
             fun report(url: String, status: Int, text: String) {
@@ -535,10 +538,18 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
                 webView.settings.javaScriptEnabled = true
                 webView.settings.domStorageEnabled = true
                 webView.settings.mediaPlaybackRequiresUserGesture = false
-                webView.settings.userAgentString = USER_AGENT
                 webView.settings.blockNetworkImage = true
+                webUa = webView.settings.userAgentString
                 webView.addJavascriptInterface(bridge, "MimiCap")
                 webView.webViewClient = object : WebViewClient() {
+                    override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                        view.evaluateJavascript(CAP_SCRIPT, null)
+                    }
+
+                    override fun onPageFinished(view: WebView, url: String) {
+                        view.evaluateJavascript(CAP_SCRIPT, null)
+                    }
+
                     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                         val reqUrl = request.url.toString()
                         val path = request.url.path?.lowercase().orEmpty()
@@ -546,18 +557,6 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
                         val host = request.url.host.orEmpty()
                         if (BLOCKED_AD_HOSTS.any { host.endsWith(it) } || IMAGE_EXT.containsMatchIn(path)) {
                             return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
-                        }
-                        // 첫 화면(플레이어 주소)만 확장이 받아 맨 앞에 엿보기 코드를 넣어 돌려줌 (쿠키는 웹뷰와 같이 씀)
-                        if (request.isForMainFrame && request.method == "GET" && reqUrl == link) {
-                            runCatching {
-                                val hs = Headers.Builder().set("User-Agent", USER_AGENT).set("Referer", referer).build()
-                                client.newCall(GET(reqUrl, hs)).execute().use { res ->
-                                    val html = res.body.string()
-                                    val at = Regex("<head[^>]*>", RegexOption.IGNORE_CASE).find(html)?.range?.last?.plus(1) ?: 0
-                                    val out = html.substring(0, at) + "<script>" + CAP_SCRIPT + "</script>" + html.substring(at)
-                                    return WebResourceResponse("text/html", "UTF-8", ByteArrayInputStream(out.toByteArray(Charsets.UTF_8)))
-                                }
-                            }
                         }
                         return super.shouldInterceptRequest(view, request)
                     }
@@ -580,7 +579,7 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
                 webViewRef?.destroy()
             }
         }
-        return Capture(synchronized(urls) { urls.toList() }, synchronized(reports) { reports.toList() }, hooked)
+        return Capture(synchronized(urls) { urls.toList() }, synchronized(reports) { reports.toList() }, hooked, webUa)
     }
 
     override fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()
@@ -670,7 +669,7 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
 
         // 플레이어가 받은 m3u8 결과(상태·글자)를 확장에 알려 주는 엿보기 코드 (XHR·fetch 를 감싸기만 하고 동작은 그대로)
         private const val CAP_SCRIPT =
-            "(function(){try{MimiCap.ready();}catch(e){}function rep(u,s,t){try{MimiCap.report(String(u),s|0,String(t||'').substring(0,3000000));}catch(e){}}" +
+            "(function(){if(window.__mc)return;window.__mc=1;try{MimiCap.ready();}catch(e){}function rep(u,s,t){try{MimiCap.report(String(u),s|0,String(t||'').substring(0,3000000));}catch(e){}}" +
                 "var o=XMLHttpRequest.prototype.open,sd=XMLHttpRequest.prototype.send;" +
                 "XMLHttpRequest.prototype.open=function(m,u){this.__cu=u;return o.apply(this,arguments);};" +
                 "XMLHttpRequest.prototype.send=function(){var x=this;x.addEventListener('loadend',function(){var u=x.responseURL||x.__cu||'';" +
