@@ -144,67 +144,6 @@ internal object WebSniff {
         return null
     }
 
-    /**
-     * 진단용 (MissAV 403, 2026-11-09): 머리글 조합마다 재생 목록이 열리면 첫 영상 조각·열쇠까지 받아 보고
-     * 화질 이름 뒤에 "머리글N · 조각 코드 · 열쇠 코드" 를 붙여 모두 돌려줌 (조각까지 열린 조합이 앞). 하나도 안 열리면 null
-     */
-    fun allWorkingProbed(
-        client: OkHttpClient,
-        hits: List<Hit>,
-        pageOrigin: String,
-        label: String,
-        fails: MutableList<String>,
-    ): List<Video>? {
-        for (h in hits) {
-            val ua = h.headers.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value
-            val variants = listOf(
-                h.headers,
-                listOfNotNull("Referer" to "$pageOrigin/", "Origin" to pageOrigin, ua?.let { "User-Agent" to it }).toMap(),
-                listOfNotNull("Referer" to "$pageOrigin/", ua?.let { "User-Agent" to it }).toMap(),
-                listOfNotNull("Referer" to "$pageOrigin/").toMap(),
-            ).distinct()
-            val codes = mutableListOf<String>()
-            val ok = mutableListOf<Pair<Boolean, List<Video>>>()
-            variants.forEachIndexed { n, v ->
-                val headers = Headers.Builder().apply { v.forEach { (k, value) -> set(k, value) } }.build()
-                val vids = HlsQuality.expandIfWorks(client, h.url, label, headers)
-                if (vids == null) {
-                    codes.add(code(client, h.url, headers))
-                    return@forEachIndexed
-                }
-                val (good, text) = probe(client, h.url, headers)
-                ok.add(good to vids.map { Video(it.url, "${it.quality} · 머리글${n + 1} · $text", it.videoUrl, it.headers) })
-            }
-            if (ok.isNotEmpty()) return ok.sortedByDescending { it.first }.flatMap { it.second }
-            val u = h.url.toHttpUrlOrNull()
-            fails.add("${u?.host.orEmpty()}${u?.encodedPath.orEmpty().take(24)} ${codes.distinct().joinToString("/")}")
-        }
-        return null
-    }
-
-    private val KEY_URI = Regex("""#EXT-X-KEY:[^\n]*URI="([^"]+)"""")
-
-    /** 재생 목록(화질 묶음이면 첫 화질) → 첫 조각·열쇠를 같은 머리글로 받아 본 결과 */
-    private fun probe(client: OkHttpClient, m3u8: String, headers: Headers): Pair<Boolean, String> = runCatching {
-        fun text(u: String) = client.newCall(GET(u, headers)).execute().use { it.request.url to it.body.string() }
-        var (base, body) = text(m3u8)
-        if (body.contains("#EXT-X-STREAM-INF")) {
-            val v = body.lines().map { it.trim() }.firstOrNull { it.isNotEmpty() && !it.startsWith("#") } ?: return@runCatching false to "목록 비어 있음"
-            val next = base.resolve(v)?.toString() ?: return@runCatching false to "목록 주소 이상"
-            text(next).let {
-                base = it.first
-                body = it.second
-            }
-        }
-        val seg = body.lines().map { it.trim() }.firstOrNull { it.isNotEmpty() && !it.startsWith("#") }?.let { base.resolve(it)?.toString() }
-        val key = KEY_URI.find(body)?.groupValues?.get(1)?.let { base.resolve(it)?.toString() }
-        fun c(u: String) = client.newCall(GET(u, headers.newBuilder().set("Range", "bytes=0-1").build())).execute().use { it.code }
-        val sc = seg?.let { c(it) }
-        val kc = key?.let { c(it) }
-        val good = sc != null && sc in 200..299 && (kc == null || kc in 200..299)
-        good to listOfNotNull(sc?.let { "조각 $it" } ?: "조각 없음", kc?.let { "열쇠 $it" }).joinToString(" · ")
-    }.getOrElse { false to "확인 실패 ${it.javaClass.simpleName}" }
-
     private fun code(client: OkHttpClient, url: String, headers: Headers): String = runCatching {
         client.newCall(GET(url, headers)).execute().use { it.code.toString() }
     }.getOrDefault("연결 실패")

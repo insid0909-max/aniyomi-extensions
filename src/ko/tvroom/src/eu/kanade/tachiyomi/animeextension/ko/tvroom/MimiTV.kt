@@ -1,7 +1,15 @@
 package eu.kanade.tachiyomi.animeextension.ko.tvroom
 
+import android.annotation.SuppressLint
 import android.app.Application
 import android.content.SharedPreferences
+import android.os.Handler
+import android.os.Looper
+import android.webkit.JavascriptInterface
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceScreen
@@ -29,10 +37,13 @@ import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import rx.Observable
+import java.io.ByteArrayInputStream
 import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Collections
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
@@ -453,18 +464,10 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
         if (ep.links.isEmpty()) throw Exception("이 회차에는 재생 주소가 없어요")
         val siteRef = "$baseUrl/"
         val fails = mutableListOf<String>()
-        // 서버(링크)를 차례로 숨은 웹뷰로 열어 플레이어가 요청한 m3u8 주소를 모음. 진짜 주소(/hls/…?t&n&s)에는 한 번 쓰는 표(n)가
-        // 붙어 있는 듯해(2026-11-09 사용자 화면: 잡은 주소를 여러 번 열면 502) 웹뷰가 실제로 받지 못하게 막고, 망가요미판과 같은
-        // 머리글(플레이어 주소 Referer·Origin)로 재생기에 바로 넘김
+        // 영상 서버(wiselife.blog/hls/…)는 플레이어 화면 밖(재생기·확장)에서 온 목록 요청에 502 (2026-11-09 사용자 화면, 8761~8763)
+        // → 숨은 웹뷰로 플레이어를 열고, 플레이어가 받은 목록 글자를 화면 안에서 함께 받아(capture) 앱 안 중계 주소(LocalProxy)로 재생기에 건넴(조각도 확장 통신으로 중계).
+        // 암호를 풀거나 내용을 바꾸지 않음
         for ((i, link) in ep.links.withIndex()) {
-            val decoy = link.toHttpUrlOrNull()?.queryParameter("url")
-            val r = WebSniff.m3u8(link, siteRef, USER_AGENT, 20, block = REAL_HLS)
-            val hit = r.hits.filter { it.url != decoy && !it.url.contains("onet.php") && !it.url.contains("/pop/") }
-                .maxByOrNull { if (REAL_HLS.containsMatchIn(it.url)) 1 else 0 }
-            if (hit == null) {
-                fails.add("서버${i + 1} 못 찾음 (잡힌 주소 ${r.hits.size}개)")
-                continue
-            }
             val origin = link.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" } ?: siteRef.trimEnd('/')
             val vh = Headers.Builder()
                 .set("User-Agent", USER_AGENT)
@@ -472,10 +475,112 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
                 .set("Origin", origin)
                 .build()
             val label = if (i == 0) LABEL else "$LABEL (대체 $i)"
-            // 확장이 미리 열어 보지도 않음(표를 재생기가 처음 쓰게). 안 열리면 재생기 오류에 HTTP 번호가 보임
-            return@withContext listOf(Video(hit.url, label, hit.url, vh))
+            val cap = capture(link, siteRef)
+            val media = cap.reports.lastOrNull { it.status in 200..299 && it.text.contains("#EXTINF") }
+            if (media != null) {
+                val url = LocalProxy.fromText(client, vh, media.text, media.url)
+                return@withContext listOf(Video(url, label, url))
+            }
+            // 목록 글자를 못 받았어도 주소를 잡았으면 확장 통신으로 중계 (재생기 직접 접속은 502)
+            cap.urls.firstOrNull { REAL_HLS.containsMatchIn(it) }?.takeIf { cap.reports.none { r -> r.url == it } }?.let { u ->
+                val url = LocalProxy.playlist(client, vh, u)
+                return@withContext listOf(Video(url, "$label (중계)", url))
+            }
+            val bad = cap.reports.firstOrNull { REAL_HLS.containsMatchIn(it.url) }
+            fails.add(
+                when {
+                    bad != null -> "서버${i + 1} 웹뷰에서도 HTTP ${bad.status}"
+                    cap.urls.isNotEmpty() -> "서버${i + 1} 목록 내용 못 받음 (주소 ${cap.urls.size}개${if (cap.hooked) "" else " · 엿보기 안 붙음"})"
+                    else -> "서버${i + 1} 못 찾음${if (cap.hooked) "" else " (엿보기 안 붙음)"}"
+                },
+            )
         }
-        throw Exception("영상 주소를 찾지 못했어요. 잠시 뒤 다시 시도해 주세요 [${fails.joinToString(", ").take(160)}]")
+        throw Exception("영상을 못 불러왔어요 [${fails.joinToString(", ").take(160)}]")
+    }
+
+    private class Report(val url: String, val status: Int, val text: String)
+
+    private class Capture(val urls: List<String>, val reports: List<Report>, val hooked: Boolean)
+
+    /**
+     * 숨은 웹뷰로 플레이어 화면을 열되, 첫 화면 글자 맨 앞에 작은 엿보기 코드를 넣어 플레이어가 받은 m3u8 의 결과(상태·글자)를 알려 받음.
+     * 영상 목록(#EXTINF 있는 것)을 받으면 바로 끝, 아니면 최대 20초. 그림·광고는 받지 않음, 2·6·12초에 소리 끈 채 재생 눌러 봄
+     */
+    @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
+    private fun capture(link: String, referer: String): Capture {
+        val urls = Collections.synchronizedList(mutableListOf<String>())
+        val reports = Collections.synchronizedList(mutableListOf<Report>())
+        val done = CountDownLatch(1)
+        val handler = Handler(Looper.getMainLooper())
+        var webViewRef: WebView? = null
+        var hooked = false
+        val bridge = object {
+            @JavascriptInterface
+            fun report(url: String, status: Int, text: String) {
+                reports.add(Report(url, status, text))
+                if (status in 200..299 && text.contains("#EXTINF")) done.countDown()
+            }
+
+            @JavascriptInterface
+            fun ready() {
+                hooked = true
+            }
+        }
+        handler.post {
+            try {
+                val context = Class.forName("android.app.ActivityThread")
+                    .getMethod("currentApplication").invoke(null) as Application
+                val webView = WebView(context)
+                webViewRef = webView
+                webView.settings.javaScriptEnabled = true
+                webView.settings.domStorageEnabled = true
+                webView.settings.mediaPlaybackRequiresUserGesture = false
+                webView.settings.userAgentString = USER_AGENT
+                webView.settings.blockNetworkImage = true
+                webView.addJavascriptInterface(bridge, "MimiCap")
+                webView.webViewClient = object : WebViewClient() {
+                    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                        val reqUrl = request.url.toString()
+                        val path = request.url.path?.lowercase().orEmpty()
+                        if (path.endsWith(".m3u8")) urls.add(reqUrl)
+                        val host = request.url.host.orEmpty()
+                        if (BLOCKED_AD_HOSTS.any { host.endsWith(it) } || IMAGE_EXT.containsMatchIn(path)) {
+                            return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
+                        }
+                        // 첫 화면(플레이어 주소)만 확장이 받아 맨 앞에 엿보기 코드를 넣어 돌려줌 (쿠키는 웹뷰와 같이 씀)
+                        if (request.isForMainFrame && request.method == "GET" && reqUrl == link) {
+                            runCatching {
+                                val hs = Headers.Builder().set("User-Agent", USER_AGENT).set("Referer", referer).build()
+                                client.newCall(GET(reqUrl, hs)).execute().use { res ->
+                                    val html = res.body.string()
+                                    val at = Regex("<head[^>]*>", RegexOption.IGNORE_CASE).find(html)?.range?.last?.plus(1) ?: 0
+                                    val out = html.substring(0, at) + "<script>" + CAP_SCRIPT + "</script>" + html.substring(at)
+                                    return WebResourceResponse("text/html", "UTF-8", ByteArrayInputStream(out.toByteArray(Charsets.UTF_8)))
+                                }
+                            }
+                        }
+                        return super.shouldInterceptRequest(view, request)
+                    }
+                }
+                webView.loadUrl(link, mapOf("Referer" to referer))
+            } catch (e: Throwable) {
+                done.countDown()
+            }
+        }
+        val deadline = System.currentTimeMillis() + 20_000
+        for (at in listOf(2L, 4L, 6L)) {
+            if (done.await(at, TimeUnit.SECONDS)) break
+            handler.post { runCatching { webViewRef?.evaluateJavascript(PLAY_SCRIPT, null) } }
+        }
+        val left = deadline - System.currentTimeMillis()
+        if (left > 0) done.await(left, TimeUnit.MILLISECONDS)
+        handler.post {
+            runCatching {
+                webViewRef?.stopLoading()
+                webViewRef?.destroy()
+            }
+        }
+        return Capture(synchronized(urls) { urls.toList() }, synchronized(reports) { reports.toList() }, hooked)
     }
 
     override fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()
@@ -557,6 +662,22 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
         private val HOST_REGEX = Regex("""^(?:www\.)?mimitv\d+\.com$""")
         private val PASTE_HOST_REGEX = Regex("""^(?:https?://)?(?:www\.)?(mimitv\d+\.com)(?:[/?#]|$)""", RegexOption.IGNORE_CASE)
         private val NUM_REGEX = Regex("""mimitv(\d+)\.com""")
+        private val IMAGE_EXT = Regex("""\.(?:png|jpe?g|gif|webp|svg|ico)$""")
+        private val BLOCKED_AD_HOSTS = listOf("googletagmanager.com", "google-analytics.com", "shinystat.com", "waust.at", "cokcok.stream")
+        private const val PLAY_SCRIPT =
+            "(function(){var v=document.querySelector('video');if(v){v.muted=true;try{v.play();}catch(e){}}" +
+                "var b=document.querySelector('.art-state,.art-control-play');if(b)b.click();})();"
+
+        // 플레이어가 받은 m3u8 결과(상태·글자)를 확장에 알려 주는 엿보기 코드 (XHR·fetch 를 감싸기만 하고 동작은 그대로)
+        private const val CAP_SCRIPT =
+            "(function(){try{MimiCap.ready();}catch(e){}function rep(u,s,t){try{MimiCap.report(String(u),s|0,String(t||'').substring(0,3000000));}catch(e){}}" +
+                "var o=XMLHttpRequest.prototype.open,sd=XMLHttpRequest.prototype.send;" +
+                "XMLHttpRequest.prototype.open=function(m,u){this.__cu=u;return o.apply(this,arguments);};" +
+                "XMLHttpRequest.prototype.send=function(){var x=this;x.addEventListener('loadend',function(){var u=x.responseURL||x.__cu||'';" +
+                "if(/\\.m3u8/.test(u)){var t='';try{if(x.responseType===''||x.responseType==='text')t=x.responseText;}catch(e){}rep(u,x.status,t);}});" +
+                "return sd.apply(this,arguments);};" +
+                "if(window.fetch){var f=window.fetch;window.fetch=function(i){return f.apply(this,arguments).then(function(r){try{var u=r.url||(i&&i.url)||String(i);" +
+                "if(/\\.m3u8/.test(u)){r.clone().text().then(function(t){rep(u,r.status,t);});}}catch(e){}return r;});};}})();"
         private val REAL_HLS = Regex("""/hls/[^?#]+\.m3u8""")
         private val ID_REGEX = Regex("""shplay\.php\?id=(\d+)""")
         private val EP_REGEX = Regex("""ep=(\d+)_(\d+)""")
