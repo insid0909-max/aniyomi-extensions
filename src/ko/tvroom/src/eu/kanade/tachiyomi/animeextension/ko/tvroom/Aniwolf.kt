@@ -297,8 +297,10 @@ class Aniwolf : AnimeHttpSource(), ConfigurableAnimeSource {
         }
         // 회차 화면의 재생 버튼 주소(mov.glamov.com/detail.php?v=…) → 그 화면의 iframe 이 플레이어(cdndania.com/video/…)
         val html = doc.outerHtml()
-        val views = (VIEW_REGEX.findAll(html).map { it.value.replace("&amp;", "&") } +
-            doc.select("input[name=v][value]").map { "https://mov.glamov.com/detail.php?v=${it.attr("value")}" }).distinct().toList()
+        val views = (
+            VIEW_REGEX.findAll(html).map { it.value.replace("&amp;", "&") } +
+                doc.select("input[name=v][value]").map { "https://mov.glamov.com/detail.php?v=${it.attr("value")}" }
+            ).distinct().toList()
         val players = mutableListOf<Pair<String, String>>()
         for (v in views) {
             runCatching {
