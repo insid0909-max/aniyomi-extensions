@@ -36,7 +36,7 @@ import java.util.TimeZone
  * MissAV (missav123.com, 2026-11-09, 망가요미판 my-ext missav.js 0.0.4 와 같은 규칙).
  * 사이트가 Cloudflare 확인을 써서 해외에서는 열어 보지 못함 → 망가요미판(휴대폰에서 됨)과 같은 방법으로 만듦.
  * 목록·검색은 화면의 작품 링크(/ko/abc-123 · /dm270/ko/abc-123)를 모음. 재생은 작품 화면을 숨은 WebView 로 열어
- * 플레이어가 불러온 m3u8 을 받음. User-Agent 는 앱 기본값 그대로(Cloudflare 통과 쿠키가 그 값에 묶임).
+ * 플레이어가 불러온 m3u8 을 받음. User-Agent 는 휴대폰 웹뷰의 실제 값(WebUa, Cloudflare 통과 쿠키가 그 값에 묶임).
  */
 class MissAV : AnimeHttpSource(), ConfigurableAnimeSource {
 
@@ -66,8 +66,9 @@ class MissAV : AnimeHttpSource(), ConfigurableAnimeSource {
         .apply { interceptors().add(0, FriendlyNet) }
         .build()
 
-    // User-Agent 는 앱 기본값 그대로 (Referer 만)
+    // User-Agent 는 휴대폰 웹뷰의 실제 값(WebUa) — 앱 기본값(PC 크롬 이름)이면 웹뷰에서 푼 Cloudflare 확인이 계속 다시 걸림
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
+        .apply { WebUa.value()?.let { set("User-Agent", it) } }
         .set("Referer", "$baseUrl/")
 
     private fun h(): Headers = headersBuilder().build()
