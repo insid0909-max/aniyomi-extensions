@@ -66,6 +66,8 @@ class XHamster : AnimeHttpSource(), ConfigurableAnimeSource {
 
     override val client: OkHttpClient = network.client.newBuilder()
         .apply { interceptors().add(0, FriendlyNet) }
+        // 작품 화면(/videos/…)을 5분 기억 — 작품 열 때 받은 화면을 재생 때 다시 받지 않게 (2026-11-09 재생까지 애니요미 12초·망가요미 8초)
+        .addInterceptor(PageCache(Regex("^/videos/"), 300_000L))
         .addInterceptor { chain -> domainIntercept(chain) }
         .build()
 
