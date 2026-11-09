@@ -453,21 +453,27 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
         if (ep.links.isEmpty()) throw Exception("이 회차에는 재생 주소가 없어요")
         val siteRef = "$baseUrl/"
         val fails = mutableListOf<String>()
-        // 서버(링크)를 차례로 숨은 웹뷰로 열어 플레이어가 요청한 m3u8 과 그때 머리글을 모으고, 실제로 열리는 것만 씀
-        // (2026-11-09 사용자 화면 "502 Bad Gateway": 처음 잡힌 주소를 확인 없이 넘겼음)
+        // 서버(링크)를 차례로 숨은 웹뷰로 열어 플레이어가 요청한 m3u8 주소를 모음. 진짜 주소(/hls/…?t&n&s)에는 한 번 쓰는 표(n)가
+        // 붙어 있는 듯해(2026-11-09 사용자 화면: 잡은 주소를 여러 번 열면 502) 웹뷰가 실제로 받지 못하게 막고, 망가요미판과 같은
+        // 머리글(플레이어 주소 Referer·Origin)로 재생기에 바로 넘김
         for ((i, link) in ep.links.withIndex()) {
             val decoy = link.toHttpUrlOrNull()?.queryParameter("url")
-            val r = WebSniff.m3u8(link, siteRef, USER_AGENT, 20)
-            // 플레이어 주소 안의 url= 주소·/pop/ 는 가짜, 진짜는 /hls/ → 진짜 모양 먼저
-            val hits = r.hits.filter { it.url != decoy && !it.url.contains("onet.php") && !it.url.contains("/pop/") }
-                .sortedByDescending { it.url.contains("/hls/") }
-            if (hits.isEmpty()) {
+            val r = WebSniff.m3u8(link, siteRef, USER_AGENT, 20, block = REAL_HLS)
+            val hit = r.hits.filter { it.url != decoy && !it.url.contains("onet.php") && !it.url.contains("/pop/") }
+                .maxByOrNull { if (REAL_HLS.containsMatchIn(it.url)) 1 else 0 }
+            if (hit == null) {
                 fails.add("서버${i + 1} 못 찾음 (잡힌 주소 ${r.hits.size}개)")
                 continue
             }
             val origin = link.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" } ?: siteRef.trimEnd('/')
+            val vh = Headers.Builder()
+                .set("User-Agent", USER_AGENT)
+                .set("Referer", "$origin/")
+                .set("Origin", origin)
+                .build()
             val label = if (i == 0) LABEL else "$LABEL (대체 $i)"
-            WebSniff.firstWorking(client, hits, origin, label, fails)?.let { return@withContext HlsQuality.sort(prefs(), it) }
+            // 확장이 미리 열어 보지도 않음(표를 재생기가 처음 쓰게). 안 열리면 재생기 오류에 HTTP 번호가 보임
+            return@withContext listOf(Video(hit.url, label, hit.url, vh))
         }
         throw Exception("영상 주소를 찾지 못했어요. 잠시 뒤 다시 시도해 주세요 [${fails.joinToString(", ").take(160)}]")
     }
@@ -551,6 +557,7 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
         private val HOST_REGEX = Regex("""^(?:www\.)?mimitv\d+\.com$""")
         private val PASTE_HOST_REGEX = Regex("""^(?:https?://)?(?:www\.)?(mimitv\d+\.com)(?:[/?#]|$)""", RegexOption.IGNORE_CASE)
         private val NUM_REGEX = Regex("""mimitv(\d+)\.com""")
+        private val REAL_HLS = Regex("""/hls/[^?#]+\.m3u8""")
         private val ID_REGEX = Regex("""shplay\.php\?id=(\d+)""")
         private val EP_REGEX = Regex("""ep=(\d+)_(\d+)""")
         private val SEASONS_REGEX = Regex("""manualSeasons\s*=\s*(\[[\s\S]*?\])\s*;""")
