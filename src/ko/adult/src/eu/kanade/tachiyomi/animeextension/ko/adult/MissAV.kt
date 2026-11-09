@@ -283,20 +283,17 @@ class MissAV : AnimeHttpSource(), ConfigurableAnimeSource {
         val ua = h()["User-Agent"]
         val r = WebSniff.m3u8(url, "$baseUrl/", ua)
         val origin = r.lastPage.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" } ?: baseUrl
-        val headers = Headers.Builder().apply {
-            if (!ua.isNullOrBlank()) set("User-Agent", ua)
-            set("Referer", "$origin/")
-            set("Origin", origin)
-        }.build()
-        // 주 목록(playlist.m3u8)은 화질별로 나눔(자동 + 1080p·720p…), 그 밖의 주소는 이름에 화질
-        val main = r.urls.firstOrNull { it.contains("playlist.m3u8") }
-        val out = mutableListOf<Video>()
-        if (main != null) out.addAll(HlsQuality.expand(client, main, LABEL, headers))
-        for (u in r.urls) {
-            if (u == main || out.any { it.url == u }) continue
-            out.add(Video(u, HlsQuality.withRes(LABEL, u), u, headers))
-        }
-        if (out.isEmpty()) throw Exception("영상 주소를 못 찾았어요 [메뉴 → WebView 로 Cloudflare 확인을 통과했는지 봐 주세요]")
+        // 주 목록(playlist.m3u8) 먼저. 웹뷰가 보낸 머리글 그대로 → 다른 조합 순으로 실제로 열리는 것만 (403 이면 다음)
+        val hits = r.hits.sortedByDescending { it.url.contains("playlist.m3u8") }
+        val fails = mutableListOf<String>()
+        val out = WebSniff.firstWorking(client, hits, origin, LABEL, fails)
+            ?: throw Exception(
+                if (hits.isEmpty()) {
+                    "영상 주소를 못 찾았어요 [메뉴 → WebView 로 Cloudflare 확인을 통과했는지 봐 주세요]"
+                } else {
+                    "영상 주소가 안 열려요 [${fails.joinToString(", ").take(150)}]"
+                },
+            )
         HlsQuality.sort(prefs(), out)
     }
 
