@@ -65,9 +65,13 @@ internal object LocalProxy {
 
     private fun dec(s: String) = String(Base64.decode(s, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
 
-    /** 끝에 원래 파일 이름을 붙여 재생기가 확장자로 판단해도 같게 */
+    /**
+     * 끝 이름: 재생 목록은 원래 이름(.m3u8), 그 밖(조각·열쇠)은 ".ts" — 조각을 그림(.jpeg·.png)으로 꾸민 사이트가 있어
+     * 재생기가 이름·형식 표시로 그림으로 읽으면 "unrecognized file format" (2026-11-09 MissAV)
+     */
     private fun proxied(sid: String, url: String): String {
-        val name = url.toHttpUrlOrNull()?.pathSegments?.lastOrNull()?.ifEmpty { null } ?: "f"
+        val last = url.toHttpUrlOrNull()?.pathSegments?.lastOrNull().orEmpty()
+        val name = if (last.endsWith(".m3u8")) last else "s.ts"
         return "http://127.0.0.1:${port()}/m/$sid/${enc(url)}/$name"
     }
 
@@ -114,7 +118,9 @@ internal object LocalProxy {
                         reply(out, 200, "application/vnd.apple.mpegurl", rewrite(parts[1], res.body.string(), res.request.url.toString()).toByteArray(), head)
                     } else {
                         val sb = StringBuilder("HTTP/1.1 ${res.code} X\r\n")
-                        sb.append("Content-Type: ").append(type.ifEmpty { "application/octet-stream" }).append("\r\n")
+                        // 그림·글자로 꾸민 조각은 영상(MPEG-TS) 형식으로 알려 줌 (내용은 그대로)
+                        val outType = if (type.isEmpty() || type.startsWith("image/") || type.startsWith("text/")) "video/mp2t" else type
+                        sb.append("Content-Type: ").append(outType).append("\r\n")
                         res.header("Content-Length")?.let { sb.append("Content-Length: ").append(it).append("\r\n") }
                         res.header("Content-Range")?.let { sb.append("Content-Range: ").append(it).append("\r\n") }
                         sb.append("Accept-Ranges: bytes\r\nConnection: close\r\n\r\n")
