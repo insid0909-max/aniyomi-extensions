@@ -101,41 +101,60 @@ internal object LocalProxy {
         val parts = first.split(" ").getOrNull(1).orEmpty().substringBefore('?').trim('/').split('/')
         val out = c.getOutputStream()
         val sess = parts.getOrNull(1)?.let { SESSIONS[it] }
-        if (sess == null) return@use reply(out, 404, "text/plain", "없음".toByteArray(), head)
+        if (sess == null) return@use reply(out, 404, "text/plain", ByteArray(0), head, "no-session")
         when (parts.getOrNull(0)) {
             "t" -> {
-                val (text, base) = TEXTS[parts.getOrNull(2)?.substringBefore('.')] ?: return@use reply(out, 404, "text/plain", ByteArray(0), head)
+                val (text, base) = TEXTS[parts.getOrNull(2)?.substringBefore('.')]
+                    ?: return@use reply(out, 404, "text/plain", ByteArray(0), head, "no-list")
                 reply(out, 200, "application/vnd.apple.mpegurl", rewrite(parts[1], text, base).toByteArray(), head)
             }
             "m" -> {
-                val url = runCatching { dec(parts.getOrNull(2).orEmpty()) }.getOrNull() ?: return@use reply(out, 400, "text/plain", ByteArray(0), head)
-                val r = range
-                val req = Request.Builder().url(url).headers(sess.headers).apply { if (r != null) header("Range", r) }.build()
-                sess.client.newCall(req).execute().use { res ->
-                    val type = res.header("Content-Type").orEmpty()
-                    val isList = url.substringBefore('?').endsWith(".m3u8") || type.contains("mpegurl", true)
-                    if (isList && res.isSuccessful) {
-                        reply(out, 200, "application/vnd.apple.mpegurl", rewrite(parts[1], res.body.string(), res.request.url.toString()).toByteArray(), head)
+                val url = runCatching { dec(parts.getOrNull(2).orEmpty()) }.getOrNull()
+                    ?: return@use reply(out, 400, "text/plain", ByteArray(0), head, "bad-path")
+                val listLike = url.substringBefore('?').endsWith(".m3u8")
+
+                // 재생 목록에는 Range 를 넘기지 않음. 조각은 Range 로 400·416 이면 Range 없이 한 번 더 (2026-11-09 MissAV "400")
+                fun call(withRange: Boolean) = sess.client.newCall(
+                    Request.Builder().url(url).headers(sess.headers)
+                        .apply { if (withRange && range != null && !listLike) header("Range", range!!) }.build(),
+                ).execute()
+                var res = call(true)
+                if ((res.code == 400 || res.code == 416) && range != null && !listLike) {
+                    res.close()
+                    res = call(false)
+                }
+                res.use { rs ->
+                    val type = rs.header("Content-Type").orEmpty()
+                    val isList = listLike || type.contains("mpegurl", true)
+                    if (isList && rs.isSuccessful) {
+                        reply(out, 200, "application/vnd.apple.mpegurl", rewrite(parts[1], rs.body.string(), rs.request.url.toString()).toByteArray(), head)
                     } else {
-                        val sb = StringBuilder("HTTP/1.1 ${res.code} X\r\n")
+                        // 원래 서버가 거절하면 재생기 오류 글자(상태 뒤)에 무엇이 막혔는지 적음: list|seg 파일이름 r=Range
+                        val why = if (rs.isSuccessful) {
+                            "OK"
+                        } else {
+                            val name = url.toHttpUrlOrNull()?.pathSegments?.lastOrNull().orEmpty().take(24)
+                            ("up " + (if (isList) "list " else "seg ") + name + " r=" + (range ?: "-")).filter { it.code in 32..126 }
+                        }
+                        val sb = StringBuilder("HTTP/1.1 ${rs.code} $why\r\n")
                         // 그림·글자로 꾸민 조각은 영상(MPEG-TS) 형식으로 알려 줌 (내용은 그대로)
                         val outType = if (type.isEmpty() || type.startsWith("image/") || type.startsWith("text/")) "video/mp2t" else type
                         sb.append("Content-Type: ").append(outType).append("\r\n")
-                        res.header("Content-Length")?.let { sb.append("Content-Length: ").append(it).append("\r\n") }
-                        res.header("Content-Range")?.let { sb.append("Content-Range: ").append(it).append("\r\n") }
+                        rs.header("Content-Length")?.let { sb.append("Content-Length: ").append(it).append("\r\n") }
+                        rs.header("Content-Range")?.let { sb.append("Content-Range: ").append(it).append("\r\n") }
                         sb.append("Accept-Ranges: bytes\r\nConnection: close\r\n\r\n")
                         out.write(sb.toString().toByteArray())
-                        if (!head) res.body.byteStream().copyTo(out)
+                        if (!head) rs.body.byteStream().copyTo(out)
                         out.flush()
                     }
                 }
             }
-            else -> reply(out, 404, "text/plain", ByteArray(0), head)
+            else -> reply(out, 404, "text/plain", ByteArray(0), head, "bad-kind")
         }
     }
 
-    private fun reply(out: OutputStream, code: Int, type: String, body: ByteArray, head: Boolean) {
-        out.write("HTTP/1.1 $code X\r\nContent-Type: $type\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n".toByteArray())
+    private fun reply(out: OutputStream, code: Int, type: String, body: ByteArray, head: Boolean, why: String = "OK") {
+        out.write("HTTP/1.1 $code $why\r\nContent-Type: $type\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n".toByteArray())
         if (!head) out.write(body)
         out.flush()
     }
