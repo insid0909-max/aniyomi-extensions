@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": true,
-    "version": "0.0.3",
+    "version": "0.0.4",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/aniya24.js"
@@ -527,7 +527,7 @@ class DefaultExtension extends MProvider {
             await one("헤더없음", {}, new Client()),
         ];
         try {
-            new SharedPreferences().setString("aniya24_cover_diag", `${img.substring(0, 90)} → ${out.join(" / ")}`);
+            new SharedPreferences().setString("aniya24_cover_diag", out.join("\n"));
         } catch (e) {}
     }
 
@@ -777,7 +777,7 @@ class DefaultExtension extends MProvider {
                 try {
                     d = new SharedPreferences().getString("aniya24_cover_diag", "") || "";
                 } catch (e) {}
-                return d ? [{ type_name: "HeaderFilter", name: `🩺 표지 확인: ${d}`, _status: true }] : [];
+                return d ? d.split("\n").map((x) => ({ type_name: "HeaderFilter", name: `🩺 표지 ${x}`, _status: true })) : [];
             })(),
             { type_name: "SeparatorFilter" },
             { type_name: "HeaderFilter", name: "검색어가 없을 때만 적용 (작품 주소를 붙여 넣으면 바로 열기)" },
