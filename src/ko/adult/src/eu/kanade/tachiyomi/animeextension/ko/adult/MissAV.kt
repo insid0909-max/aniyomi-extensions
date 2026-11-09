@@ -283,10 +283,10 @@ class MissAV : AnimeHttpSource(), ConfigurableAnimeSource {
         val ua = h()["User-Agent"]
         val r = WebSniff.m3u8(url, "$baseUrl/", ua)
         val origin = r.lastPage.toHttpUrlOrNull()?.let { "${it.scheme}://${it.host}" } ?: baseUrl
-        // 주 목록(playlist.m3u8) 먼저. 웹뷰가 보낸 머리글 그대로 → 다른 조합 순으로 실제로 열리는 것만 (403 이면 다음)
+        // 주 목록(playlist.m3u8) 먼저. 머리글 조합마다 열리면 조각·열쇠까지 받아 보고 결과를 화질 이름에 (재생 403 진단, 2026-11-09)
         val hits = r.hits.sortedByDescending { it.url.contains("playlist.m3u8") }
         val fails = mutableListOf<String>()
-        val out = WebSniff.firstWorking(client, hits, origin, LABEL, fails)
+        val out = WebSniff.allWorkingProbed(client, hits, origin, LABEL, fails)
             ?: throw Exception(
                 if (hits.isEmpty()) {
                     "영상 주소를 못 찾았어요 [메뉴 → WebView 로 Cloudflare 확인을 통과했는지 봐 주세요]"
@@ -294,7 +294,8 @@ class MissAV : AnimeHttpSource(), ConfigurableAnimeSource {
                     "영상 주소가 안 열려요 [${fails.joinToString(", ").take(150)}]"
                 },
             )
-        HlsQuality.sort(prefs(), out)
+        // 진단 중에는 조각까지 열린 조합이 맨 앞 (선호 화질 정렬은 하지 않음)
+        out
     }
 
     override fun videoListParse(response: Response): List<Video> = throw UnsupportedOperationException()
