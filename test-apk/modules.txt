@@ -4,4 +4,4 @@
 #   예) tvroom 시험중 sites=티비위키 티비위키 재생 고침
 #       adult 배포전 sites=MissAV,xHamster
 # 시험할 게 없으면 줄을 모두 지우거나 # 를 붙임 → 시험 저장소가 비어 있게 됨
-# (2026-11-10: 첫 설치 확인 끝, 지금은 시험 중인 것 없음)
+tvroom 시험중 sites=애니울프 사이트 재생 주소 받는 방식 바뀜(2026-11-10, POST /glamov-token) 대응
