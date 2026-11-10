@@ -9,13 +9,11 @@
 
 ## 쓰는 법
 1. 시험할 코드를 이 `test-apk` 가지에 올림(정식 코드가 바뀌었으면 master 를 먼저 합쳐 옴).
-2. `test-apk/modules.txt` 에 빌드할 모듈(tvroom·livesports·adult)과 칸을 적음.
+2. `test-apk/modules.txt` 에 빌드할 모듈(tvroom·livesports·adult)·칸·`sites=시험할 사이트` 를 적음(사이트를 안 적으면 그 모듈 사이트가 전부 들어가 [시험] 사이트가 많아짐).
 3. 올리면 자동으로 빌드(`.github/workflows/test_apk.yml`) → `apk-test` 가지에 시험 저장소가 만들어짐.
 4. 휴대폰에서 잘 되면 칸을 "배포전" 으로 바꾸고, **사용자가 허락할 때만** master 에 합쳐 정식 배포.
 
 ## 지금 들어 있는 시험 APK
-| 칸 | 모듈 | 메모 |
-|---|---|---|
-| 시험중 | tvroom | 시험 저장소 첫 설치 확인용 (코드는 정식판과 같음) |
+없음 (2026-11-10 첫 설치 확인 끝 — 앱에서 "TVroom (시험)" 은 지워도 됨)
 
-빌드 때만 바뀌는 것(`test-apk/prepare.py`): common.gradle 패키지·앱 이름, 소스 이름·generateId 이름에 "[시험] ". 가지의 파일 자체는 정식 코드와 같게 둠(정식 배포 때 그대로 합칠 수 있게).
+빌드 때만 바뀌는 것(`test-apk/prepare.py`): common.gradle 패키지·앱 이름, 매니페스트 앱 이름 "(시험)", 소스 이름·generateId 이름에 "[시험] ", sites= 가 있으면 Factory 가 그 사이트(+오류 소스)만 돌려줌. 가지의 파일 자체는 정식 코드와 같게 둠(정식 배포 때 그대로 합칠 수 있게).

@@ -79,6 +79,33 @@ for kt in sorted((root / "src").rglob("*.kt")):
             print(f"{kt.relative_to(root)}:{n + 1}: {new.strip()}")
     kt.write_text("\n".join(lines), encoding="utf-8")
 
+# modules.txt 에 "sites=이름,이름" 이 있으면 그 모듈 시험 APK 에는 그 사이트만 (이름에 그 글자가 든 소스, 오류 소스는 남김)
+for raw in (root / "test-apk" / "modules.txt").read_text(encoding="utf-8").splitlines():
+    parts = raw.split()
+    if not parts or parts[0].startswith("#"):
+        continue
+    sites = next((p[6:] for p in parts if p.startswith("sites=")), "")
+    keep = [x.strip() for x in sites.split(",") if x.strip()]
+    if not keep:
+        continue
+    facs = list((root / "src" / "ko" / parts[0]).rglob("*Factory.kt"))
+    assert facs, f"{parts[0]} 의 Factory 파일을 못 찾음"
+    for fac in facs:
+        t = fac.read_text(encoding="utf-8")
+        mark = "override fun createSources()"
+        if mark not in t:
+            continue
+        names = ", ".join('"' + k.replace('"', "") + '"' for k in keep)
+        t = t.replace(
+            mark,
+            "override fun createSources(): List<AnimeSource> = createSourcesAll().filter { s ->\n"
+            f"        listOf({names}).any {{ s.name.contains(it) }} || s.name.contains(\"오류\")\n"
+            "    }\n\n    private fun createSourcesAll()",
+            1,
+        )
+        fac.write_text(t, encoding="utf-8")
+        print(f"{fac.relative_to(root)}: 시험할 사이트만 → {keep}")
+
 print(f"바뀐 줄 {changed}개")
 if changed == 0:
     sys.exit("소스 이름을 하나도 못 바꿈 — 확인 필요")
