@@ -1,0 +1,51 @@
+name: Prepare HooHooTV port reference
+on:
+  push:
+    branches: [test]
+    paths: ['.github/workflows/hoohootv-port-reference.yml']
+permissions:
+  contents: write
+jobs:
+  reference:
+    if: github.event.head_commit.message == 'Prepare HooHooTV Mangayomi source review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test
+      - name: Read existing source without site requests
+        run: |
+          git fetch origin master:refs/remotes/origin/master
+          python3 <<'PY'
+          import hashlib, json, subprocess
+          from pathlib import Path
+          original=Path('index.json').read_bytes()
+          root='src/ko/tvroom/src/eu/kanade/tachiyomi/animeextension/ko/tvroom/'
+          dest=Path('reference/hoohootv')
+          assert not dest.exists(), 'Reference already exists; stop'
+          dest.mkdir(parents=True)
+          commit=subprocess.check_output(['git','rev-parse','origin/master'],text=True).strip()
+          manifest={'source_commit':commit,'stage':'source review only; not an installable extension','files':[]}
+          for name in ['HoohooTV.kt','WebSniff.kt','HlsQuality.kt']:
+              raw=subprocess.check_output(['git','show','origin/master:'+root+name])
+              text=raw.decode('utf-8')
+              if name=='HoohooTV.kt':
+                  assert 'class HoohooTV' in text and 'episodes-data' in text
+              chunks=[text[i:i+12000] for i in range(0,len(text),12000)]
+              parts=[]
+              for i,chunk in enumerate(chunks,1):
+                  part=name+'.part'+str(i).zfill(2)+'.txt'
+                  (dest/part).write_text(chunk,encoding='utf-8')
+                  parts.append(part)
+              manifest['files'].append({'path':root+name,'sha256':hashlib.sha256(raw).hexdigest(),'parts':parts})
+          (dest/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+          assert Path('index.json').read_bytes()==original
+          PY
+          git config user.name 'insid0909-max'
+          git config user.email '266083559+insid0909-max@users.noreply.github.com'
+          git add reference/hoohootv
+          git rm .github/workflows/hoohootv-port-reference.yml
+          git diff --cached --check
+          git commit -m 'Prepare HooHooTV source review for Mangayomi test port [skip ci]'
+          git push origin HEAD:test
