@@ -1,5 +1,5 @@
 // 애니·드라마 확장 전체 작품 목록 받기 (2026-11-06, 웹툰 저장소 monitor/compare 와 같은 모양)
-// 사용: node mangayomi/tools/compare/crawl.js <확장키> <저장할.tsv>   (확장키: gogotv ohli24 aniwolf tvchak anilife kotbc mimitv)
+// 사용: node mangayomi/tools/compare/crawl.js <확장키> <저장할.tsv>   (확장키: gogotv ohli24 aniwolf tvchak anilife kotbc mimitv aniweek)
 // 결과: 한 줄에 "주소<TAB>제목". 망가요미 파일을 그대로 돌림 — 해외에서 막힌 사이트(티비착·애니라이프·코티비씨, 403)는 못 받음.
 const path = require("path");
 const fs = require("fs");
@@ -16,6 +16,7 @@ const JOBS = {
     tvchak: [{ type: 0, sort: 0 }],
     anilife: [{ scope: 0, sort: 1 }],
     kotbc: range(5).map((i) => ({ type: i, sort: 0 })),
+    aniweek: [1, 2, 3].map((i) => ({ type: i, sort: 0 })),                // 방영중·종영·극장판
     mimitv: [1, 4, 7, 8, 9, 10].map((i) => ({ 분류: i, 장르: 0, 정렬: 0 })) // 영화·드라마·숏드라마·예능·시사다큐·애니
 };
 
