@@ -29,8 +29,10 @@ import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
 import org.jsoup.Jsoup
@@ -300,7 +302,16 @@ class Aniwolf : AnimeHttpSource(), ConfigurableAnimeSource {
         val views = (
             VIEW_REGEX.findAll(html).map { it.value.replace("&amp;", "&") } +
                 doc.select("input[name=v][value]").map { "https://mov.glamov.com/detail.php?v=${it.attr("value")}" }
-            ).distinct().toList()
+            ).distinct().toMutableList()
+        // 2026-11-10 사이트 변경: 회차 화면에 재생 주소가 없고, 사이트 "바로 보기" 단추가 POST /glamov-token/{번호} 로 받아 옴 → 같은 방법으로
+        var tokenWhy = ""
+        if (views.isEmpty()) {
+            TOKEN_REGEX.find(html)?.groupValues?.get(1)?.let { id ->
+                runCatching { glamovView(pageUrl, id) }
+                    .onSuccess { views.add(it) }
+                    .onFailure { tokenWhy = " · " + it.message.orEmpty().take(60) }
+            }
+        }
         val players = mutableListOf<Pair<String, String>>()
         for (v in views) {
             runCatching {
@@ -316,7 +327,7 @@ class Aniwolf : AnimeHttpSource(), ConfigurableAnimeSource {
         // 회차 화면에 플레이어가 바로 있는 경우도
         doc.select("iframe[src]").map { it.attr("abs:src") }.filter { PLAYER_REGEX.containsMatchIn(it) }
             .forEach { p -> if (players.none { it.first == p }) players.add(p to pageUrl) }
-        if (players.isEmpty()) throw Exception("이 회차에는 재생 화면이 없습니다 [재생 버튼 ${views.size}개]")
+        if (players.isEmpty()) throw Exception("이 회차에는 재생 화면이 없습니다 [재생 버튼 ${views.size}개$tokenWhy]")
         val errors = mutableListOf<String>()
         val out = mutableListOf<Video>()
         players.forEachIndexed { i, (player, from) ->
@@ -338,6 +349,32 @@ class Aniwolf : AnimeHttpSource(), ConfigurableAnimeSource {
      * 플레이어(cdndania 등, 애니24와 같은 종류)가 스스로 부르는 영상 주소 요청을 그대로 함:
      * POST {플레이어}/player/index.php?data={영상ID}&do=getVideo (hash={영상ID}, r={회차 화면}) → JSON 안의 m3u8
      */
+    /**
+     * 사이트 단추와 같은 요청: 회차 화면을 받을 때 생긴 쿠키(앱 쿠키 저장소)의 XSRF-TOKEN 을 머리글에 넣어 POST → {"url": 재생 화면 주소}
+     */
+    private fun glamovView(pageUrl: String, id: String): String {
+        val url = "$baseUrl/glamov-token/$id"
+        val xsrf = client.cookieJar.loadForRequest(url.toHttpUrl()).firstOrNull { it.name == "XSRF-TOKEN" }?.value
+            ?.let { URLDecoder.decode(it, "UTF-8") } ?: throw Exception("표식 쿠키 없음")
+        val hs = h().newBuilder()
+            .set("Referer", pageUrl)
+            .set("Origin", baseUrl)
+            .set("Accept", "application/json")
+            .set("X-Requested-With", "XMLHttpRequest")
+            .set("X-XSRF-TOKEN", xsrf)
+            .build()
+        val body = "{}".toRequestBody("application/json".toMediaType())
+        return client.newCall(POST(url, hs, body)).execute().use { res ->
+            val text = res.body.string()
+            val u = runCatching { JSONObject(text).optString("url") }.getOrDefault("")
+            if (!u.startsWith("http")) {
+                val msg = runCatching { JSONObject(text).optString("message") }.getOrDefault("")
+                throw Exception("표식 HTTP ${res.code} $msg".trim())
+            }
+            u
+        }
+    }
+
     private fun firePlayer(player: String, pageUrl: String): Pair<String, String>? {
         val u = player.toHttpUrlOrNull() ?: return null
         val vid = u.pathSegments.lastOrNull { it.isNotEmpty() } ?: return null
@@ -505,6 +542,7 @@ class Aniwolf : AnimeHttpSource(), ConfigurableAnimeSource {
         private val PASTE_REGEX = Regex("""aniwolf\d*\.[a-z]{2,6}(/[^?#\s]+)""")
         private val WORK_PATH = Regex("""^/[^/]+(/[^/]+)?$""")
         private val RESERVED = Regex("""^/(history|community|bookmark|signin|signup|go|assets|storage|api|img)(/|$)""")
+        private val TOKEN_REGEX = Regex("""glamov-token/(\d+)""")
         private val VIEW_REGEX = Regex("""https?://[^"'\s<>]+/detail\.php\?v=[0-9a-zA-Z]+""")
         private val PLAYER_REGEX = Regex("""cdndania|michealcdn|/video/""")
         private val AD_REGEX = Regex("""googlesyndication|doubleclick|/ads?[/.]""")
