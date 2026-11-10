@@ -429,12 +429,14 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     /** 플레이어 설정(TVP_CONFIG)으로 플레이어가 하는 그대로 재생권(cast.php → cast-register)을 받아 재생 목록 주소를 만듦 */
-    private fun castVideo(config: String, playerOrigin: String, label: String, subs: List<Track>): Video {
+    private fun castVideo(config: String, playerOrigin: String, label: String, baseSubs: List<Track>): Video {
         val c = runCatching { JSONObject(config) }.getOrNull() ?: throw Exception("플레이어 설정 읽기 실패")
         val host = c.optString("host")
         val contentId = c.optString("contentId")
-        if (c.optString("id").isEmpty() || c.optString("pathType") != "e" || !CAST_HOST.matches(host) || !CONTENT_ID.matches(contentId)) {
-            throw Exception("지원하지 않는 재생 설정")
+        val pathType = c.optString("pathType")
+        // 영상 서버는 poorcdn.com 의 어느 서버든(every10 등, 2026-11-10 리처만 안 되던 것), 경로 종류는 한 글자, 영상 번호는 16~64자
+        if (c.optString("id").isEmpty() || !PATH_TYPE.matches(pathType) || !CAST_HOST.matches(host) || !CONTENT_ID.matches(contentId)) {
+            throw Exception("지원하지 않는 재생 설정 [경로 ${pathType.take(8).ifEmpty { "-" }} · 서버 ${host.take(40).ifEmpty { "-" }} · 번호 ${contentId.length}자]")
         }
         val a = Headers.Builder()
             .set("User-Agent", ua())
@@ -442,16 +444,67 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
             .set("Origin", playerOrigin)
             .set("Accept", "*/*")
             .build()
+        // 자막: 설정의 subtitle 이 플레이어 서버의 subtitle.php 면 한국어 자막으로 붙임
+        val sub = c.optString("subtitle").let { if (it.startsWith("/")) playerOrigin + it else it }
+        val subs = if (sub.startsWith("$playerOrigin/player/api/subtitle.php?")) baseSubs + Track(sub, "한국어") else baseSubs
+        // 경로 "p" 영상(리처 등, 2026-11-10): 재생권 없이 설정 src(/v/p/번호/c.html?…)에 sid 를 붙여 재생
+        if (pathType == "p") {
+            val q = c.optString("src")
+            if (!q.startsWith("https://$host/v/p/$contentId/c.html?") || q.contains('#')) {
+                throw Exception("올바른 영상 주소가 아님 [${q.substringAfter("://").substringBefore('?').take(48)}]")
+            }
+            val sid = if (SID.containsMatchIn(q)) "" else "&sid=" + java.lang.Long.toString(System.currentTimeMillis(), 36) + (1..12).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
+            val proxied = LocalProxy.playlist(client, a, q + sid)
+            return Video(proxied, "$label 자동 (HLS)", proxied, null, subs)
+        }
 
         fun post(url: String, payload: JSONObject, extra: Headers.Builder.() -> Unit = {}): JSONObject {
             val hs = a.newBuilder().apply(extra).build()
             return client.newCall(POST(url, hs, payload.toString().toRequestBody(JSON))).execute().use { r ->
-                if (r.code != 200) throw Exception("재생권 HTTP ${r.code}")
+                if (r.code != 200) {
+                    // 거절 이유(응답 앞부분)와 플레이어 설정 칸 이름을 보여 줌 (2026-11-10 리처 422)
+                    val why = runCatching { r.body.string() }.getOrDefault("").replace(SPACES, " ").take(140)
+                    throw Exception("재생권 HTTP ${r.code} [${url.substringAfter("://").substringAfter('/')} · 응답 $why · 설정 칸 ${c.keys().asSequence().joinToString(",").take(120)}]")
+                }
                 runCatching { JSONObject(r.body.string()) }.getOrNull() ?: throw Exception("재생권 응답 읽기 실패")
             }
         }
         val origin = "https://$host"
-        val o = post("$playerOrigin/player/api/cast.php", JSONObject().put("id", c.optString("id"))) { set("X-Player-Cast", "1") }
+        val o = try {
+            post("$playerOrigin/player/api/cast.php", JSONObject().put("id", c.optString("id"))) { set("X-Player-Cast", "1") }
+        } catch (e: Exception) {
+            // 재생권(cast)을 쓰지 않는 영상(리처 등, 2026-11-10 "cast_source_unsupported"): 설정의 src 가 일반 주소면 그 주소로 바로 재생
+            if (e.message?.contains("cast_source_unsupported") != true) throw e
+            val src = c.optString("src").trim()
+            val u = when {
+                src.startsWith("http://") || src.startsWith("https://") -> src
+                src.startsWith("/") && !src.startsWith("//") -> origin + src
+                else -> ""
+            }
+            if (u.isEmpty()) {
+                val tail = if (src.length > 24) "…" else ""
+                throw Exception("다른 재생 방식이라 아직 지원 안 함 [mode ${c.optString("mode").take(20).ifEmpty { "-" }} · src ${src.take(24)}$tail (${src.length}자)]")
+            }
+            if (MP4.containsMatchIn(u)) return Video(u, "$label 원본 (mp4)", u, a, subs)
+            // 재생기에 넘기기 전에 앞부분만 열어 봄 (2026-11-10 리처: 넘겼더니 무한 로딩)
+            val shape = u.substringAfter("://").substringBefore('?').substringBefore('#').take(48)
+            val mode = c.optString("mode").take(20).ifEmpty { "-" }
+            val probe = runCatching {
+                client.newCall(GET(u, a.newBuilder().set("Range", "bytes=0-4095").build())).execute().use { r ->
+                    Triple(r.code, r.header("Content-Type").orEmpty(), r.body.string().take(4096))
+                }
+            }.getOrElse { throw Exception("영상 주소 연결 실패 [mode $mode · $shape · ${it.message?.take(60)}]") }
+            val (code, type, body) = probe
+            val isList = body.trimStart().startsWith("#EXTM3U")
+            if ((code == 200 || code == 206) && !isList && (type.startsWith("video/") || type.contains("octet-stream"))) {
+                return Video(u, "$label 원본", u, a, subs)
+            }
+            if ((code != 200 && code != 206) || !isList) {
+                throw Exception("영상 주소가 재생 목록이 아님 [HTTP $code · mode $mode · $shape · ${type.take(30)} · ${body.replace(SPACES, " ").take(80)}]")
+            }
+            val proxied = LocalProxy.playlist(client, a, u)
+            return Video(proxied, "$label 자동 (HLS)", proxied, null, subs)
+        }
         val grant = o.optString("grant")
         if (o.optInt("version") != 1 || o.optString("contentId") != contentId || o.optString("origin") != origin ||
             o.optString("registerUrl") != "$origin/v/cast-register" || !grant.startsWith("r1.") || grant.length > 384
@@ -463,7 +516,7 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
         if (!l.optBoolean("ok") || l.optString("contentId") != contentId || !TOKEN.matches(token) || token.length > 384) {
             throw Exception("재생권 등록 실패")
         }
-        val list = "$origin/v/e/$contentId/c.html".toHttpUrl().newBuilder().addQueryParameter("cast", token).build().toString()
+        val list = "$origin/v/$pathType/$contentId/c.html".toHttpUrl().newBuilder().addQueryParameter("cast", token).build().toString()
         // 재생 목록 주소가 .m3u8 로 끝나지 않고 재생기는 머리글을 조각마다 못 붙이므로 앱 안 중계로 (망가요미 createHlsProxyUrl 과 같음)
         val proxied = LocalProxy.playlist(client, a, list)
         return Video(proxied, "$label 자동 (HLS)", proxied, null, subs)
@@ -564,8 +617,11 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
         private val SPACES = Regex("""\s+""")
         private val TITLE_YEAR = Regex("""\((?:19|20)\d{2}\)\s*$""")
         private val TVP_CONFIG = Regex("""window\.TVP_CONFIG\s*=\s*(\{[^\n]*?\})\s*;""")
-        private val CAST_HOST = Regex("""^every[1-9]\.poorcdn\.com$""")
-        private val CONTENT_ID = Regex("""^[a-f0-9]{32}$""")
+        private val CAST_HOST = Regex("""^[a-z0-9-]+\.poorcdn\.com$""")
+        private val PATH_TYPE = Regex("""^[a-z]$""")
+        private val SID = Regex("""[?&]sid=""")
+        private val MP4 = Regex("""\.mp4(?:[?#]|$)""", RegexOption.IGNORE_CASE)
+        private val CONTENT_ID = Regex("""^[A-Za-z0-9_-]{16,64}$""")
         private val TOKEN = Regex("""^p1\.[A-Za-z0-9_.-]+$""")
         private val DATA_M3U8 = Regex("""data-m3u8=["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE)
         private val ANY_M3U8 = Regex("""https?://[^"'\s<>\\]+\.m3u8[^"'\s<>\\]*""", RegexOption.IGNORE_CASE)

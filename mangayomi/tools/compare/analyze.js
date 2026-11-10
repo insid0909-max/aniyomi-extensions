@@ -3,7 +3,7 @@
 const fs = require("fs");
 const path = require("path");
 const dir = process.argv[2];
-const NAMES = { gogotv: "고고티비", tvchak: "티비착", kotbc: "코티비씨", ohli24: "애니24", aniwolf: "애니울프", anilife: "애니라이프", mimitv: "미미티비" };
+const NAMES = { gogotv: "고고티비", tvchak: "티비착", kotbc: "코티비씨", ohli24: "애니24", aniwolf: "애니울프", anilife: "애니라이프", mimitv: "미미티비", aniweek: "애니위크" };
 // 제목 비교: 끝의 " (2026)"·" · 11.05" 표시와 띄어쓰기·기호를 빼고 비교
 // 사이트마다 연도·영어 원제 붙이는 모양이 달라("월드워Z World War Z, 2013"·"주토피아 · 2016"·"관상 (2013)") → 끝의 연도를 빼고,
 // 한글 제목이면 영어 글자도 뺀 뒤 비교 (2026-11-06 미미티비·고고티비 비교 때)

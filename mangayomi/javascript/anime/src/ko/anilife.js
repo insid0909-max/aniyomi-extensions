@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.18",
+    "version": "0.1.21",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/anilife.js"
@@ -24,6 +24,7 @@ const SITE_MARKER = "애니라이프";
 const SIGNAL_URL = "https://wankyo83.github.io/tokki-traffic-light/domains.json";
 const LABEL = "애니라이프";
 const DIRECT_FAIL_KEY = "anilife_direct_fail_until";
+const PB_SESSION_KEY = "anilife_pb_session";
 const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
     "Chrome/124.0.0.0 Mobile Safari/537.36";
 
@@ -724,6 +725,60 @@ class DefaultExtension extends MProvider {
         let backup = "";
         let sub = "";
         let apiError = "";
+        let sessWhy = "";
+        // 0) 사이트 플레이어가 하는 순서 그대로 (2026-11-10, 다른 망가요미 저장소 애니라이프와 같은 방식):
+        //    재생 세션(POST /api/playback/session, X-Anilife-Player) → 표·쿠키로 재생 정보(X-Anilife-Playback·X-Anilife-Delivery)
+        //    되면 웹뷰 없이 바로 재생, 안 되면 아래 예전 방법(바로 부르기 → 웹뷰)
+        const viaSession = async () => {
+            const base = this.getBaseUrl();
+            const hh = { "User-Agent": UA, "Accept": "application/json, text/plain, */*", "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8", "Referer": `${base}/content/${m[1]}/${m[2]}`, "Origin": base };
+            for (let s = 0; s < 2 && !main && !backup; s++) {
+                try {
+                    // 받은 표는 앱 설정에도 기억 (망가요미는 회차마다 확장을 새로 띄울 수 있어 다음 회차에 세션 요청을 건너뜀)
+                    let ss = this._pbSession;
+                    if (!ss) {
+                        try { ss = JSON.parse(new SharedPreferences().getString(PB_SESSION_KEY, "") || "null"); } catch (e) { ss = null; }
+                    }
+                    if (!ss || !ss.token || ss.base !== base || (ss.exp && ss.exp * 1000 < Date.now() + 30000)) {
+                        const r = await this.client.post(`${base}/api/playback/session`, Object.assign({}, hh, { "X-Anilife-Player": "1", "Content-Type": "application/x-www-form-urlencoded" }), "");
+                        let j = {};
+                        try { j = JSON.parse(String(r.body || "")) || {}; } catch (e) { j = {}; }
+                        const tok = typeof j.token === "string" ? j.token.trim() : "";
+                        if (!(r.statusCode >= 200 && r.statusCode < 300 && tok)) {
+                            sessWhy = `세션 HTTP ${r.statusCode}${j.error ? " " + String(j.error).substring(0, 40) : ""}`;
+                            return;
+                        }
+                        const hv = (r.headers && Object.keys(r.headers).find((k) => k.toLowerCase() === "set-cookie")) || "";
+                        const raw = hv ? r.headers[hv] : null;
+                        const parts = raw == null ? [] : Array.isArray(raw) ? raw.map(String) : String(raw).split(/,(?=\s*[^;,=\s]+=)/);
+                        const cookie = parts.map((c) => c.split(";")[0].trim()).filter((c) => c.includes("=")).join("; ");
+                        ss = this._pbSession = { base, token: tok, cookie, exp: Number(j.expiresAt) || 0 };
+                        try { new SharedPreferences().setString(PB_SESSION_KEY, JSON.stringify(ss)); } catch (e) {}
+                    }
+                    this._pbSession = ss;
+                    const h2 = Object.assign({}, hh, { "X-Anilife-Playback": ss.token, "X-Anilife-Delivery": "source-v1" });
+                    if (ss.cookie) h2.Cookie = ss.cookie;
+                    const g = await this.client.get(`${base}/api/playback/${m[1]}/${m[2]}?request=${Date.now()}-${s}`, h2);
+                    let d = null;
+                    try { d = JSON.parse(String(g.body || "")); } catch (e) { d = null; }
+                    if (g.statusCode >= 200 && g.statusCode < 300 && d && typeof d === "object") {
+                        main = str(d, "videoUrl");
+                        backup = str(d, "backupUrl");
+                        sub = str(d, "subtitleUrl");
+                        if (!main && !backup) sessWhy = "재생 빈 응답";
+                        return;
+                    }
+                    sessWhy = `재생 HTTP ${g.statusCode}${d && d.error ? " " + String(d.error).substring(0, 40) : ""}`;
+                    this._pbSession = null;
+                    try { new SharedPreferences().setString(PB_SESSION_KEY, ""); } catch (e) {}
+                } catch (e) {
+                    sessWhy = `세션 ${String((e && e.message) || e).substring(0, 50)}`;
+                    this._pbSession = null;
+                    try { new SharedPreferences().setString(PB_SESSION_KEY, ""); } catch (x) {}
+                }
+            }
+        };
+        await viaSession();
         // 앱에서 바로 부르는 재생 API·작품 정보 (휴대폰에서는 대개 403 이라 웹뷰로 넘어감)
         const direct = async () => {
             try {
@@ -751,7 +806,7 @@ class DefaultExtension extends MProvider {
         // 바로 부르기가 최근에 실패했으면 건너뛰고 웹뷰부터 (6시간 기억)
         const prefs = new SharedPreferences();
         const skipDirect = Number(prefs.getString(DIRECT_FAIL_KEY, "0") || 0) > Date.now();
-        if (!skipDirect) await direct();
+        if (!skipDirect && !main && !backup) await direct();
         // 그래도 없으면 숨은 웹뷰로 사이트 재생 화면을 열어, 그 화면이 받는 재생 주소를 씀
         if (!main && !backup) {
             const w = await this.viaWebview(`${this.getBaseUrl()}/content/${m[1]}/${m[2]}`, `/api/playback/${m[1]}/${m[2]}`);
@@ -767,7 +822,7 @@ class DefaultExtension extends MProvider {
             }
             if (!main && !backup) apiError += typeof evaluateJavascriptViaWebview !== "function" ? " · 웹뷰 미지원" : " · 웹뷰에서도 못 찾음";
         }
-        if (!main && !backup) throw new Error("재생 주소를 받지 못했습니다. 잠시 뒤 다시 시도해 주세요" + (apiError ? ` [${apiError}]` : ""));
+        if (!main && !backup) throw new Error("재생 주소를 받지 못했습니다. 잠시 뒤 다시 시도해 주세요" + (sessWhy || apiError ? ` [${[sessWhy, apiError].filter((x) => x).join(" · ")}]` : ""));
         const base = this.getBaseUrl();
         const h = { "User-Agent": UA, "Referer": `${base}/`, "Origin": base };
         const subtitles = sub ? [{ file: this.abs(sub), label: "한국어" }] : [];

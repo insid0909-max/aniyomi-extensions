@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.5",
+    "version": "0.1.6",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/aniwolf.js"
@@ -559,6 +559,64 @@ class DefaultExtension extends MProvider {
     }
 
     // ================= 영상 =================
+    /**
+     * 사이트 "바로 보기" 단추와 같은 방법으로 재생 화면 주소(mov.glamov.com/detail.php?v=…)를 받음 (2026-11-10 사이트 변경).
+     * 회차 화면을 받을 때 생긴 쿠키(XSRF-TOKEN·…_session)로 POST /glamov-token/{번호} → {"url": …}.
+     * 쿠키를 못 읽으면 숨은 웹뷰로 회차 화면을 열어 화면이 받아 둔 주소(awPlayerUrl)를 돌려받음
+     */
+    async glamovView(pageUrl, path) {
+        const base = this.getBaseUrl();
+        const why = [];
+        try {
+            const res = await this.client.get(base + encodeURI(path), this.getHeaders());
+            const html = String(res.body || "");
+            const id = (/glamov-token\/(\d+)/.exec(html) || [])[1];
+            const hs = res.headers || {};
+            let sc = "";
+            for (const k in hs) if (k.toLowerCase() === "set-cookie") sc += (Array.isArray(hs[k]) ? hs[k].join(", ") : String(hs[k])) + ", ";
+            const pairs = sc.match(/(?:XSRF-TOKEN|[A-Za-z0-9_]+_session)=[^;,\s]+/g) || [];
+            const xsrf = (/XSRF-TOKEN=([^;,\s]+)/.exec(sc) || [])[1];
+            if (id && xsrf) {
+                const r = await this.client.post(`${base}/glamov-token/${id}`, {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "X-Requested-With": "XMLHttpRequest",
+                    "X-XSRF-TOKEN": decodeURIComponent(xsrf),
+                    "Cookie": pairs.join("; "),
+                    "Referer": pageUrl,
+                    "Origin": base,
+                }, {});
+                let d = {};
+                try {
+                    d = JSON.parse(String(r.body || "{}"));
+                } catch (e) {
+                    d = {};
+                }
+                if (d.url && /^https?:\/\//.test(d.url)) return { url: String(d.url) };
+                why.push(`표식 HTTP ${r.statusCode}${d.message ? " " + String(d.message).substring(0, 40) : ""}`);
+            } else {
+                why.push(`표식 준비 못 함(번호 ${id ? "O" : "X"}·쿠키 ${xsrf ? "O" : "X"})`);
+            }
+        } catch (e) {
+            why.push("표식 오류 " + String((e && e.message) || e).substring(0, 40));
+        }
+        // 예비: 숨은 웹뷰로 회차 화면을 열면 화면이 스스로 재생 주소를 받아 둠(awPlayerUrl)
+        if (typeof evaluateJavascriptViaWebview === "function") {
+            const script = "(function(){var n=0;var t=setInterval(function(){n++;var u=window.awPlayerUrl;" +
+                "if(!u&&n===10&&typeof awPlayerFetch==='function'){awPlayerFetch().then(function(x){window.awPlayerUrl=x}).catch(function(){})}" +
+                "if(u||n>=50){clearInterval(t);window.flutter_inappwebview.callHandler('setResponse',u||'')}},300);})();";
+            try {
+                const timeout = new Promise((res) => setTimeout(() => res("__timeout__"), 18000));
+                const u = await Promise.race([evaluateJavascriptViaWebview(pageUrl, { "Referer": base + "/" }, [script]), timeout]);
+                if (u && u !== "__timeout__" && /^https?:\/\//.test(String(u))) return { url: String(u) };
+                why.push(u === "__timeout__" ? "웹뷰 시간 초과" : "웹뷰에서도 못 받음");
+            } catch (e) {
+                why.push("웹뷰 오류 " + String((e && e.message) || e).substring(0, 30));
+            }
+        }
+        return { why: why.join(" · ") };
+    }
+
     async getVideoList(url) {
         return hlsHint(await this.videoListInner(url));
     }
@@ -571,6 +629,12 @@ class DefaultExtension extends MProvider {
         const views = [...new Set((html.match(/https?:\/\/[^"'\s<>]+\/detail\.php\?v=[0-9a-zA-Z]+/g) || []))];
         const ids = [...new Set((html.match(/name="v"\s+value="([0-9a-zA-Z]+)"/g) || []).map((m) => /value="([^"]+)"/.exec(m)[1]))];
         for (const id of ids) if (!views.some((v) => v.endsWith("=" + id))) views.push(`https://mov.glamov.com/detail.php?v=${id}`);
+        // 2026-11-10 사이트 변경: 회차 화면에 재생 주소가 없고, 사이트 단추가 POST /glamov-token/{번호} 로 받아 옴 → 같은 방법으로
+        if (!views.length && /glamov-token\/\d+/.test(html)) {
+            const g = await this.glamovView(pageUrl, path);
+            if (g.url) views.push(g.url);
+            else this.glamovWhy = g.why;
+        }
         const players = [];
         for (const v of views) {
             try {
@@ -588,7 +652,7 @@ class DefaultExtension extends MProvider {
             const src = /src="([^"]+)"/.exec(m)[1];
             if (!players.includes(src)) players.push(src);
         }
-        if (!players.length) throw new Error(`이 회차에는 재생 화면이 없습니다 [재생 버튼 ${views.length}개]`);
+        if (!players.length) throw new Error(`이 회차에는 재생 화면이 없습니다 [재생 버튼 ${views.length}개${this.glamovWhy ? " · " + this.glamovWhy : ""}]`);
         let list = [];
         const fails = [];
         this.diag = [];
