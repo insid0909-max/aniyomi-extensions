@@ -1,38 +1,115 @@
-const mangayomiSources=[{id:1543279643,name:"[시험] 후후티비",lang:"ko",baseUrl:"https://ew.hoohootv464.xyz",version:"0.0.1",isNsfw:false,itemType:1,isManga:false}];
-const HH_UA="Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36";
+const mangayomiSources=[{id:1543279643,name:"[시험] 후후티비",lang:"ko",baseUrl:"https://ew.hoohootv464.xyz",version:"0.0.2",isNsfw:false,itemType:1,isManga:false}];
+const HH_UA="Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36";
 const HH_CATS=[["TV 전체","/tv/all"],["드라마","/tv/드라마"],["예능","/tv/Reality"],["토크쇼","/tv/Talk"],["TV 코미디","/tv/코미디"],["TV 애니메이션","/tv/애니메이션"],["TV 다큐멘터리","/tv/다큐멘터리"],["키즈","/tv/Kids"],["영화 전체","/movie/all"],["영화 - 액션","/movie/액션"],["영화 - 코미디","/movie/코미디"],["영화 - 스릴러","/movie/스릴러"],["영화 - 로맨스","/movie/로맨스"],["영화 - 공포","/movie/공포"],["영화 - 범죄","/movie/범죄"],["영화 - 애니메이션","/movie/애니메이션"],["영화 - 다큐멘터리","/movie/다큐멘터리"]];
-const hhFirst=(n,s)=>{const a=n?n.select(s):[];return a.length?a[0]:null;};
-const hhAttr=(n,k)=>String(n?.attr(k)||"").trim();
-const hhText=n=>String(n?.text||"").replace(/\s+/g," ").trim();
-const hhDecode=s=>String(s||"").replace(/&amp;/g,"&").replace(/&quot;/g,'"').replace(/&#0?39;/g,"'").replace(/\\\//g,"/");
-const hhOrigin=u=>/^https?:\/\/[^/?#]+/i.exec(String(u||""))?.[0]||"";
-const hhSite=u=>/^https:\/\/[a-z]{2}\.hoohootv\d+\.xyz$/i.test(String(u));
-function hhAbs(base,value){const u=hhDecode(value).trim();if(/^https?:\/\//i.test(u))return u;if(u.startsWith("//"))return "https:"+u;if(!u||u.startsWith("#")||/^[a-z][a-z0-9+.-]*:/i.test(u))return "";const origin=hhOrigin(base),path=u.startsWith("/")?u:base.slice(origin.length).replace(/[?#].*$/,"").replace(/[^/]*$/,"")+u;const parts=[];for(const p of path.split("/")){if(p==="..")parts.pop();else if(p&&p!==".")parts.push(p);}return origin+"/"+parts.join("/");}
-function hhDetailPath(u){const m=/\/detail\/([A-Za-z0-9_-]+)\/?/.exec(String(u||""));if(!m)throw Error("작품 주소를 읽지 못했습니다.");return "/detail/"+m[1]+"/";}
-function hhDate(s){const m=/(20\d{2})[-.](\d{1,2})[-.](\d{1,2})/.exec(String(s||""));if(!m)return null;const t=Date.UTC(+m[1],+m[2]-1,+m[3]),d=new Date(t);return d.getUTCFullYear()===+m[1]&&d.getUTCMonth()===+m[2]-1&&d.getUTCDate()===+m[3]?String(t-32400000):null;}
-function hhEpisodes(html){const m=/<script\b(?=[^>]*\bid\s*=\s*["']episodes-data["'])[^>]*>([\s\S]*?)<\/script\s*>/i.exec(html);if(!m)throw Error("회차 JSON(episodes-data)이 없습니다. 임의로 본편을 만들지 않습니다.");let data;try{data=JSON.parse(m[1]);}catch(_){throw Error("회차 JSON 형식을 읽지 못했습니다.");}const map=new Map();for(const key of Object.keys(data||{})){if(!Array.isArray(data[key]))continue;for(const e of data[key]){if(e.episode===null||e.episode===undefined)continue;const season=Number(key)||1,episode=String(e.episode),date=hhDate(e.date)||hhDate(e.label),item={season,episode,label:String(e.label||episode+"화"),date},id=season+":"+episode,old=map.get(id);if(!old||(!old.date&&date))map.set(id,item);}}return [...map.values()].sort((a,b)=>a.season-b.season||(Number(a.episode)-Number(b.episode))||a.episode.localeCompare(b.episode));}
-function hhMedia(body){const s=hhDecode(body),out=s.match(/https?:\/\/[^"'\s<>\\]+\.(?:m3u8|mp4)(?:\?[^"'\s<>\\]*)?/gi)||[];return [...new Set(out)];}
-function hhBrowserCapture(){let done=false;const started=Date.now();function finish(o){if(done)return;done=true;window.flutter_inappwebview.callHandler("setResponse",JSON.stringify(o));}function tick(){if(done)return;const urls=[],frames=[];const scan=(w,depth)=>{if(depth>2)return;try{const d=w.document;for(const v of d.querySelectorAll("video")){for(const u of [v.currentSrc,v.src])if(/^https?:/.test(u))urls.push(u);if(!v.__hhAttempt){v.__hhAttempt=true;v.muted=true;try{const p=v.play();if(p&&p.catch)p.catch(()=>{});}catch(_){}}}for(const e of w.performance.getEntriesByType("resource"))urls.push(e.name);for(const s of d.querySelectorAll("video source[src]"))urls.push(s.src);for(const f of d.querySelectorAll("iframe")){frames.push(f.src);try{scan(f.contentWindow,depth+1);}catch(_){}}}catch(_){}};scan(window,0);const media=[...new Set(urls.filter(u=>/^https?:\/\/[^\s]+\.(?:m3u8|mp4)(?:[?#]|$)/i.test(u)))];if(media.length){finish({urls:media.slice(0,4),page:location.href,ua:navigator.userAgent});return;}if(Date.now()-started>=11000){finish({urls:[],frameCount:frames.length,reason:"NO_OBSERVABLE_STREAM"});return;}setTimeout(tick,350);}tick();}
+const first=(n,s)=>{const a=n?n.select(s):[];return a.length?a[0]:null},attr=(n,k)=>String(n?.attr(k)||"").trim(),text=n=>String(n?.text||"").replace(/\s+/g," ").trim(),decode=s=>String(s||"").replace(/&amp;/g,"&").replace(/&quot;/g,'"').replace(/&#0?39;/g,"'").replace(/\\\//g,"/"),origin=u=>/^https?:\/\/[^/?#]+/i.exec(String(u||""))?.[0]||"",site=u=>/^https:\/\/[a-z]{2}\.hoohootv\d+\.xyz$/i.test(String(u));
+function absolute(b,v){const u=decode(v).trim();if(/^https?:\/\//i.test(u))return u;if(u.startsWith("//"))return "https:"+u;if(!u||u.startsWith("#")||/^[a-z][a-z0-9+.-]*:/i.test(u))return "";const o=origin(b),p=u.startsWith("/")?u:b.slice(o.length).replace(/[?#].*$/,"").replace(/[^/]*$/,"")+u,a=[];for(const x of p.split("/")){if(x==="..")a.pop();else if(x&&x!==".")a.push(x)}return o+"/"+a.join("/")}
+function detail(u){const m=/\/detail\/([A-Za-z0-9_-]+)\/?/.exec(String(u||""));if(!m)throw Error("작품 주소 오류");return "/detail/"+m[1]+"/"}
+function date(s){const m=/(20\d{2})[-.](\d{1,2})[-.](\d{1,2})/.exec(String(s||""));if(!m)return null;const t=Date.UTC(+m[1],+m[2]-1,+m[3]),d=new Date(t);return d.getUTCFullYear()===+m[1]&&d.getUTCMonth()===+m[2]-1&&d.getUTCDate()===+m[3]?String(t-32400000):null}
+function episodes(html){const m=/<script\b(?=[^>]*\bid\s*=\s*["']episodes-data["'])[^>]*>([\s\S]*?)<\/script\s*>/i.exec(html);if(!m)throw Error("회차 JSON(episodes-data)이 없습니다.");let d;try{d=JSON.parse(m[1])}catch(_){throw Error("회차 JSON 형식 오류")}const map=new Map();for(const k of Object.keys(d||{}))for(const e of Array.isArray(d[k])?d[k]:[]){if(e.episode==null)continue;const season=Number(k)||1,episode=String(e.episode),day=date(e.date)||date(e.label),id=season+":"+episode,old=map.get(id);if(!old||(!old.date&&day))map.set(id,{season,episode,label:String(e.label||episode+"화"),date:day})}return [...map.values()].sort((a,b)=>a.season-b.season||Number(a.episode)-Number(b.episode)||a.episode.localeCompare(b.episode))}
 class DefaultExtension extends MProvider{
-  pref(k,d=""){try{return String(new SharedPreferences().get("hh_test_"+k)??d);}catch(_){return d;}}
-  save(k,v){try{new SharedPreferences().setString("hh_test_"+k,String(v));}catch(_){}}
-  getBaseUrl(){const manual=this.pref("domain").trim().replace(/\/+$/,"");if(manual&&!hhSite(manual))throw Error("https://ew.hoohootv464.xyz 형태의 후후티비 주소를 입력해 주세요.");const auto=this.pref("auto_domain");return manual||this._site||(hhSite(auto)?auto:mangayomiSources[0].baseUrl);}
-  get client(){return this._client||(this._client=new Client({timeout:8,connectTimeout:4}));}
-  getHeaders(){return {"User-Agent":HH_UA,Referer:this.getBaseUrl()+"/"};}
-  async request(url,referer){const h={Referer:referer||this.getBaseUrl()+"/"};try{return await this.client.get(url,h);}catch(_){return await this.client.get(url,{...h,"User-Agent":HH_UA});}}
-  async adopt(base){if(!hhSite(base))return false;const r=await this.request(base+"/home",base+"/");const b=String(r.body||"");if(Number(r.statusCode)!==200||!b.includes("/detail/"))return false;this._site=base;this.save("auto_domain",base);return true;}
-  async discover(){if(this.pref("auto","true")==="false"||this.pref("domain"))return false;if(Date.now()-Number(this.pref("discover_at","0"))<60000)return false;this.save("discover_at",Date.now());const guide="https://telegra.ph/%ED%9B%84%ED%9B%84%ED%8B%B0%EB%B9%84-%EC%B5%9C%EC%8B%A0-%EC%A3%BC%EC%86%8C-09-03";try{const r=await this.request(guide),a=[...new Set(String(r.body||"").match(/https:\/\/[a-z]{2}\.hoohootv\d+\.xyz/gi)||[])];for(const u of a.slice(0,3))if(u!==this.getBaseUrl()&&await this.adopt(u))return true;}catch(_){}return false;}
-  async html(path,page=1){const base=this.getBaseUrl(),url=base+String(path).replace(/[^\x00-\x7f]+/g,encodeURIComponent);let r;try{r=await this.request(url);}catch(_){if(await this.discover())return this.html(path,page);throw Error("후후티비 연결 실패. 설정에서 현재 사이트 주소를 확인해 주세요.");}const status=Number(r.statusCode),b=String(r.body||"");if(status===451)throw Error("HTTP 451: 접근이 제한되었습니다. 우회하지 않습니다.");if(status===403||/Just a moment|cf-chl|challenge-platform/i.test(b))throw Error("사이트 인증이 필요합니다. 앱 웹뷰에서 직접 확인해 주세요.");if(status===404&&page>1)return "";if(status>=500&&await this.discover())return this.html(path,page);if(status!==200)throw Error("후후티비 HTTP "+status);return b;}
-  cards(html){const doc=new Document(html),items=[],seen=new Set();for(const box of doc.select("li")){const a=hhFirst(box,"a.thumb[href*='/detail/']")||hhFirst(box,"a[href*='/detail/']");if(!a)continue;const img=hhFirst(a,"img");if(!img)continue;let link;try{link=hhDetailPath(hhAttr(a,"href"));}catch(_){continue;}const name=hhText(hhFirst(box,".subject a"))||hhAttr(img,"alt")||hhAttr(a,"title");if(!name||seen.has(link))continue;seen.add(link);items.push({name,link,imageUrl:hhAbs(this.getBaseUrl()+"/",hhAttr(img,"data-src")||hhAttr(img,"src"))});}return items;}
-  async listing(path,page){if(!Number.isSafeInteger(page)||page<1)throw Error("목록 페이지 값이 올바르지 않습니다.");const key=path+"|"+page,cache=this._cache||(this._cache=new Map()),hit=cache.get(key);if(hit&&Date.now()-hit.t<300000)return hit.v;const body=await this.html(path+(path.includes("?")?"&":"?")+"page="+page,page),list=this.cards(body),pages=[...body.matchAll(/[?&](?:amp;)?page=(\d+)/g)].map(x=>+x[1]),value={list,hasNextPage:list.length>0&&pages.some(n=>n>page)};if(list.length){cache.set(key,{t:Date.now(),v:value});if(cache.size>20)cache.delete(cache.keys().next().value);}return value;}
-  get supportsLatest(){return true;}
-  getPopular(page){const n=Number(this.pref("popular","-1"));return this.listing(n>=0&&HH_CATS[n]?HH_CATS[n][1]:"/popular",page);}
-  getLatestUpdates(page){const n=Number(this.pref("latest","-1"));return this.listing(n>=0&&HH_CATS[n]?HH_CATS[n][1]:"/tv/all",page);}
-  async search(query,page,filters){const q=String(query||"").trim(),pasted=/^(?:https?:\/\/)?([a-z]{2}\.hoohootv\d+\.xyz)(\/[^#]*)?$/i.exec(q);if(pasted){if(!await this.adopt("https://"+pasted[1]))throw Error("새 주소에서 작품 목록을 확인하지 못했습니다.");this.save("domain","https://"+pasted[1]);this._cache?.clear();if((pasted[2]||"").startsWith("/detail/")){if(page>1)return {list:[],hasNextPage:false};const d=await this.getDetail(pasted[2]);return {list:[{name:d.name,link:d.link,imageUrl:d.imageUrl}],hasNextPage:false};}return this.getPopular(page);}if(q)return this.listing("/search?sfl=common_title%7C%7Cseason_title%7C%7Ctag_title&sop=and&query="+encodeURIComponent(q),page);const state=t=>Number((filters||[]).find(x=>x.type===t)?.state)||0,cat=Math.min(state("category"),HH_CATS.length-1),rule=state("rule");if(rule===1)this.save("popular",cat);if(rule===2)this.save("latest",cat);if(rule===3||rule===5)this.save("popular",-1);if(rule===4||rule===5)this.save("latest",-1);return this.listing(HH_CATS[cat][1],page);}
-  async getDetail(url){const path=hhDetailPath(url),html=await this.html(path),doc=new Document(html),meta=hhFirst(doc,"meta[property='og:title']"),name=(hhAttr(meta,"content")||hhText(hhFirst(doc,".share-title h1"))).replace(/\s*-\s*후후티비\s*$/,"").trim();if(!name)throw Error("작품 제목을 찾지 못했습니다.");const data=hhEpisodes(html);if(!data.length)throw Error("회차 JSON은 있지만 읽을 수 있는 회차가 없습니다.");const movie=data.length===1&&Number(data[0].episode)===0&&!data[0].date,multi=new Set(data.map(e=>e.season)).size>1,episodes=data.map((e,i)=>({name:movie?"1. 본편":(i+1)+". "+e.label,url:path+"?season="+e.season+"&episode="+encodeURIComponent(e.episode),dateUpload:e.date,scanlator:multi?"시즌"+e.season:""})).reverse(),poster=hhFirst(doc,"meta[property='og:image']"),latest=Math.max(0,...data.map(e=>Number(e.date)||0));return {name,link:path,imageUrl:hhAbs(this.getBaseUrl()+"/",hhAttr(poster,"content")),description:hhText(hhFirst(doc,".overview")),genre:doc.select(".share-title .datetime-hit a").map(hhText).filter(Boolean),status:movie?1:latest?(Date.now()-latest<21*86400000?0:1):5,episodes,chapters:episodes};}
-  async getVideoList(url){const path=hhDetailPath(url),query=/\?([^#]*)/.exec(String(url))?.[1]||"",page=this.getBaseUrl()+path+(query?"?"+query:""),html=await this.html(path+(query?"?"+query:"")),doc=new Document(html),queue=[],seen=new Set(),failures=[];for(const f of doc.select("iframe")){const u=hhAbs(page,hhAttr(f,"data-src")||hhAttr(f,"src"));if(u)queue.push({url:u,referer:page});}let found=hhMedia(html).map(u=>({url:u,referer:page,ua:HH_UA}));for(let i=0;!found.length&&i<3&&i<queue.length;i++){const target=queue[i];if(seen.has(target.url))continue;seen.add(target.url);try{const r=await this.request(target.url,target.referer);if(Number(r.statusCode)!==200){failures.push("플레이어 HTTP "+r.statusCode);continue;}const body=String(r.body||"");found=hhMedia(body).map(u=>({url:u,referer:target.url,ua:HH_UA}));if(!found.length){const d=new Document(body);for(const f of d.select("iframe")){const u=hhAbs(target.url,hhAttr(f,"src")||hhAttr(f,"data-src"));if(u&&!seen.has(u))queue.push({url:u,referer:target.url});}}}catch(_){failures.push("플레이어 연결 실패");}}
-    if(!found.length&&typeof evaluateJavascriptViaWebview==="function"){let raw;try{raw=await evaluateJavascriptViaWebview(page,{},["("+hhBrowserCapture.toString()+")();"],15);}catch(_){failures.push("웹뷰 요청 실패");}try{const r=JSON.parse(String(raw||""));found=(r.urls||[]).filter(u=>/^https?:\/\//i.test(u)).map(u=>({url:u,referer:r.page||page,ua:r.ua||HH_UA}));if(!found.length)failures.push("웹뷰 주소 없음: 교차 출처 프레임은 관찰 불가할 수 있음");}catch(_){failures.push("웹뷰 반환 없음");}}
-    if(!found.length)throw Error("[후후티비 시험] 영상 주소를 찾지 못했습니다. "+failures.join(" / "));const result=[];for(const item of found.slice(0,3)){const h={"User-Agent":item.ua,Referer:item.referer,Origin:hhOrigin(item.referer),Accept:"*/*"};try{const mp4=/\.mp4(?:[?#]|$)/i.test(item.url);if(mp4&&typeof this.client.head!=="function"){failures.push("MP4 헤더 검사 미지원");continue;}const r=mp4?await this.client.head(item.url,h):await this.client.get(item.url,h),b=mp4?"":String(r.body||"").trim();if(Number(r.statusCode)!==200){failures.push("영상 HTTP "+r.statusCode);continue;}const isHls=b.startsWith("#EXTM3U");if(!isHls&&!/\.mp4(?:[?#]|$)/i.test(item.url)){failures.push("재생목록 형식 불일치");continue;}const original=isHls?item.url.replace(/#.*$/,"")+"#download.m3u8":item.url;result.push({url:item.url,originalUrl:original,quality:(result.length?"대체 "+result.length:"자동")+(isHls?" (HLS)":" (MP4)"),headers:h,subtitles:[]});if(isHls){const lines=b.split(/\r?\n/);for(let i=0;i<lines.length-1;i++){if(!lines[i].startsWith("#EXT-X-STREAM-INF:"))continue;const height=/RESOLUTION=\d+x(\d+)/.exec(lines[i])?.[1];let j=i+1;while(j<lines.length&&!lines[j].trim())j++;if(j<lines.length&&!lines[j].startsWith("#")){const u=hhAbs(item.url,lines[j].trim());if(u)result.push({url:u,originalUrl:u.replace(/#.*$/,"")+"#download.m3u8",quality:height?height+"p":"화질 "+j,headers:h,subtitles:[]});}}}}catch(_){failures.push("영상 확인 연결 실패");}}if(!result.length)throw Error("[후후티비 시험] 재생목록 확인 실패. "+failures.join(" / "));const want=this.pref("quality","자동");return want==="자동"?result:result.filter(v=>v.quality===want).concat(result.filter(v=>v.quality!==want));}
-  getFilterList(){return [{type_name:"HeaderFilter",name:"[시험] 후후티비 0.0.1 · 실제 재생 미검증"},{type_name:"SelectFilter",type:"category",name:"분류",state:0,values:HH_CATS.map(([name,value])=>({type_name:"SelectOption",name,value}))},{type_name:"SelectFilter",type:"rule",name:"인기/최신 탭 규칙",state:0,values:["저장하지 않음","인기 탭에 저장","최신 탭에 저장","인기 기본값 복원","최신 기본값 복원","모두 복원"].map((name,i)=>({type_name:"SelectOption",name,value:String(i)}))},...Array.from({length:3},()=>({type_name:"HeaderFilter",name:" "}))];}
-  getSourcePreferences(){return [{key:"hh_test_domain",editTextPreference:{title:"후후티비 주소",summary:"비워 두면 기본 주소 사용. 직접 지정한 주소가 우선입니다.",value:"",dialogTitle:"사이트 주소",dialogMessage:"예: https://ew.hoohootv464.xyz"}},{key:"hh_test_auto",listPreference:{title:"주소 안내 확인",summary:"접속 실패 시 공개 안내 글의 주소만 확인합니다.",valueIndex:0,entries:["켬","끔"],entryValues:["true","false"]}},{key:"hh_test_quality",listPreference:{title:"선호 화질",summary:"실제로 확인된 화질만 적용합니다.",valueIndex:0,entries:["자동","1080p","720p","480p","360p"],entryValues:["자동","1080p","720p","480p","360p"]}}];}
+pref(k,d=""){try{return String(new SharedPreferences().get("hh_test_"+k)??d)}catch(_){return d}}
+save(k,v){try{new SharedPreferences().setString("hh_test_"+k,String(v))}catch(_){}}
+getBaseUrl(){const m=this.pref("domain").trim().replace(/\/+$/,"");if(m&&!site(m))throw Error("후후티비의 https 주소를 입력해 주세요.");const a=this.pref("auto_domain");return m||this._site||(site(a)?a:mangayomiSources[0].baseUrl)}
+get client(){return this._client||(this._client=new Client({timeout:8,connectTimeout:4}))}
+getHeaders(u){const o=origin(u)||this.getBaseUrl();return {"User-Agent":HH_UA,Referer:o+"/"}}
+async request(u,r){const h={Referer:r||this.getBaseUrl()+"/"};try{return await this.client.get(u,h)}catch(_){return this.client.get(u,{...h,"User-Agent":HH_UA})}}
+async adopt(u){if(!site(u))return false;const r=await this.request(u+"/home",u+"/");if(Number(r.statusCode)!==200||!String(r.body).includes("/detail/"))return false;this._site=u;this.save("auto_domain",u);this._cache?.clear();return true}
+async discover(){if(this.pref("auto","true")==="false"||this.pref("domain")||Date.now()-Number(this.pref("discover_at","0"))<60000)return false;this.save("discover_at",Date.now());try{const r=await this.request("https://telegra.ph/%ED%9B%84%ED%9B%84%ED%8B%B0%EB%B9%84-%EC%B5%9C%EC%8B%A0-%EC%A3%BC%EC%86%8C-09-03"),a=[...new Set(String(r.body||"").match(/https:\/\/[a-z]{2}\.hoohootv\d+\.xyz/gi)||[])];for(const u of a.slice(0,3))if(u!==this.getBaseUrl()&&await this.adopt(u))return true}catch(_){}return false}
+async html(p,page=1){let r;try{r=await this.request(this.getBaseUrl()+String(p).replace(/[^\x00-\x7f]+/g,encodeURIComponent))}catch(_){if(await this.discover())return this.html(p,page);throw Error("후후티비 연결 실패. 현재 주소를 확인해 주세요.")}const s=Number(r.statusCode),b=String(r.body||"");if(s===451)throw Error("HTTP 451: 접근이 제한되었습니다.");if(s===403||/<title>\s*Just a moment|id=["']cf-chl/i.test(b))throw Error("웹뷰에서 사이트 인증을 직접 확인해 주세요.");if(s===404&&page>1)return "";if(s>=500&&await this.discover())return this.html(p,page);if(s!==200)throw Error("후후티비 HTTP "+s);return b}
+cards(h){const out=[],seen=new Set();for(const box of new Document(h).select("li")){const a=first(box,"a.thumb[href*='/detail/']")||first(box,"a[href*='/detail/']"),i=first(a,"img");if(!a||!i)continue;let link;try{link=detail(attr(a,"href"))}catch(_){continue}const name=text(first(box,".subject a"))||attr(i,"alt")||attr(a,"title");if(!name||seen.has(link))continue;seen.add(link);out.push({name,link,imageUrl:absolute(this.getBaseUrl()+"/",attr(i,"data-src")||attr(i,"src"))})}return out}
+async listing(p,n){if(!Number.isSafeInteger(n)||n<1)throw Error("목록 페이지 오류");const c=this._cache||(this._cache=new Map()),k=p+"|"+n,h=c.get(k);if(h&&Date.now()-h.t<300000)return h.v;const b=await this.html(p+(p.includes("?")?"&":"?")+"page="+n,n),list=this.cards(b),v={list,hasNextPage:list.length>0&&[...b.matchAll(/[?&](?:amp;)?page=(\d+)/g)].some(m=>+m[1]>n)};if(list.length){c.set(k,{t:Date.now(),v});if(c.size>20)c.delete(c.keys().next().value)}return v}
+get supportsLatest(){return true}
+getPopular(n){const i=Number(this.pref("popular","-1"));return this.listing(HH_CATS[i]?.[1]||"/popular",n)}
+getLatestUpdates(n){const i=Number(this.pref("latest","-1"));return this.listing(HH_CATS[i]?.[1]||"/tv/all",n)}
+async search(q,n,f){q=String(q||"").trim();const m=/^(?:https?:\/\/)?([a-z]{2}\.hoohootv\d+\.xyz)(\/[^#]*)?$/i.exec(q);if(m){if(!await this.adopt("https://"+m[1]))throw Error("새 주소에서 작품 목록을 확인하지 못했습니다.");this.save("domain","https://"+m[1]);if((m[2]||"").startsWith("/detail/")){if(n>1)return {list:[],hasNextPage:false};const d=await this.getDetail(m[2]);return {list:[{name:d.name,link:d.link,imageUrl:d.imageUrl}],hasNextPage:false}}return this.getPopular(n)}if(q)return this.listing("/search?sfl=common_title%7C%7Cseason_title%7C%7Ctag_title&sop=and&query="+encodeURIComponent(q),n);const state=t=>Number((f||[]).find(x=>x.type===t)?.state)||0,i=Math.max(0,Math.min(state("category"),HH_CATS.length-1)),r=state("rule");if(r===1)this.save("popular",i);if(r===2)this.save("latest",i);if(r===3||r===5)this.save("popular",-1);if(r===4||r===5)this.save("latest",-1);return this.listing(HH_CATS[i][1],n)}
+async getDetail(u){const p=detail(u),h=await this.html(p),d=new Document(h),name=(attr(first(d,"meta[property='og:title']"),"content")||text(first(d,".share-title h1"))).replace(/\s*-\s*후후티비\s*$/,"").trim(),a=episodes(h);if(!name||!a.length)throw Error("작품 또는 회차 정보를 읽지 못했습니다.");const movie=a.length===1&&Number(a[0].episode)===0&&!a[0].date,multi=new Set(a.map(e=>e.season)).size>1,list=a.map((e,i)=>({name:movie?"1. 본편":i+1+". "+e.label,url:p+"?season="+e.season+"&episode="+encodeURIComponent(e.episode),dateUpload:e.date,scanlator:multi?"시즌"+e.season:""})).reverse(),latest=Math.max(0,...a.map(e=>Number(e.date)||0));return {name,link:p,imageUrl:absolute(this.getBaseUrl()+"/",attr(first(d,"meta[property='og:image']"),"content")),description:text(first(d,".overview")),genre:d.select(".share-title .datetime-hit a").map(text).filter(Boolean),status:movie?1:latest?(Date.now()-latest<21*86400000?0:1):5,episodes:list,chapters:list}}
+async castVideo(t, e, r) {
+    if ("function" != typeof createHlsProxyUrl)
+      throw new Error(
+        "후후티비 재생에는 HLS 프록시를 지원하는 최신 Mangayomi가 필요합니다. 앱을 업데이트해 주세요.",
+      );
+    let s;
+    try {
+      s = JSON.parse(
+        /window\.TVP_CONFIG\s*=\s*(\{[^\n]*?\})\s*;/.exec(t)?.[1] || "",
+      );
+    } catch (t) {
+      throw new Error("플레이어 설정을 읽지 못했습니다.");
+    }
+    if (
+      !s.id ||
+      "e" !== s.pathType ||
+      !/^every[1-9]\.poorcdn\.com$/.test(s.host || "") ||
+      !/^[a-f0-9]{32}$/.test(s.contentId || "")
+    )
+      throw new Error("지원하지 않는 후후티비 재생 설정입니다.");
+    const i = e.replace(/^(https?:\/\/[^/]+).*/, "$1"),
+      a = {
+        "User-Agent": HH_UA,
+        Referer: i + "/",
+        Origin: i,
+        Accept: "*/*",
+      },
+      n = async (t, e, r = {}) => {
+        const s = await this.client.post(
+          t,
+          { ...a, "Content-Type": "application/json", ...r },
+          e,
+        );
+        if (200 !== s.statusCode)
+          throw new Error(`재생권 요청에 실패했습니다 (HTTP ${s.statusCode}).`);
+        try {
+          return JSON.parse(s.body);
+        } catch (t) {
+          throw new Error("재생권 응답을 읽지 못했습니다.");
+        }
+      },
+      o = await n(
+        i + "/player/api/cast.php",
+        { id: String(s.id) },
+        { "X-Player-Cast": "1" },
+      ),
+      c = "https://" + s.host;
+    if (
+      1 !== o?.version ||
+      String(o.server) !== String(s.server) ||
+      o.contentId !== s.contentId ||
+      o.origin !== c ||
+      o.registerUrl !== c + "/v/cast-register" ||
+      "string" != typeof o.grant ||
+      !o.grant.startsWith("r1.") ||
+      o.grant.length > 384
+    )
+      throw new Error("올바른 재생권이 아닙니다.");
+    const l = await n(o.registerUrl, { cast_grant: o.grant });
+    if (
+      !0 !== l?.ok ||
+      l.contentId !== s.contentId ||
+      "string" != typeof l.token ||
+      !/^p1\.[A-Za-z0-9_.-]+$/.test(l.token) ||
+      l.token.length > 384
+    )
+      throw new Error("재생권 등록에 실패했습니다.");
+    const p = `${c}/v/e/${s.contentId}/c.html?cast=${encodeURIComponent(l.token)}`,
+      h = await createHlsProxyUrl(p, a);
+    if ("string" != typeof h || !/^http:\/\/127\.0\.0\.1:\d+\//.test(h))
+      throw new Error(
+        "HLS 프록시를 시작하지 못했습니다. Mangayomi를 업데이트해 주세요.",
+      );
+    return [
+      {
+        url: h,
+        originalUrl: p,
+        quality: "자동 (HLS)",
+        headers: a,
+        subtitles: r,
+      },
+    ];
+  }
+m3u8(t){const s=decode(t);return /data-m3u8=["'](https?:\/\/[^"']+)["']/i.exec(s)?.[1]||/https?:\/\/[^"'\s<>\\]+\.m3u8[^"'\s<>\\]*/i.exec(s)?.[0]||/["']?(?:file|src|source|url)["']?\s*[:=]\s*["'](https?:\/\/[^"']*(?:hls|m3u8|stream|video)[^"']*)["']/i.exec(s)?.[1]||""}
+async playbackSession(frame,page){let data;try{data=JSON.parse(decode(attr(frame,"data-session1")))}catch(_){throw Error("재생 세션 JSON 오류")}if(!data?.idx)throw Error("재생 세션 idx가 없습니다.");const o=origin(page),h={...this.getHeaders(page),Referer:page,Origin:o,"Content-Type":"application/json",Accept:"application/json"},r=await this.client.post(o+"/api/create_session.php",h,data);if(Number(r.statusCode)!==200)throw Error("재생 세션 HTTP "+r.statusCode);let s;try{s=JSON.parse(r.body)}catch(_){throw Error("재생 세션 응답 오류")}if(!s?.success||!/^https:\/\//.test(String(s.player_url||"")))throw Error("재생 세션 생성 실패");const url=String(s.player_url)+(s.player_url.includes("?")?"&":"?")+"t="+encodeURIComponent(s.t??"")+"&sig="+encodeURIComponent(s.sig??"");return {url,referer:page,subtitles:typeof data.vtt==="string"&&/^https?:\/\//.test(data.vtt)?[{file:data.vtt,label:"자막"}]:[]}}
+async directVideo(url,page,subs){const h={"User-Agent":HH_UA,Referer:page,Origin:origin(page),Accept:"*/*"},r=await this.client.get(url,h),body=String(r.body||"").trim();if(Number(r.statusCode)!==200||!body.startsWith("#EXTM3U"))throw Error("HLS 확인 실패 (HTTP "+r.statusCode+")");const out=[{url,originalUrl:url.replace(/#.*$/,"")+"#download.m3u8",quality:"자동 (HLS)",headers:h,subtitles:subs}],lines=body.split(/\r?\n/);for(let i=0;i<lines.length-1;i++){if(!lines[i].startsWith("#EXT-X-STREAM-INF:"))continue;const n=/RESOLUTION=\d+x(\d+)/.exec(lines[i])?.[1];let j=i+1;while(j<lines.length&&!lines[j].trim())j++;if(j<lines.length&&!lines[j].startsWith("#")){const u=absolute(url,lines[j].trim());if(u)out.push({url:u,originalUrl:u.replace(/#.*$/,"")+"#download.m3u8",quality:n?n+"p":"화질 "+j,headers:h,subtitles:subs})}}const want=this.pref("quality","자동");return want==="자동"?out:out.filter(x=>x.quality===want).concat(out.filter(x=>x.quality!==want))}
+async getVideoList(u){const p=detail(u),q=/\?([^#]*)/.exec(String(u))?.[1]||"",path=p+(q?"?"+q:""),page=this.getBaseUrl()+path,body=await this.html(path),queue=[{url:page,body,referer:this.getBaseUrl()+"/",subtitles:[]}],seen=new Set(),errors=[];for(let i=0;i<queue.length&&i<6;i++){const item=queue[i];if(seen.has(item.url))continue;seen.add(item.url);try{let b=item.body;if(b===undefined){const r=await this.client.get(item.url,{...this.getHeaders(item.referer),Referer:item.referer,Origin:origin(item.referer)});if(Number(r.statusCode)!==200)throw Error("플레이어 HTTP "+r.statusCode);b=String(r.body||"")}if(/window\.TVP_CONFIG\s*=/.test(b))return await this.castVideo(b,item.url,item.subtitles);const m=this.m3u8(b);if(m)return await this.directVideo(m,item.url,item.subtitles);const doc=new Document(b);for(const frame of doc.select("iframe")){if(attr(frame,"data-session1")){try{queue.push(await this.playbackSession(frame,item.url))}catch(e){errors.push(String(e.message||e))}continue}const target=absolute(item.url,attr(frame,"data-src")||attr(frame,"src"));if(target&&!seen.has(target))queue.push({url:target,referer:item.url,subtitles:item.subtitles})}errors.push(origin(item.url)+": TVP 설정·직접 HLS 없음")}catch(e){errors.push(origin(item.url)+": "+String(e.message||e))}}throw Error("[후후티비 0.0.2] 티비위키 방식 재생 실패. "+errors.slice(-5).join(" / "))}
+getFilterList(){return [{type_name:"HeaderFilter",name:"[시험] 후후티비 0.0.2 · 티비위키 재생 경로 · 실기기 미검증"},{type_name:"SelectFilter",type:"category",name:"분류",state:0,values:HH_CATS.map(([name,value])=>({type_name:"SelectOption",name,value}))},{type_name:"SelectFilter",type:"rule",name:"인기/최신 탭 규칙",state:0,values:["저장하지 않음","인기 탭에 저장","최신 탭에 저장","인기 기본값 복원","최신 기본값 복원","모두 복원"].map((name,i)=>({type_name:"SelectOption",name,value:String(i)}))},...Array.from({length:3},()=>({type_name:"HeaderFilter",name:" "}))]}
+getSourcePreferences(){return [{key:"hh_test_domain",editTextPreference:{title:"후후티비 주소",summary:"비워 두면 기본 주소 사용. 직접 지정한 주소가 우선입니다.",value:"",dialogTitle:"사이트 주소",dialogMessage:"예: https://ew.hoohootv464.xyz"}},{key:"hh_test_auto",listPreference:{title:"주소 안내 확인",summary:"접속 실패 시 공개 안내 글을 확인합니다.",valueIndex:0,entries:["켬","끔"],entryValues:["true","false"]}},{key:"hh_test_quality",listPreference:{title:"선호 화질",summary:"직접 HLS에만 적용. TVP 캐스트는 앱의 자동 화질을 사용합니다.",valueIndex:0,entries:["자동","1080p","720p","480p","360p"],entryValues:["자동","1080p","720p","480p","360p"]}}]}
 }

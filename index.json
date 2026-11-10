@@ -54,15 +54,15 @@
     "dateFormatLocale": "",
     "isNsfw": false,
     "hasCloudflare": false,
-    "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/test/js/hoohootv.js?v=0.0.1",
+    "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/test/js/hoohootv.js?v=0.0.2",
     "apiUrl": "",
-    "version": "0.0.1",
+    "version": "0.0.2",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
     "appMinVerReq": "0.9.95",
     "additionalParams": "",
     "sourceCodeLanguage": 1,
-    "notes": "시험판. 과거 망가요미판 재생 실패 이력 있음. 기본 파서와 정상 페이지 웹뷰 탐색으로 재시험. 모의 검사 통과, 실제 사이트·휴대폰 재생 미검증. 프레임 보호 우회·키 변환·외부 중계 없음."
+    "notes": "티비위키의 세션 생성·TVP 재생권 등록·앱 내장 HLS 프록시 인계 코드 적용. 실제 페이지에서 같은 형식이 확인될 때만 사용. 교차 출처 웹뷰 탐색 제거. 문법 및 모의 검사 14개 통과. 실제 후후티비 사이트·휴대폰 재생 미검증. 정식 배포 아님."
   }
 ]
