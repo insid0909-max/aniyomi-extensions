@@ -70,6 +70,11 @@ class TVroomFactory : AnimeSourceFactory {
         } catch (e: Throwable) {
             list.add(ErrorSource("티비위키 오류", e))
         }
+        try {
+            list.add(Aniweek()) // 애니위크 (2026-11-10, 망가요미판과 같은 규칙)
+        } catch (e: Throwable) {
+            list.add(ErrorSource("애니위크 오류", e))
+        }
         return list
     }
 }
