@@ -4,7 +4,7 @@
 
 - 애니요미 → 확장 저장소에 추가할 주소:
   `https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/apk-test/index.min.json`
-- 시험 APK 는 패키지 이름 뒤 `.test`, 앱 이름 "Aniyomi: TVroom (test)", 소스 이름 앞 "[시험]" → 소스 번호·설정·서재가 정식판과 따로 (시험판으로 서재에 담은 작품은 정식판으로 안 옮겨짐)
+- 시험 APK 는 패키지 이름 뒤 `.test`, 앱 이름 "TVroom (시험)", 소스 이름 앞 "[시험]" → 소스 번호·설정·서재가 정식판과 따로 (시험판으로 서재에 담은 작품은 정식판으로 안 옮겨짐)
 - 서명 키도 정식과 다름(`signingkey-test.jks`, 첫 빌드 때 자동 생성)
 
 ## 쓰는 법

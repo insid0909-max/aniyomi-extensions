@@ -3,7 +3,7 @@
 
 정식 APK 와 같이 설치돼도 서로 덮어쓰거나 섞이지 않게:
 1. 패키지 이름 뒤에 ".test"  (common.gradle applicationIdSuffix)
-2. 앱 이름 "Aniyomi: TVroom (test)"
+2. 앱 이름 "TVroom (시험)" (매니페스트 label) · "Aniyomi: TVroom (test)"
 3. 소스 이름 앞에 "[시험] " → 소스 번호(id)·설정·서재가 정식판과 따로
    (override val name 줄의 글자, when(kind) 분기 글자, BASE_NAME, generateId("…") 의 이름)
 """
@@ -23,6 +23,14 @@ b = 'appName : "Aniyomi: $extName",'
 assert b in s, "common.gradle appName 모양이 바뀜"
 s = s.replace(b, 'appName : "Aniyomi: $extName (test)",', 1)
 g.write_text(s, encoding="utf-8")
+
+# 앱 목록에 보이는 이름(매니페스트 android:label) 뒤에 " (시험)"
+for mf in sorted((root / "src" / "ko").glob("*/AndroidManifest.xml")):
+    t = mf.read_text(encoding="utf-8")
+    t2 = re.sub(r'android:label="([^"@]+?)(?<! \(시험\))"', r'android:label="\1 (시험)"', t)
+    if t2 != t:
+        mf.write_text(t2, encoding="utf-8")
+        print(f"{mf.relative_to(root)}: 앱 이름에 (시험)")
 
 LIT = re.compile(r'"(?!\$)(?=[^"])')  # $label 로 시작하는 오류 소스 이름은 그대로
 
