@@ -457,7 +457,25 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
             }
         }
         val origin = "https://$host"
-        val o = post("$playerOrigin/player/api/cast.php", JSONObject().put("id", c.optString("id"))) { set("X-Player-Cast", "1") }
+        val o = try {
+            post("$playerOrigin/player/api/cast.php", JSONObject().put("id", c.optString("id"))) { set("X-Player-Cast", "1") }
+        } catch (e: Exception) {
+            // 재생권(cast)을 쓰지 않는 영상(리처 등, 2026-11-10 "cast_source_unsupported"): 설정의 src 가 일반 주소면 그 주소로 바로 재생
+            if (e.message?.contains("cast_source_unsupported") != true) throw e
+            val src = c.optString("src").trim()
+            val u = when {
+                src.startsWith("http://") || src.startsWith("https://") -> src
+                src.startsWith("/") && !src.startsWith("//") -> origin + src
+                else -> ""
+            }
+            if (u.isEmpty()) {
+                val tail = if (src.length > 24) "…" else ""
+                throw Exception("다른 재생 방식이라 아직 지원 안 함 [mode ${c.optString("mode").take(20).ifEmpty { "-" }} · src ${src.take(24)}$tail (${src.length}자)]")
+            }
+            if (MP4.containsMatchIn(u)) return Video(u, "$label 원본 (mp4)", u, a, subs)
+            val proxied = LocalProxy.playlist(client, a, u)
+            return Video(proxied, "$label 자동 (HLS)", proxied, null, subs)
+        }
         val grant = o.optString("grant")
         if (o.optInt("version") != 1 || o.optString("contentId") != contentId || o.optString("origin") != origin ||
             o.optString("registerUrl") != "$origin/v/cast-register" || !grant.startsWith("r1.") || grant.length > 384
@@ -572,6 +590,7 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
         private val TVP_CONFIG = Regex("""window\.TVP_CONFIG\s*=\s*(\{[^\n]*?\})\s*;""")
         private val CAST_HOST = Regex("""^[a-z0-9-]+\.poorcdn\.com$""")
         private val PATH_TYPE = Regex("""^[a-z]$""")
+        private val MP4 = Regex("""\.mp4(?:[?#]|$)""", RegexOption.IGNORE_CASE)
         private val CONTENT_ID = Regex("""^[A-Za-z0-9_-]{16,64}$""")
         private val TOKEN = Regex("""^p1\.[A-Za-z0-9_.-]+$""")
         private val DATA_M3U8 = Regex("""data-m3u8=["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE)
