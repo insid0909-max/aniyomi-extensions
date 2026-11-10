@@ -42,5 +42,27 @@
     "additionalParams": "",
     "sourceCodeLanguage": 1,
     "notes": "프레임 주소·접근·로딩 상태를 오류 본문 맨 앞에 직접 표시. 필터 저장·읽기에 의존하지 않고 현재 실행의 메모리 진단으로 오류 생성. 프레임 정보 미수신은 명시하며 여러 프레임과 JS 오류도 포함. 기본 주소 fl 유지. 오류 포맷터 및 저장 실패 경로 모의 검사 17개 통과. 실제 앱 화면 표시·재생은 미검증. 정식 배포 아님."
+  },
+  {
+    "name": "[시험] 애니울프",
+    "id": 1543279644,
+    "baseUrl": "https://aniwolf.com",
+    "lang": "ko",
+    "typeSource": "single",
+    "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
+    "dateFormat": "",
+    "dateFormatLocale": "",
+    "isNsfw": false,
+    "hasCloudflare": false,
+    "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/test/js/testing/aniwolf.js",
+    "apiUrl": "",
+    "version": "0.1.6",
+    "isManga": false,
+    "itemType": 1,
+    "isFullData": false,
+    "appMinVerReq": "0.5.0",
+    "additionalParams": "",
+    "sourceCodeLanguage": 1,
+    "notes": ""
   }
 ]
