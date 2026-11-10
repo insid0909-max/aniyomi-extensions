@@ -36,6 +36,10 @@
     },
     "tvwiki": {
       "baseUrl": "https://tvwiki57.net"
+    },
+    "aniweek": {
+      "baseUrl": "https://aniweek.com",
+      "updated": "2026-11-10"
     }
   }
 }
