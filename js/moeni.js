@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.4",
+    "version": "0.0.5",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/moeni.js"
@@ -519,7 +519,7 @@ class DefaultExtension extends MProvider {
         const max = Math.floor((limitMs - 2000) / 300);
         // 플레이어가 받은 응답을 엿봄(XHR·fetch 감싸기, 동작은 그대로): /vod/·m3u8 주소의 상태·앞부분 글자를 기록
         const hook = "window.__mo=window.__mo||[];if(!window.__moh){window.__moh=1;" +
-            "var rec=function(u,s,t,ct,rg){u=String(u||'');if(!/\\/vod\\/|m3u8|\\.mpd/i.test(u))return;window.__mo.push({u:u,s:s,h:String(t||'').substring(0,120),ct:ct||'',r:rg||''})};" +
+            "var rec=function(u,s,t,ct,rg){u=String(u||'');if(!/\\/vod\\/|\\/v1\\/play|m3u8|\\.mpd|\\.ass|\\.vtt|\\.srt|subtitle/i.test(u))return;window.__mo.push({u:u,s:s,h:String(t||'').substring(0,120),ct:ct||'',r:rg||''})};" +
             "var xo=XMLHttpRequest.prototype.open,xs=XMLHttpRequest.prototype.send;" +
             "XMLHttpRequest.prototype.open=function(m,u){this.__u=u;return xo.apply(this,arguments)};" +
             "var xh=XMLHttpRequest.prototype.setRequestHeader;XMLHttpRequest.prototype.setRequestHeader=function(k,v){if(/^range$/i.test(k))this.__r=v;return xh.apply(this,arguments)};" +
@@ -527,7 +527,7 @@ class DefaultExtension extends MProvider {
             "rec(x.responseURL||x.__u,x.status,t,x.getResponseHeader&&x.getResponseHeader('content-type'),x.__r)});return xs.apply(this,arguments)};" +
             "if(window.fetch){var fo=window.fetch;window.fetch=function(i,o){var rg='';try{var hh=(o&&o.headers)||(i&&i.headers);rg=hh?(hh.get?hh.get('range'):(hh.Range||hh.range))||'':''}catch(e){}" +
             "return fo.apply(this,arguments).then(function(r){try{var u=r.url||(i&&i.url)||String(i);" +
-            "if(/\\/vod\\/|m3u8|\\.mpd/i.test(u))r.clone().text().then(function(t){rec(u,r.status,t,r.headers.get('content-type'),rg)})}catch(e){}return r})}}}";
+            "if(/\\/vod\\/|\\/v1\\/play|m3u8|\\.mpd|\\.ass|\\.vtt|\\.srt|subtitle/i.test(u))r.clone().text().then(function(t){rec(u,r.status,t,r.headers.get('content-type'),rg)})}catch(e){}return r})}}}";
         const script = "(function(){try{performance.setResourceTimingBufferSize(5000)}catch(e){}" + hook + ";" +
             "var want=" + w + ",n=0,clicked=!want,at=0,max=" + max + ";" +
             "function norm(h){try{h=decodeURIComponent(h)}catch(e){}return h.replace(/[\\s-]/g,'')}" +
@@ -535,11 +535,11 @@ class DefaultExtension extends MProvider {
             "function vids(){return [].slice.call(document.querySelectorAll('video,source')).map(function(v){return (v.currentSrc||v.src||v.getAttribute('src')||'(빈칸)')+(v.readyState!==undefined?' rs'+v.readyState:'')})}" +
             "function frames(){return [].slice.call(document.querySelectorAll('iframe')).map(function(f){return f.src||f.getAttribute('data-src')||''}).filter(function(s){return s})}" +
             "function find(){var m=window.__mo||[];for(var k=m.length-1;k>=0;k--){if(/^#EXTM3U/.test(m[k].h.replace(/^\\s+/,'')))return m[k].u}" +
-            "for(var k2=0;k2<m.length;k2++){if(m[k2].s>=200&&m[k2].s<300&&m[k2].h.charCodeAt(0)===0x47&&/\\/vod\\//.test(m[k2].u)){window.__ts=1;return m[k2].u}}" +
+            
             "var r=performance.getEntriesByType('resource');for(var i=r.length-1;i>=0;i--){var u=r[i].name;if(/m3u8|\\.mpd(\\?|$)|\\.mp4(\\?|$)|\\/hls\\/|\\/playlist|\\/master\\./i.test(u))return u;}" +
             "var v=document.querySelector('video');var s=v?(v.currentSrc||v.src||''):'';return /^https?:/.test(s)?s:null}" +
             "function res(){var r=performance.getEntriesByType('resource'),o=[];for(var i=r.length-1;i>=0&&o.length<12;i--){var u=r[i].name;if(!/\\.(png|jpe?g|webp|gif|svg|css|woff2?)(\\?|$)|google|cloudflareinsights|fonts|datalist|favicon/i.test(u))o.push(u.split('?')[0])}return o}" +
-            "function send(o){clearInterval(t);o.ts=!!window.__ts;o.clicked=clicked;o.iframes=frames();o.videos=vids();o.res=res();o.seen=(window.__mo||[]).slice(-4).map(function(x){return x.s+' '+x.ct+' r='+x.r+' '+x.u.replace(/^https?:\\/\\//,'').substring(0,140)+' 「'+x.h.substring(0,8).replace(/[^\\x20-\\x7e]/g,'?')+'」'});o.href=location.href;window.flutter_inappwebview.callHandler('setResponse',JSON.stringify(o))}" +
+            "function send(o){clearInterval(t);o.ts=!!window.__ts;o.clicked=clicked;o.iframes=frames();o.videos=vids();o.res=res();o.seen=(window.__mo||[]).filter(function(x){return !/\\/vod\\//.test(x.u)}).slice(-6).concat((window.__mo||[]).filter(function(x){return /\\/vod\\//.test(x.u)}).slice(-1)).map(function(x){return x.s+' '+x.ct+' r='+x.r+' '+x.u.replace(/^https?:\\/\\//,'').substring(0,140)+' 「'+x.h.substring(0,60).replace(/[^\\x20-\\x7e]/g,'?')+'」'});o.href=location.href;window.flutter_inappwebview.callHandler('setResponse',JSON.stringify(o))}" +
             "var t=setInterval(function(){n++;" +
             "if(!clicked){var as=document.querySelectorAll('a[href^=\"#\"]');for(var i=0;i<as.length;i++){if(norm(as[i].getAttribute('href').slice(1))===want){as[i].click();clicked=true;at=n;break;}}}" +
             "var u=clicked?find():null;if(u){send({u:u});return;}" +
