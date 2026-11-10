@@ -448,7 +448,11 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
         fun post(url: String, payload: JSONObject, extra: Headers.Builder.() -> Unit = {}): JSONObject {
             val hs = a.newBuilder().apply(extra).build()
             return client.newCall(POST(url, hs, payload.toString().toRequestBody(JSON))).execute().use { r ->
-                if (r.code != 200) throw Exception("재생권 HTTP ${r.code}")
+                if (r.code != 200) {
+                    // 거절 이유(응답 앞부분)와 플레이어 설정 칸 이름을 보여 줌 (2026-11-10 리처 422)
+                    val why = runCatching { r.body.string() }.getOrDefault("").replace(SPACES, " ").take(140)
+                    throw Exception("재생권 HTTP ${r.code} [${url.substringAfter("://").substringAfter('/')} · 응답 $why · 설정 칸 ${c.keys().asSequence().joinToString(",").take(120)}]")
+                }
                 runCatching { JSONObject(r.body.string()) }.getOrNull() ?: throw Exception("재생권 응답 읽기 실패")
             }
         }
