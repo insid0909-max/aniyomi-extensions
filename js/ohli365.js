@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.2",
+    "version": "0.0.3",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli365.js"
@@ -549,14 +549,37 @@ class DefaultExtension extends MProvider {
         if (!sources.length) throw new Error("재생 주소가 없어요 (사이트에 아직 영상이 없을 수 있어요)");
         const vh = { "User-Agent": UA, "Referer": `${base}/`, "Origin": base };
         const out = [];
+        const relay = [];
         for (let n = 0; n < sources.length; n++) {
             const label = n === 0 ? LABEL : `${LABEL} (대체 ${n})`;
-            for (const v of await this.expand(this.abs(sources[n].url), label, vh)) {
-                v.subtitles = subtitles;
-                out.push(v);
+            const src = this.abs(sources[n].url);
+            // 사이트 중계(cinepro-proxy) 주소는 5분 뒤 막혀(invalid signature) 재생이 멈춤 (0.0.2 휴대폰) →
+            // 같은 응답 안에 적힌 원래 영상 주소와 중계가 붙이는 머리글(Referer)로 바로 재생, 중계 주소는 맨 뒤 예비로
+            const inn = this.innerOf(src);
+            if (inn) {
+                for (const v of await this.expand(inn.url, label, Object.assign({ "User-Agent": UA }, inn.headers))) {
+                    v.subtitles = subtitles;
+                    out.push(v);
+                }
             }
+            relay.push({ url: src, originalUrl: src.replace(/#.*$/, "") + "#download.m3u8", quality: `${label} 사이트 중계 (5분 뒤 멈출 수 있음)`, headers: vh, subtitles });
         }
-        return qualitySort(`${KEY}_quality`, out);
+        return qualitySort(`${KEY}_quality`, out).concat(relay);
+    }
+
+    /** 사이트 중계 주소의 d= 안에 적힌 원래 영상 주소·머리글 (없으면 null) */
+    innerOf(u) {
+        try {
+            const m = /[?&]d=([^&#]+)/.exec(String(u));
+            if (!m || !/cinepro-proxy/.test(u)) return null;
+            const d = JSON.parse(decodeURIComponent(m[1].replace(/\+/g, "%20")));
+            if (!d || !/^https?:\/\//.test(String(d.url || ""))) return null;
+            const headers = {};
+            for (const k in d.headers || {}) if (/^(referer|origin)$/i.test(k)) headers[k] = String(d.headers[k]);
+            return { url: String(d.url), headers };
+        } catch (e) {
+            return null;
+        }
     }
 
     /** 재생 목록을 받아 화질이 여러 개면 나눔. 주소가 .m3u8 로 끝나지 않아 originalUrl 끝에 "#download.m3u8" (망가요미 재생기가 HLS 로 알아보게) */
