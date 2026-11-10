@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.5",
+    "version": "0.0.6",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/moeni.js"
@@ -19,13 +19,15 @@ const mangayomiSources = [{
 //   api.modumo.bid/v1/search?f_search=검색어 | genre:"SF" | year:"2025" | format:"movie"|"tv" &page=N (30개)
 //   작품 api.moeni.net/web/{id} → {title, date, ep(최근 회차), categories_name}, 표지 img.moeni.net/{id}?i={img}
 // 회차 목록은 사이트가 암호로 보내 확장이 풀지 않음 → 최근 회차 번호(ep)로 1~ep 화를 만들고,
-// 재생은 숨은 웹뷰로 작품 화면을 열어 그 회차(주소 # 뒤 "제목-NN화")를 눌러 플레이어가 받은 영상 주소를 돌려받음
+// 재생은 숨은 웹뷰에서 정상 플레이어가 만든 전체 Blob 목록과 gets 요청 헤더를 관찰하고,
+// 같은 기기의 Node 루프백 프록시에 등록한 HLS 주소를 돌려받음. 단일 TS를 회차로 넘기지 않음.
 const DEFAULT_BASE_URL = "https://moeni.net";
 const API = "https://api.moeni.net";
 const SEARCH_API = "https://api.modumo.bid/v1/search";
 const IMG = "https://img.moeni.net";
 const LABEL = "모에니";
 const KEY = "moeni";
+const MOENI_TEST_NOTICE = `시험 ${mangayomiSources[0].version}: Blob HLS · 같은 기기 Node 프록시 필요 · Android 실기기 미검증`;
 const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
     "Chrome/124.0.0.0 Mobile Safari/537.36";
 const WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"];
@@ -109,6 +111,338 @@ function fixUtf8(s) {
 }
 
 const QUALITY_CHOICES = ["자동", "1080p", "720p", "480p", "360p"];
+
+// 회차용 HLS 인계 검증. 주소 모양이나 TS 한 조각을 "전체 회차"로 취급하지 않는다.
+// 인증·키·heartbeat를 만들거나 변경하지 않으며, 기존 Client/headers로 읽을 수 있는 목록만 검증한다.
+function moeniPlaybackError(code, message) {
+    const error = new Error(`${LABEL} [${code}] ${message}`);
+    error.code = code;
+    return error;
+}
+
+function moeniSafeUrl(value) {
+    return String(value || "").split(/[?#]/)[0].replace(/\/\/[^/]*@/, "//");
+}
+
+function moeniResolveUri(base, relative) {
+    const value = String(relative || "").trim();
+    if (!value || /[\u0000-\u0020\\]/.test(value)) throw moeniPlaybackError("URI", "재생목록 URI가 올바르지 않아요");
+    if (/^https?:\/\//i.test(value)) return value;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(value)) throw moeniPlaybackError("URI", "HTTP(S) 재생목록만 지원해요");
+    const origin = /^(https?:\/\/[^/?#]+)/i.exec(String(base));
+    if (!origin) throw moeniPlaybackError("URI", "기준 주소가 올바르지 않아요");
+    if (/^\/\//.test(value)) return origin[1].split(":")[0] + ":" + value;
+    const cleanBase = String(base).split("#")[0];
+    if (value[0] === "?") return cleanBase.split("?")[0] + value;
+    if (value[0] === "#") return cleanBase + value;
+    const suffixAt = value.search(/[?#]/);
+    const path = suffixAt < 0 ? value : value.substring(0, suffixAt);
+    const suffix = suffixAt < 0 ? "" : value.substring(suffixAt);
+    const basePath = cleanBase.substring(origin[1].length).split("?")[0];
+    const joined = path[0] === "/" ? path : basePath.replace(/[^/]*$/, "") + path;
+    const parts = [];
+    for (const part of joined.split("/")) {
+        if (part === "..") parts.pop();
+        else if (part && part !== ".") parts.push(part);
+    }
+    return origin[1] + "/" + parts.join("/") + suffix;
+}
+
+function moeniInspectPlaylist(body, url) {
+    const text = String(body || "").replace(/^\uFEFF/, "").trim();
+    if (text.length > 2 * 1024 * 1024) throw moeniPlaybackError("SIZE", "재생목록 크기가 제한을 초과했어요");
+    if (!/^#EXTM3U(?:\r?\n|$)/.test(text)) {
+        throw moeniPlaybackError("NOT_HLS", "전체 HLS 목록이 아니에요. TS 조각·JSON·HTML은 재생기에 넘기지 않아요");
+    }
+    const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    if (lines.includes("#EXT-X-I-FRAMES-ONLY")) throw moeniPlaybackError("TRICK_PLAY", "탐색용 영상은 회차로 넘기지 않아요");
+    const master = lines.some((line) => /^#EXT-X-STREAM-INF:/.test(line));
+    // media 목록만 반환하므로 별도 오디오·자막 렌디션을 잃을 수 있는 master는 조용히 축소하지 않는다.
+    if (master && lines.some((line) => /^#EXT-X-MEDIA:/.test(line) && /(?:^|,)URI=/.test(line.substring(13)))) {
+        throw moeniPlaybackError("RENDITION", "별도 오디오·자막 목록이 있어요. master를 보존하는 앱 측 인계가 필요해요");
+    }
+    const variants = [];
+    const segments = [];
+    let pendingVariant = false;
+    let pendingDuration = null;
+    let duration = 0;
+    let longest = 0;
+    for (const line of lines.slice(1)) {
+        if (/^#EXT-X-STREAM-INF:/.test(line)) {
+            if (pendingVariant) throw moeniPlaybackError("MANIFEST", "화질 주소가 빠졌어요");
+            pendingVariant = true;
+        } else if (/^#EXTINF:/.test(line)) {
+            if (pendingDuration !== null) throw moeniPlaybackError("MANIFEST", "영상 조각 주소가 빠졌어요");
+            const match = /^#EXTINF:(\d+(?:\.\d+)?),/.exec(line);
+            pendingDuration = match ? Number(match[1]) : NaN;
+            if (!Number.isFinite(pendingDuration) || pendingDuration <= 0) throw moeniPlaybackError("MANIFEST", "조각 길이가 올바르지 않아요");
+        } else if (line[0] !== "#") {
+            const resolved = moeniResolveUri(url, line);
+            if (master && pendingVariant && pendingDuration === null) {
+                variants.push(resolved);
+                pendingVariant = false;
+            } else if (!master && pendingDuration !== null && !pendingVariant) {
+                segments.push(resolved);
+                duration += pendingDuration;
+                longest = Math.max(longest, pendingDuration);
+                pendingDuration = null;
+            } else {
+                throw moeniPlaybackError("MANIFEST", "재생목록의 조각·화질 구성이 올바르지 않아요");
+            }
+        }
+    }
+    if (pendingVariant || pendingDuration !== null) throw moeniPlaybackError("MANIFEST", "재생목록이 중간에 잘렸어요");
+    if (master) {
+        if (!variants.length || segments.length) throw moeniPlaybackError("MANIFEST", "화질 목록이 올바르지 않아요");
+        return { type: "master", variants };
+    }
+    const target = lines.find((line) => /^#EXT-X-TARGETDURATION:/.test(line));
+    if (!target || !/^#EXT-X-TARGETDURATION:[1-9]\d*$/.test(target) || !segments.length) {
+        throw moeniPlaybackError("MANIFEST", "필수 재생목록 정보가 없어요");
+    }
+    if (Math.round(longest) > Number(target.split(":")[1])) throw moeniPlaybackError("MANIFEST", "조각 길이가 TARGETDURATION보다 커요");
+    // 이 소스는 회차 VOD용. 라이브·미완성 목록은 성공으로 반환하지 않는다.
+    if (!lines.includes("#EXT-X-ENDLIST")) throw moeniPlaybackError("INCOMPLETE", "완료된 VOD 목록이 아니에요");
+    // 10초는 사이트 규격이 아니라 짧은 조각의 잘못된 성공 처리를 막는 보수적인 회차용 정책.
+    if (duration < 10) throw moeniPlaybackError("SHORT", `목록 길이가 ${duration}초뿐이에요. 전체 회차인지 확인해야 해요`);
+    return { type: "media", duration, segmentCount: segments.length };
+}
+
+async function moeniValidatePlayback(client, url, headers) {
+    const visited = {};
+    let requests = 0;
+    async function visit(value, depth) {
+        const address = String(value || "");
+        if (!/^https?:\/\/[^/?#]+(?:[/?#]|$)/i.test(address) || /[\u0000-\u0020\\]/.test(address)) {
+            throw moeniPlaybackError("URI", "브라우저 내부 blob 주소나 잘못된 주소는 앱에 넘길 수 없어요");
+        }
+        if (/\.(?:ts|m4s|aac)$/i.test(address.split(/[?#]/)[0])) throw moeniPlaybackError("SEGMENT", "단일 영상 조각은 전체 회차가 아니에요");
+        if (depth > 3 || requests >= 8 || visited[address]) throw moeniPlaybackError("LIMIT", "목록 순환 또는 탐색 제한에 도달했어요");
+        visited[address] = true;
+        requests++;
+        const response = await client.get(address, headers);
+        const status = Number(response && response.statusCode);
+        if (status === 401 || status === 403) throw moeniPlaybackError("AUTH", `HTTP ${status}: 현재 세션에서 거절됐어요. 정상 페이지에서 세션을 다시 만들어야 해요`);
+        if (!(status >= 200 && status < 300)) throw moeniPlaybackError("HTTP", `재생목록 요청 실패 (HTTP ${status || "?"})`);
+        // Client의 최종 응답 URL 계약이 없어 리다이렉트 기준 경로는 추정하지 않는다.
+        const info = moeniInspectPlaylist(response.body, address);
+        if (info.type === "media") return Object.assign({ url: address }, info);
+        let last = null;
+        for (const variant of info.variants.slice(0, 3)) {
+            try { return await visit(variant, depth + 1); }
+            catch (error) {
+                if (error.code === "AUTH") throw error;
+                last = error;
+            }
+        }
+        throw last || moeniPlaybackError("MANIFEST", "재생 가능한 화질 목록이 없어요");
+    }
+    // 원본 master를 그대로 반환하면 검증하지 않은 다른 화질로 전환할 수 있어 검증한 media 목록을 반환한다.
+    return visit(url, 0);
+}
+
+// This function is serialized into the normal playback WebView. It only observes
+// Blob creation and request headers; it does not decode /play or forge /req.
+function moeniCapturePage(want, limitMs) {
+    if (window.__moeniCaptureStop) window.__moeniCaptureStop();
+    const state = { blobs: new Map(), manifests: [], requests: [], remote: [], pending: new Set() };
+    const originalCreate = URL.createObjectURL;
+    const originalFetch = window.fetch;
+    const originalOpen = XMLHttpRequest.prototype.open;
+    const originalHeader = XMLHttpRequest.prototype.setRequestHeader;
+    let timer, done = false, busy = false, clicked = !want, clickedAt = Date.now(), heldBytes = 0;
+    const start = Date.now();
+    const normalize = (value) => {
+        try { value = decodeURIComponent(value); } catch (_) {}
+        return String(value).replace(/[\s-]/g, "");
+    };
+    function cleanup() {
+        clearInterval(timer);
+        if (URL.createObjectURL === create) URL.createObjectURL = originalCreate;
+        if (window.fetch === fetchHook) window.fetch = originalFetch;
+        if (XMLHttpRequest.prototype.open === openHook) XMLHttpRequest.prototype.open = originalOpen;
+        if (XMLHttpRequest.prototype.setRequestHeader === headerHook) XMLHttpRequest.prototype.setRequestHeader = originalHeader;
+        state.blobs.clear();
+        state.manifests.length = state.requests.length = state.remote.length = 0;
+        window.__moeniCaptureStop = null;
+    }
+    function send(value) {
+        if (done) return;
+        value.clicked = clicked;
+        value.elapsedMs = Date.now() - start;
+        value.manifestCount = state.manifests.length;
+        value.requestCount = state.requests.length;
+        done = true;
+        cleanup();
+        window.flutter_inappwebview.callHandler("setResponse", JSON.stringify(value));
+    }
+    window.__moeniCaptureStop = () => { done = true; cleanup(); };
+    function create(blob) {
+        const url = originalCreate.apply(this, arguments);
+        if (blob instanceof Blob && blob.size <= 2 * 1024 * 1024 &&
+            !/^image\//.test(blob.type) && heldBytes + blob.size <= 8 * 1024 * 1024 && state.blobs.size < 16) {
+            state.blobs.set(url, blob);
+            heldBytes += blob.size;
+            const task = blob.slice(0, 16).text().then(async (head) => {
+                if (!done && /^#EXTM3U/.test(head)) {
+                    const text = await blob.text();
+                    if (!done) state.manifests.push({ text, created: Date.now() });
+                }
+            }).catch(() => {});
+            state.pending.add(task);
+            task.finally(() => state.pending.delete(task));
+        }
+        return url;
+    }
+    function remember(url, headers) {
+        try {
+            const address = new URL(typeof url === "string" ? url : url.url, location.href);
+            if (address.protocol !== "https:" || !address.hostname.endsWith(".modumo.bid") ||
+                !address.pathname.startsWith("/vod/")) return;
+            const gets = new Headers(headers).get("gets");
+            if (gets) {
+                state.requests.push({ url: address.href, gets });
+                if (state.requests.length > 32) state.requests.shift();
+            }
+        } catch (_) {}
+    }
+    function fetchHook(input, options) {
+        remember(input, options?.headers || input?.headers);
+        const promise = originalFetch.apply(this, arguments);
+        promise.then((response) => {
+            // Only inspect likely manifest responses. Never stringify a TS body.
+            const address = response.url || (typeof input === "string" ? input : input?.url) || "";
+            const type = response.headers.get("content-type") || "";
+            if (done || response.status !== 200 ||
+                !(/\.m3u8(?:[?#]|$)/i.test(address) || /mpegurl/i.test(type))) return;
+            (async () => {
+                const reader = response.clone().body?.getReader();
+                if (!reader) return;
+                let size = 0;
+                const chunks = [];
+                try {
+                    for (;;) {
+                        const item = await reader.read();
+                        if (item.done) break;
+                        size += item.value.length;
+                        if (done || size > 2 * 1024 * 1024) { await reader.cancel(); return; }
+                        chunks.push(item.value);
+                    }
+                    const bytes = new Uint8Array(size);
+                    let offset = 0;
+                    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+                    if (!done && /^#EXTM3U(?:\r?\n|$)/.test(new TextDecoder().decode(bytes))) state.remote.push(address);
+                } finally { reader.releaseLock(); }
+            })().catch(() => {});
+        }).catch(() => {});
+        return promise;
+    }
+    function openHook(method, url) {
+        this.__moeniUrl = url;
+        this.__moeniGets = "";
+        this.addEventListener("loadend", () => {
+            if (done) return;
+            try {
+                if (this.__moeniGets) remember(this.responseURL || this.__moeniUrl, { gets: this.__moeniGets });
+                if (this.status === 200 && /^(?:|text)$/.test(this.responseType) &&
+                    this.responseText.length <= 2 * 1024 * 1024 &&
+                    /^#EXTM3U(?:\r?\n|$)/.test(this.responseText)) state.remote.push(this.responseURL);
+            } catch (_) {}
+        }, { once: true });
+        return originalOpen.apply(this, arguments);
+    }
+    function headerHook(key, value) {
+        if (String(key).toLowerCase() === "gets") this.__moeniGets = String(value);
+        return originalHeader.apply(this, arguments);
+    }
+    URL.createObjectURL = create;
+    if (originalFetch) window.fetch = fetchHook;
+    XMLHttpRequest.prototype.open = openHook;
+    XMLHttpRequest.prototype.setRequestHeader = headerHook;
+    async function tick() {
+        if (done || busy) return;
+        busy = true;
+        try {
+            if (!clicked) {
+                const link = [...document.querySelectorAll('a[href^="#"]')].find((a) =>
+                    normalize(a.getAttribute("href").slice(1)) === normalize(want));
+                if (link) { clickedAt = Date.now(); clicked = true; link.click(); }
+            }
+            const candidate = clicked && state.manifests[state.manifests.length - 1];
+            if (candidate) {
+                const uris = new Set(candidate.text.split(/\r?\n/).filter((line) => line && line[0] !== "#"));
+                const matched = state.requests.filter((request) => uris.has(request.url));
+                const keys = [...new Set(matched.map((request) => request.gets))];
+                if (keys.length === 1) {
+                    const resources = {};
+                    for (const match of candidate.text.matchAll(/URI="(blob:[^"]+)"/g)) {
+                        const blob = state.blobs.get(match[1]);
+                        if (!blob || blob.size > 1024 * 1024) { send({ err: "missing_init_blob" }); return; }
+                        const bytes = new Uint8Array(await blob.arrayBuffer());
+                        let binary = "";
+                        for (let i = 0; i < bytes.length; i += 16384) binary += String.fromCharCode(...bytes.subarray(i, i + 16384));
+                        resources[match[1]] = { base64: btoa(binary) };
+                    }
+                    if (done) return;
+                    send({
+                        inline: { manifest: candidate.text, resources },
+                        headers: {
+                            gets: keys[0], "User-Agent": navigator.userAgent,
+                            Referer: location.origin + "/", Origin: location.origin,
+                        },
+                    });
+                    return;
+                }
+                if (keys.length > 1) { send({ err: "rotating_gets_requires_live_webview" }); return; }
+            }
+            const remote = state.remote[state.remote.length - 1];
+            if (clicked && remote && /^https:/.test(remote)) {
+                send({ u: remote, headers: {
+                    "User-Agent": navigator.userAgent, Referer: location.origin + "/", Origin: location.origin,
+                } });
+                return;
+            }
+            const video = document.querySelector("video");
+            if (clicked && video && Date.now() - clickedAt > 3000 && video.paused) {
+                video.muted = true;
+                video.play()?.catch(() => {});
+            }
+            if (Date.now() - start >= limitMs - 1500) {
+                send({
+                    err: !clicked ? "noep" : candidate ? "manifest_without_matching_gets" : "no_manifest",
+                    manifestCount: state.manifests.length, requestCount: state.requests.length,
+                    blank: location.href === "about:blank",
+                });
+            }
+        } catch (_) { send({ err: "capture_failed" }); }
+        finally { busy = false; }
+    }
+    timer = setInterval(tick, 250);
+    tick();
+}
+
+async function moeniRegisterInline(client, inline, headers, key) {
+    if (!/^[0-9a-f]{64}$/.test(key)) throw moeniPlaybackError("BRIDGE_SETUP", "로컬 프록시 실행 후 확장 설정에 64자리 등록 키를 입력해 주세요");
+    let response;
+    try {
+        response = await client.post("http://127.0.0.1:17889/register", {
+            "Content-Type": "application/json", Authorization: "Bearer " + key,
+        }, JSON.stringify({ manifest: inline.manifest, resources: inline.resources || {}, headers }));
+    } catch (_) {
+        throw moeniPlaybackError("BRIDGE_OFFLINE", "같은 기기에서 로컬 프록시를 실행해 주세요. PC의 프록시는 휴대폰에서 접근할 수 없어요");
+    }
+    if (Number(response.statusCode) !== 201) {
+        const status = Number(response.statusCode);
+        throw moeniPlaybackError("BRIDGE_HTTP", `로컬 프록시 HTTP ${status}. 등록 키·재생목록·실행 상태를 확인해 주세요`);
+    }
+    let result;
+    try { result = JSON.parse(response.body); } catch (_) {}
+    if (!result || !/^http:\/\/127\.0\.0\.1:17889\/s\/[0-9a-f]{48}\/playlist\.m3u8$/.test(result.url) ||
+        !Number.isFinite(result.duration) || result.duration < 10 || !(result.segmentCount > 0)) {
+        throw moeniPlaybackError("BRIDGE_RESPONSE", "로컬 프록시 응답이 올바르지 않아요");
+    }
+    return result;
+}
 
 function first(el, css) {
     const l = el ? el.select(css) : [];
@@ -447,13 +781,27 @@ class DefaultExtension extends MProvider {
         let r = await this.viaWebview(`${DEFAULT_BASE_URL}/${id}`, `${DEFAULT_BASE_URL}/`, want, 24000);
         diag.push("1차 " + this.diagText(r));
         // 영상 주소가 안 보이고 플레이어 틀(iframe)이 있으면 그 틀을 웹뷰로 한 번 더 열어 거기서 찾음
-        if ((!r || !r.u) && r && (r.iframes || []).length) {
+        if ((!r || (!r.u && !r.inline)) && r && (r.iframes || []).length) {
             const frame = r.iframes.find((f) => /^https?:\/\//.test(f) && !/google|doubleclick|disqus|cloudflare|about:/i.test(f));
             if (frame) {
                 const r2 = await this.viaWebview(frame, `${DEFAULT_BASE_URL}/`, "", 15000);
                 diag.push("틀 " + this.diagText(r2));
                 if (r2 && r2.u) r = Object.assign(r2, { ref: frame });
             }
+        }
+        if (r && r.inline) {
+            // This session is registered while the captured bytes still exist;
+            // no WebView-local blob URL is handed to the native player.
+            const key = String(new SharedPreferences().get(`${KEY}_bridge_key`) || "").trim();
+            const registered = await moeniRegisterInline(
+                this.bridgeClient || new Client({ noProxy: true, timeout: 10, connectTimeout: 3 }),
+                r.inline, r.headers || {}, key,
+            );
+            this.saveDiag("넘긴 주소 로컬 HLS", [
+                `${registered.segmentCount}개 조각 · ${Math.round(registered.duration)}초`,
+                "전체 목록과 실제 gets 헤더 인계. Android 연속 재생·토큰 만료는 별도 확인 필요",
+            ]);
+            return [{ url: registered.url, originalUrl: registered.url, quality: `${LABEL} 로컬 HLS`, headers: {} }];
         }
         if (!r || !r.u) {
             this.saveDiag(want, diag);
@@ -462,20 +810,43 @@ class DefaultExtension extends MProvider {
         }
         const ref = r.ref || `${DEFAULT_BASE_URL}/`;
         const origin = (/^(https?:\/\/[^/]+)/.exec(ref) || [null, DEFAULT_BASE_URL])[1];
-        const vh = { "User-Agent": UA, "Referer": ref, "Origin": origin };
+        const vh = Object.assign({ "User-Agent": UA, "Referer": ref, "Origin": origin }, r.headers || {});
         const u = String(r.u);
-        const isHls = /m3u8|\/hls\/|\/vod\/|playlist|master/i.test(u) && !/\.mp4(?:[?#]|$)/i.test(u);
-        // /vod/ 주소가 영상 파일(MPEG-TS) 자체를 주면(0.0.3 휴대폰 기록 "G@…") 그대로 재생기에 (재생 목록 표시 붙이지 않음)
-        const ts = !!r.ts;
-        const v = { url: u, originalUrl: !ts && isHls && !/\.m3u8(?:[?#]|$)/i.test(u) ? u.replace(/#.*$/, "") + "#download.m3u8" : u, quality: `${LABEL} ${ts ? "원본 (TS)" : "자동"}`, headers: vh };
-        // 진단: 성공해도 어떤 주소를 넘겼는지 남김 (재생이 안 되면 필터 🩺 줄로 확인)
-        this.saveDiag(`넘긴 주소 ${ts ? "TS" : isHls ? "HLS" : "파일"}`, [u, this.diagText(Object.assign({}, r, { u: "" }))]);
+        let checked;
+        try {
+            if (r.ts) throw moeniPlaybackError("SEGMENT", "TS 조각 하나만 발견했어요. 전체 재생목록이 필요해요");
+            checked = await moeniValidatePlayback(this.client, u, vh);
+        } catch (error) {
+            this.saveDiag("인계 차단", [error.code || "NETWORK", moeniSafeUrl(u)]);
+            throw error;
+        }
+        // 확장자 없는 실제 HLS만 검증 후 앱의 형식 힌트를 붙인다. fragment가 목록을 만드는 것은 아니다.
+        const verified = typeof createHlsProxyUrl === "function" ?
+            await createHlsProxyUrl(checked.url, vh) : checked.url;
+        const v = {
+            url: verified,
+            originalUrl: /\.m3u8(?:[?#]|$)/i.test(verified) ? verified : verified.replace(/#.*$/, "") + "#download.m3u8",
+            quality: `${LABEL} 자동`,
+            headers: verified === checked.url ? vh : {},
+        };
+        this.saveDiag("넘긴 주소 HLS", [`${checked.segmentCount}개 조각 · ${checked.duration}초 (구조 검증, 조각·키 요청은 미검증)`]);
         return [v];
     }
 
     diagText(r) {
         if (!r) return "응답 없음";
-        if (r.u) return "찾음 " + String(r.u).substring(0, 80);
+        if (r.inline) return "전체 Blob 목록 확보";
+        if (r.u) return "원격 HLS 후보 확보";
+        if (r.manifestCount !== undefined || r.requestCount !== undefined) {
+            return [
+                r.err || "추출 실패",
+                r.clicked ? "회차 누름" : "회차 못 누름",
+                `전체 목록 ${Number(r.manifestCount) || 0}개`,
+                `gets 요청 ${Number(r.requestCount) || 0}개`,
+                r.blank ? "빈 페이지로 이동" : "",
+                r.elapsedMs !== undefined ? `${Math.round(Number(r.elapsedMs) / 1000)}초` : "",
+            ].filter(Boolean).join(" | ");
+        }
         const short = (u) => String(u || "").replace(/^https?:\/\//, "").substring(0, 70);
         return [
             r.err || "",
@@ -511,46 +882,18 @@ class DefaultExtension extends MProvider {
     }
 
     /**
-     * 숨은 웹뷰로 화면을 열고(want 가 있으면 그 회차를 눌러) 플레이어가 받은 영상 주소(m3u8·mp4)를 돌려받음.
-     * 회차 표시(# 뒤 "제목-NN화")는 띄어쓰기·- 를 빼고 비교. 못 찾으면 틀(iframe)·영상 칸·받은 주소를 함께 돌려줌
+     * 정상 플레이어의 전체 Blob HLS·초기화 데이터·대응 gets 헤더를 확보한다.
+     * HTTP(S) HLS를 직접 관찰한 경우에는 원격 주소를 반환한다. 단일 TS·MP4 후보는 반환하지 않는다.
      */
     async viaWebview(page, referer, want, limitMs) {
-        const w = JSON.stringify(String(want || "").replace(/[\s-]/g, ""));
-        const max = Math.floor((limitMs - 2000) / 300);
-        // 플레이어가 받은 응답을 엿봄(XHR·fetch 감싸기, 동작은 그대로): /vod/·m3u8 주소의 상태·앞부분 글자를 기록
-        const hook = "window.__mo=window.__mo||[];if(!window.__moh){window.__moh=1;" +
-            "var rec=function(u,s,t,ct,rg){u=String(u||'');if(!/\\/vod\\/|\\/v1\\/play|m3u8|\\.mpd|\\.ass|\\.vtt|\\.srt|subtitle/i.test(u))return;window.__mo.push({u:u,s:s,h:String(t||'').substring(0,120),ct:ct||'',r:rg||''})};" +
-            "var xo=XMLHttpRequest.prototype.open,xs=XMLHttpRequest.prototype.send;" +
-            "XMLHttpRequest.prototype.open=function(m,u){this.__u=u;return xo.apply(this,arguments)};" +
-            "var xh=XMLHttpRequest.prototype.setRequestHeader;XMLHttpRequest.prototype.setRequestHeader=function(k,v){if(/^range$/i.test(k))this.__r=v;return xh.apply(this,arguments)};" +
-            "XMLHttpRequest.prototype.send=function(){var x=this;x.addEventListener('loadend',function(){var t='';try{t=(x.responseType===''||x.responseType==='text')?x.responseText:('['+x.responseType+']')}catch(e){}" +
-            "rec(x.responseURL||x.__u,x.status,t,x.getResponseHeader&&x.getResponseHeader('content-type'),x.__r)});return xs.apply(this,arguments)};" +
-            "if(window.fetch){var fo=window.fetch;window.fetch=function(i,o){var rg='';try{var hh=(o&&o.headers)||(i&&i.headers);rg=hh?(hh.get?hh.get('range'):(hh.Range||hh.range))||'':''}catch(e){}" +
-            "return fo.apply(this,arguments).then(function(r){try{var u=r.url||(i&&i.url)||String(i);" +
-            "if(/\\/vod\\/|\\/v1\\/play|m3u8|\\.mpd|\\.ass|\\.vtt|\\.srt|subtitle/i.test(u))r.clone().text().then(function(t){rec(u,r.status,t,r.headers.get('content-type'),rg)})}catch(e){}return r})}}}";
-        const script = "(function(){try{performance.setResourceTimingBufferSize(5000)}catch(e){}" + hook + ";" +
-            "var want=" + w + ",n=0,clicked=!want,at=0,max=" + max + ";" +
-            "function norm(h){try{h=decodeURIComponent(h)}catch(e){}return h.replace(/[\\s-]/g,'')}" +
-            "function eps(){return [].slice.call(document.querySelectorAll('a[href^=\"#\"]')).map(function(a){return a.getAttribute('href').slice(1)}).filter(function(h){return /%ED%99%94|화/.test(h)})}" +
-            "function vids(){return [].slice.call(document.querySelectorAll('video,source')).map(function(v){return (v.currentSrc||v.src||v.getAttribute('src')||'(빈칸)')+(v.readyState!==undefined?' rs'+v.readyState:'')})}" +
-            "function frames(){return [].slice.call(document.querySelectorAll('iframe')).map(function(f){return f.src||f.getAttribute('data-src')||''}).filter(function(s){return s})}" +
-            "function find(){var m=window.__mo||[];for(var k=m.length-1;k>=0;k--){if(/^#EXTM3U/.test(m[k].h.replace(/^\\s+/,'')))return m[k].u}" +
-            
-            "var r=performance.getEntriesByType('resource');for(var i=r.length-1;i>=0;i--){var u=r[i].name;if(/m3u8|\\.mpd(\\?|$)|\\.mp4(\\?|$)|\\/hls\\/|\\/playlist|\\/master\\./i.test(u))return u;}" +
-            "var v=document.querySelector('video');var s=v?(v.currentSrc||v.src||''):'';return /^https?:/.test(s)?s:null}" +
-            "function res(){var r=performance.getEntriesByType('resource'),o=[];for(var i=r.length-1;i>=0&&o.length<12;i--){var u=r[i].name;if(!/\\.(png|jpe?g|webp|gif|svg|css|woff2?)(\\?|$)|google|cloudflareinsights|fonts|datalist|favicon/i.test(u))o.push(u.split('?')[0])}return o}" +
-            "function send(o){clearInterval(t);o.ts=!!window.__ts;o.clicked=clicked;o.iframes=frames();o.videos=vids();o.res=res();o.seen=(window.__mo||[]).filter(function(x){return !/\\/vod\\//.test(x.u)}).slice(-6).concat((window.__mo||[]).filter(function(x){return /\\/vod\\//.test(x.u)}).slice(-1)).map(function(x){return x.s+' '+x.ct+' r='+x.r+' '+x.u.replace(/^https?:\\/\\//,'').substring(0,140)+' 「'+x.h.substring(0,60).replace(/[^\\x20-\\x7e]/g,'?')+'」'});o.href=location.href;window.flutter_inappwebview.callHandler('setResponse',JSON.stringify(o))}" +
-            "var t=setInterval(function(){n++;" +
-            "if(!clicked){var as=document.querySelectorAll('a[href^=\"#\"]');for(var i=0;i<as.length;i++){if(norm(as[i].getAttribute('href').slice(1))===want){as[i].click();clicked=true;at=n;break;}}}" +
-            "var u=clicked?find():null;if(u){send({u:u});return;}" +
-            "if(clicked&&n%15===0){var v=document.querySelector('video');if(v){v.muted=true;try{v.play()}catch(e){}}}" +
-            "if(clicked&&want&&n-at>=27&&frames().some(function(f){return /^https?:/.test(f)})){send({err:'nourl'});return;}" +
-            "if(n>=max){send({err:clicked?'nourl':'noep',eps:eps().slice(-4).map(function(h){try{return decodeURIComponent(h)}catch(x){return h}})});}" +
-            "},300);})();";
+        const script = "(" + moeniCapturePage.toString() + ")(" + JSON.stringify(String(want || "")) + "," + Number(limitMs) + ");";
         try {
-            const timeout = new Promise((res) => setTimeout(() => res("__timeout__"), limitMs));
-            const res = await Promise.race([evaluateJavascriptViaWebview(page, { "Referer": referer }, [script]), timeout]);
-            if (!res || res === "__timeout__") return null;
+            // The host owns the timeout and disposes the extraction WebView.
+            // A JS Promise.race would return early but leave that WebView running.
+            const res = await evaluateJavascriptViaWebview(
+                page, { "Referer": referer }, [script], Math.ceil(limitMs / 1000),
+            );
+            if (!res) return null;
             return JSON.parse(String(res));
         } catch (e) {
             return { err: "웹뷰 오류 " + String((e && e.message) || e).substring(0, 60) };
@@ -561,6 +904,7 @@ class DefaultExtension extends MProvider {
     getFilterList() {
         return [
             { type_name: "HeaderFilter", name: "📡 주소: moeni.net" },
+            { type_name: "HeaderFilter", name: MOENI_TEST_NOTICE },
             ...notesFilters(KEY),
             ...this.diagFilters(),
             { type_name: "SeparatorFilter" },
@@ -572,7 +916,18 @@ class DefaultExtension extends MProvider {
     }
 
     getSourcePreferences() {
-        return [qualityPreference(`${KEY}_quality`)];
+        return [
+            qualityPreference(`${KEY}_quality`),
+            {
+                key: `${KEY}_bridge_key`,
+                editTextPreference: {
+                    title: "로컬 HLS 프록시 등록 키",
+                    summary: "Blob 재생용. 같은 기기에서 Node 프록시를 실행해야 합니다. 키는 공유하지 마세요.",
+                    value: "", dialogTitle: "로컬 프록시 등록 키",
+                    dialogMessage: "프록시 시작 화면의 64자리 키. 사이트 로그인 토큰이나 gets 값이 아닙니다.",
+                },
+            },
+        ];
     }
 }
 
