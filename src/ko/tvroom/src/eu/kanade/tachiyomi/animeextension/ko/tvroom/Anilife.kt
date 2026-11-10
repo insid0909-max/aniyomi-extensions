@@ -23,6 +23,7 @@ import eu.kanade.tachiyomi.animesource.model.Track
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.POST
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -30,8 +31,10 @@ import kotlinx.coroutines.withContext
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
 import rx.Observable
@@ -62,6 +65,13 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
             .invoke(null) as? Application
         app?.getSharedPreferences("source_$id", 0)
     }.getOrNull()
+
+    // 재생 세션 표 (만료 30초 전까지 다시 씀)
+    @Volatile private var pbToken = ""
+
+    @Volatile private var pbBase = ""
+
+    @Volatile private var pbExp = 0L
 
     // 직접 넣은 주소는 바로, 더 새 주소가 확인되면 자동으로 바뀜 (DomainGuard.pick)
     override val baseUrl: String
@@ -380,6 +390,59 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         // 사이트 재생 화면(/content/작품/회차)에서 부르는 것처럼 그 화면 주소를 Referer 로
         val page = "$baseUrl/content/$animeId/$key"
 
+        var sessWhy = ""
+
+        // 0) 사이트 플레이어가 하는 순서 그대로 (2026-11-10, 다른 망가요미 저장소 애니라이프와 같은 방식):
+        //    재생 세션(POST /api/playback/session, X-Anilife-Player) → 표로 재생 정보(X-Anilife-Playback·X-Anilife-Delivery)
+        //    되면 웹뷰 없이 바로 재생, 안 되면 아래 예전 방법(바로 부르기 → 웹뷰). 쿠키는 앱 쿠키 저장소가 이어 줌
+        fun viaSession() {
+            val hh = apiHeaders().newBuilder()
+                .set("Accept", "application/json, text/plain, */*")
+                .set("Referer", page)
+                .set("Origin", baseUrl)
+                .set("Cache-Control", "no-store")
+                .build()
+            repeat(2) { attempt ->
+                if (main.isNotEmpty() || backup.isNotEmpty()) return
+                try {
+                    val now = System.currentTimeMillis()
+                    val token = pbToken.takeIf { it.isNotEmpty() && pbBase == baseUrl && (pbExp == 0L || pbExp > now + 30_000) } ?: run {
+                        val body = "".toRequestBody("application/x-www-form-urlencoded".toMediaType())
+                        client.newCall(POST("$baseUrl/api/playback/session", hh.newBuilder().set("X-Anilife-Player", "1").build(), body)).execute().use { r ->
+                            val o = runCatching { JSONObject(r.body.string()) }.getOrNull()
+                            val t = o?.optString("token")?.trim().orEmpty()
+                            if (r.code !in 200..299 || t.isEmpty()) {
+                                sessWhy = "세션 HTTP ${r.code}" + (o?.optString("error")?.takeIf { it.isNotEmpty() }?.let { " " + it.take(40) } ?: "")
+                                return
+                            }
+                            pbToken = t
+                            pbBase = baseUrl
+                            pbExp = (o?.optLong("expiresAt") ?: 0L) * 1000
+                            t
+                        }
+                    }
+                    val url = "$baseUrl${episode.url.substringBefore('?')}?request=${System.currentTimeMillis()}-$attempt"
+                    val h2 = hh.newBuilder().set("X-Anilife-Playback", token).set("X-Anilife-Delivery", "source-v1").build()
+                    client.newCall(GET(url, h2)).execute().use { r ->
+                        val o = runCatching { JSONObject(r.body.string()) }.getOrNull()
+                        if (r.code in 200..299 && o != null) {
+                            main = str(o, "videoUrl")
+                            backup = str(o, "backupUrl")
+                            sub = str(o, "subtitleUrl")
+                            if (main.isEmpty() && backup.isEmpty()) sessWhy = "재생 빈 응답"
+                            return
+                        }
+                        sessWhy = "재생 HTTP ${r.code}" + (o?.optString("error")?.takeIf { it.isNotEmpty() }?.let { " " + it.take(40) } ?: "")
+                        pbToken = ""
+                    }
+                } catch (e: Exception) {
+                    sessWhy = "세션 ${e.message.orEmpty().take(50)}"
+                    pbToken = ""
+                }
+            }
+        }
+        viaSession()
+
         // 앱에서 바로 부르는 재생 API·작품 정보 (휴대폰에서는 대개 403 이라 웹뷰로 넘어감)
         fun direct() {
             try {
@@ -413,7 +476,7 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         }
         // 바로 부르기가 최근에 실패했으면 건너뛰고 웹뷰부터 (6시간 기억)
         val skipDirect = (prefs()?.getLong(PREF_DIRECT_FAIL_UNTIL, 0L) ?: 0L) > System.currentTimeMillis()
-        if (!skipDirect) direct()
+        if (!skipDirect && main.isEmpty() && backup.isEmpty()) direct()
         var vh = videoHeaders()
         // 그래도 없으면 숨은 화면(WebView)으로 사이트 재생 화면을 열어 영상 주소를 받음
         if (main.isEmpty() && backup.isEmpty()) {
@@ -430,7 +493,8 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
                 direct()
             }
             if (main.isEmpty() && backup.isEmpty()) {
-                throw Exception("재생 주소를 받지 못했습니다. 잠시 뒤 다시 시도해 주세요 [$apiError]".replace(" []", ""))
+                val why = listOf(sessWhy, apiError).filter { it.isNotEmpty() }.joinToString(" · ")
+                throw Exception("재생 주소를 받지 못했습니다. 잠시 뒤 다시 시도해 주세요 [$why]".replace(" []", ""))
             }
         }
         val subs = if (sub.isNotEmpty()) listOf(Track(abs(sub), "한국어")) else emptyList()
