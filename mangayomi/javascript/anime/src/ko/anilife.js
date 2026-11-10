@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.19",
+    "version": "0.1.20",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/anilife.js"
@@ -725,6 +725,9 @@ class DefaultExtension extends MProvider {
         let sub = "";
         let apiError = "";
         let sessWhy = "";
+        // [임시 측정 2026-11-10] 어느 길로 재생 주소를 받았는지·걸린 초를 화질 이름 뒤에 (원인 찾으면 뺄 것)
+        const tmStart = Date.now();
+        let tmPath = "";
         // 0) 사이트 플레이어가 하는 순서 그대로 (2026-11-10, 다른 망가요미 저장소 애니라이프와 같은 방식):
         //    재생 세션(POST /api/playback/session, X-Anilife-Player) → 표·쿠키로 재생 정보(X-Anilife-Playback·X-Anilife-Delivery)
         //    되면 웹뷰 없이 바로 재생, 안 되면 아래 예전 방법(바로 부르기 → 웹뷰)
@@ -770,6 +773,7 @@ class DefaultExtension extends MProvider {
             }
         };
         await viaSession();
+        if (main || backup) tmPath = "세션";
         // 앱에서 바로 부르는 재생 API·작품 정보 (휴대폰에서는 대개 403 이라 웹뷰로 넘어감)
         const direct = async () => {
             try {
@@ -797,11 +801,15 @@ class DefaultExtension extends MProvider {
         // 바로 부르기가 최근에 실패했으면 건너뛰고 웹뷰부터 (6시간 기억)
         const prefs = new SharedPreferences();
         const skipDirect = Number(prefs.getString(DIRECT_FAIL_KEY, "0") || 0) > Date.now();
-        if (!skipDirect && !main && !backup) await direct();
+        if (!skipDirect && !main && !backup) {
+            await direct();
+            if (main || backup) tmPath = "바로";
+        }
         // 그래도 없으면 숨은 웹뷰로 사이트 재생 화면을 열어, 그 화면이 받는 재생 주소를 씀
         if (!main && !backup) {
             const w = await this.viaWebview(`${this.getBaseUrl()}/content/${m[1]}/${m[2]}`, `/api/playback/${m[1]}/${m[2]}`);
             if (w) {
+                tmPath = "웹뷰";
                 main = w.videoUrl || "";
                 backup = w.backupUrl || "";
                 sub = sub || w.subtitleUrl || "";
@@ -825,7 +833,8 @@ class DefaultExtension extends MProvider {
             ...servers.map(([u, label]) => hlsExpand(this.client, u, label, h)),
         ]);
         let list = [].concat(...(ok ? lists : lists.reverse()));
-        return qualitySort("anilife_quality", list.map((v) => Object.assign(v, { subtitles, audios: [] })));
+        const tmTag = ` · ${tmPath || "?"} ${((Date.now() - tmStart) / 1000).toFixed(1)}초${tmPath !== "세션" && sessWhy ? ` [${sessWhy.substring(0, 40)}]` : ""}${skipDirect ? " (바로 건너뜀)" : ""}`;
+        return qualitySort("anilife_quality", list.map((v) => Object.assign(v, { quality: String(v.quality) + tmTag, subtitles, audios: [] })));
     }
 
     /**
