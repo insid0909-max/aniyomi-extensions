@@ -1,0 +1,132 @@
+name: 애니요미 시험 APK
+
+# test-apk 가지에 올리면 test-apk/modules.txt 에 적힌 확장만 "시험판" APK 로 빌드해
+# apk-test 가지(애니요미 시험 저장소)에 올림. 정식 APK·정식 저장소(gh-pages)는 건드리지 않음.
+on:
+  push:
+    branches:
+      - test-apk
+    paths-ignore:
+      - '**.md'
+      - 'mangayomi/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: test-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 빌드할 모듈 읽기
+        run: |
+          MODS=$(grep -vE '^\s*(#|$)' test-apk/modules.txt | awk '{print $1}' | xargs)
+          echo "MODS=$MODS" >> $GITHUB_ENV
+          echo "시험 APK 모듈: ${MODS:-없음}"
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Set up Android SDK Build-Tools
+        run: echo "$ANDROID_HOME/build-tools/34.0.0" >> $GITHUB_PATH
+
+      - uses: gradle/actions/setup-gradle@v3
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      # 시험 저장소는 정식 저장소와 다른 서명 키 → 애니요미에 저장소를 따로 추가할 수 있음 (같은 키면 "이미 있는 저장소"로 거절됨)
+      - name: 시험용 서명 키
+        run: |
+          KS=test-apk/signingkey-test.jks
+          if [ ! -f "$KS" ]; then
+            keytool -genkeypair -alias aniyomitest -keypass aniyomi123 -keystore "$KS" -storepass aniyomi123 \
+              -dname "CN=AniyomiTestExtension, OU=Test, O=Aniyomi, L=Seoul, ST=Seoul, C=KR" \
+              -keyalg RSA -keysize 2048 -validity 10000 -storetype PKCS12
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            git add "$KS"
+            git commit -m "chore: 시험 APK 서명 키 [skip ci]" || true
+            git push origin HEAD:test-apk || true
+          fi
+          FP=$(keytool -list -v -keystore "$KS" -alias aniyomitest -storepass aniyomi123 | grep "SHA256:" | awk '{print $2}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
+          echo "SIGNING_KEY=$FP" >> $GITHUB_ENV
+          echo "KS_PATH=$GITHUB_WORKSPACE/$KS" >> $GITHUB_ENV
+
+      - name: 시험판으로 바꾸기 (패키지 .test · 이름 [시험] · 버전)
+        if: env.MODS != ''
+        run: |
+          python3 test-apk/prepare.py
+          V=$((1000 + $(git rev-list --count HEAD)))
+          for m in $MODS; do
+            sed -i -E "s/val extCode\s*=\s*[0-9]+/val extCode = $V/g" "src/ko/$m/build.gradle.kts"
+          done
+          echo "시험 버전 번호: $V"
+
+      - name: 빌드
+        if: env.MODS != ''
+        run: |
+          TASKS=$(for m in $MODS; do printf ':src:ko:%s:assembleRelease ' "$m"; done)
+          ./gradlew $TASKS -x lintKotlin -x lint \
+            -Pandroid.injected.signing.store.file="$KS_PATH" \
+            -Pandroid.injected.signing.store.password=aniyomi123 \
+            -Pandroid.injected.signing.key.alias=aniyomitest \
+            -Pandroid.injected.signing.key.password=aniyomi123 \
+            --stacktrace
+
+      - name: 시험 저장소 목록 만들기
+        run: |
+          mkdir -p repo/apk repo/icon
+          python3 - << 'EOF'
+          import os, glob, subprocess, json
+          meta = {"meta": {"name": "TVroom Test Repository", "shortName": "TVroom-test",
+                           "website": "https://github.com/insid0909-max/aniyomi-extensions/tree/test-apk/test-apk",
+                           "signingKeyFingerprint": os.environ["SIGNING_KEY"]}}
+          json.dump(meta, open("repo/repo.json", "w"), ensure_ascii=False, indent=2)
+          exts = []
+          for apk in glob.glob("src/**/build/outputs/apk/release/*.apk", recursive=True):
+              b = subprocess.check_output(["aapt", "dump", "badging", apk]).decode("utf-8", "ignore")
+              pkg = vcode = vname = label = icon = None
+              for line in b.splitlines():
+                  if line.startswith("package:"):
+                      for part in line.split():
+                          if part.startswith("name='"): pkg = part.split("'")[1]
+                          elif part.startswith("versionCode='"): vcode = int(part.split("'")[1])
+                          elif part.startswith("versionName='"): vname = part.split("'")[1]
+                  elif line.startswith("application-label:"):
+                      label = line.split("'")[1]
+                  if "application-icon-" in line or "icon='" in line:
+                      icon = line.split("'")[-2]
+              if not (pkg and vcode and vname):
+                  continue
+              name = f"aniyomi-{pkg}-v{vname}-release.apk"
+              subprocess.run(["cp", apk, f"repo/apk/{name}"], check=True)
+              if icon:
+                  subprocess.run(f"unzip -p '{apk}' '{icon}' > 'repo/icon/{pkg}.png'", shell=True)
+              exts.append({"name": label or pkg, "pkg": pkg, "apk": name, "lang": "ko", "code": vcode,
+                           "version": vname, "nsfw": 1, "hasReadme": 0, "hasChangelog": 0,
+                           "size": os.path.getsize(f"repo/apk/{name}"), "icon": f"{pkg}.png",
+                           "sources": [{"name": label or pkg, "lang": "ko", "id": str(abs(hash(pkg))), "baseUrl": "", "versionId": 1}]})
+          json.dump(exts, open("repo/index.min.json", "w"), ensure_ascii=False, separators=(",", ":"))
+          print(f"시험 APK {len(exts)}개: " + ", ".join(e["name"] for e in exts))
+          EOF
+          printf '# 애니요미 시험 저장소 (자동 생성)\n\n애니요미 확장 저장소에 추가할 주소:\n\n    https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/apk-test/index.min.json\n\n관리는 test-apk 가지의 test-apk/README.md 참고.\n' > repo/README.md
+
+      - name: 시험 저장소에 올리기
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./repo
+          publish_branch: apk-test
+          force_orphan: true
