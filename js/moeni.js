@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/moeni.js"
@@ -443,39 +443,96 @@ class DefaultExtension extends MProvider {
         const want = decodeURIComponent(String(url).split("#")[1] || "");
         if (!want) throw new Error("회차 주소가 이상해요. 회차 목록을 아래로 당겨 새로고침해 주세요");
         if (typeof evaluateJavascriptViaWebview !== "function") throw new Error("이 망가요미에는 웹뷰 재생 기능이 없어요. 앱을 업데이트해 주세요");
-        const r = await this.viaWebview(`${DEFAULT_BASE_URL}/${id}`, want);
-        if (!r || !r.u) {
-            const why = !r ? "응답 없음(시간 초과)" : r.err === "noep" ? `회차 못 찾음 · 화면 회차: ${(r.eps || []).join(", ") || "없음"}` : `영상 주소 못 찾음 · ${r.err || ""}`;
-            throw new Error(`영상을 못 불러왔어요 [${why}]`.substring(0, 300));
+        const diag = [];
+        let r = await this.viaWebview(`${DEFAULT_BASE_URL}/${id}`, `${DEFAULT_BASE_URL}/`, want, 24000);
+        diag.push("1차 " + this.diagText(r));
+        // 영상 주소가 안 보이고 플레이어 틀(iframe)이 있으면 그 틀을 웹뷰로 한 번 더 열어 거기서 찾음
+        if ((!r || !r.u) && r && (r.iframes || []).length) {
+            const frame = r.iframes.find((f) => /^https?:\/\//.test(f) && !/google|doubleclick|disqus|cloudflare|about:/i.test(f));
+            if (frame) {
+                const r2 = await this.viaWebview(frame, `${DEFAULT_BASE_URL}/`, "", 15000);
+                diag.push("틀 " + this.diagText(r2));
+                if (r2 && r2.u) r = Object.assign(r2, { ref: frame });
+            }
         }
-        const vh = { "User-Agent": UA, "Referer": `${DEFAULT_BASE_URL}/`, "Origin": DEFAULT_BASE_URL };
+        if (!r || !r.u) {
+            this.saveDiag(want, diag);
+            const why = !r ? "응답 없음(시간 초과)" : r.err === "noep" ? `회차 못 찾음 · 화면 회차: ${(r.eps || []).join(", ") || "없음"}` : `영상 주소 못 찾음 · ${r.err || ""}`;
+            throw new Error(`영상을 못 불러왔어요 [${why}] · 필터 맨 위 🩺 줄에 자세한 기록`.substring(0, 300));
+        }
+        this.saveDiag("", []);
+        const ref = r.ref || `${DEFAULT_BASE_URL}/`;
+        const origin = (/^(https?:\/\/[^/]+)/.exec(ref) || [null, DEFAULT_BASE_URL])[1];
+        const vh = { "User-Agent": UA, "Referer": ref, "Origin": origin };
         const u = String(r.u);
-        const isHls = /\.m3u8(?:[?#]|$)/i.test(u) || /m3u8|\/hls\//i.test(u);
+        const isHls = /m3u8|\/hls\/|playlist|master/i.test(u) && !/\.mp4(?:[?#]|$)/i.test(u);
         const v = { url: u, originalUrl: isHls && !/\.m3u8(?:[?#]|$)/i.test(u) ? u.replace(/#.*$/, "") + "#download.m3u8" : u, quality: `${LABEL} 자동`, headers: vh };
         return [v];
     }
 
+    diagText(r) {
+        if (!r) return "응답 없음";
+        if (r.u) return "찾음 " + String(r.u).substring(0, 80);
+        const short = (u) => String(u || "").replace(/^https?:\/\//, "").substring(0, 70);
+        return [
+            r.err || "",
+            r.clicked ? "누름" : "안 누름",
+            `틀${(r.iframes || []).length}: ${(r.iframes || []).map(short).join(" , ")}`,
+            `영상칸${(r.videos || []).length}: ${(r.videos || []).map(short).join(" , ")}`,
+            `받은 주소: ${(r.res || []).map(short).join(" , ")}`,
+        ].join(" | ");
+    }
+
+    saveDiag(want, lines) {
+        try {
+            new SharedPreferences().setString(`${KEY}_diag`, lines.length ? JSON.stringify([`${want}`].concat(lines)) : "");
+        } catch (e) {
+            // 기록 실패는 무시
+        }
+    }
+
+    diagFilters() {
+        let lines = [];
+        try {
+            lines = JSON.parse(new SharedPreferences().getString(`${KEY}_diag`, "") || "[]");
+        } catch (e) {
+            lines = [];
+        }
+        if (!lines.length) return [];
+        const out = [{ type_name: "HeaderFilter", name: `🩺 마지막 재생 실패: ${lines[0]}` }];
+        for (const l of lines.slice(1)) {
+            for (let i = 0; i < l.length && i < 1200; i += 110) out.push({ type_name: "HeaderFilter", name: "🩺 " + l.substring(i, i + 110) });
+        }
+        return out;
+    }
+
     /**
-     * 숨은 웹뷰로 작품 화면을 열고 그 회차를 눌러, 플레이어가 받은 영상 주소(m3u8·mp4)를 돌려받음 (최대 25초).
-     * 회차 표시(# 뒤 "제목-NN화")는 띄어쓰기·- 를 빼고 비교
+     * 숨은 웹뷰로 화면을 열고(want 가 있으면 그 회차를 눌러) 플레이어가 받은 영상 주소(m3u8·mp4)를 돌려받음.
+     * 회차 표시(# 뒤 "제목-NN화")는 띄어쓰기·- 를 빼고 비교. 못 찾으면 틀(iframe)·영상 칸·받은 주소를 함께 돌려줌
      */
-    async viaWebview(page, want) {
-        const w = JSON.stringify(want.replace(/[\s-]/g, ""));
-        const script = "(function(){var want=" + w + ",n=0,clicked=false;" +
+    async viaWebview(page, referer, want, limitMs) {
+        const w = JSON.stringify(String(want || "").replace(/[\s-]/g, ""));
+        const max = Math.floor((limitMs - 2000) / 300);
+        const script = "(function(){try{performance.setResourceTimingBufferSize(5000)}catch(e){}" +
+            "var want=" + w + ",n=0,clicked=!want,at=0,max=" + max + ";" +
             "function norm(h){try{h=decodeURIComponent(h)}catch(e){}return h.replace(/[\\s-]/g,'')}" +
             "function eps(){return [].slice.call(document.querySelectorAll('a[href^=\"#\"]')).map(function(a){return a.getAttribute('href').slice(1)}).filter(function(h){return /%ED%99%94|화/.test(h)})}" +
-            "function find(){var r=performance.getEntriesByType('resource');for(var i=r.length-1;i>=0;i--){var u=r[i].name;if(/\\.m3u8(\\?|$)|\\.mp4(\\?|$)|\\/hls\\//.test(u))return u;}" +
+            "function vids(){return [].slice.call(document.querySelectorAll('video,source')).map(function(v){return (v.currentSrc||v.src||v.getAttribute('src')||'(빈칸)')+(v.readyState!==undefined?' rs'+v.readyState:'')})}" +
+            "function frames(){return [].slice.call(document.querySelectorAll('iframe')).map(function(f){return f.src||f.getAttribute('data-src')||''}).filter(function(s){return s})}" +
+            "function find(){var r=performance.getEntriesByType('resource');for(var i=r.length-1;i>=0;i--){var u=r[i].name;if(/m3u8|\\.mpd(\\?|$)|\\.mp4(\\?|$)|\\/hls\\/|\\/playlist|\\/master\\./i.test(u))return u;}" +
             "var v=document.querySelector('video');var s=v?(v.currentSrc||v.src||''):'';return /^https?:/.test(s)?s:null}" +
-            "function send(o){clearInterval(t);window.flutter_inappwebview.callHandler('setResponse',JSON.stringify(o))}" +
+            "function res(){var r=performance.getEntriesByType('resource'),o=[];for(var i=r.length-1;i>=0&&o.length<12;i--){var u=r[i].name;if(!/\\.(png|jpe?g|webp|gif|svg|css|woff2?)(\\?|$)|google|cloudflareinsights|fonts|datalist/i.test(u))o.push(u.split('?')[0])}return o}" +
+            "function send(o){clearInterval(t);o.clicked=clicked;o.iframes=frames();o.videos=vids();o.res=res();o.href=location.href;window.flutter_inappwebview.callHandler('setResponse',JSON.stringify(o))}" +
             "var t=setInterval(function(){n++;" +
-            "if(!clicked){var as=document.querySelectorAll('a[href^=\"#\"]');for(var i=0;i<as.length;i++){if(norm(as[i].getAttribute('href').slice(1))===want){as[i].click();clicked=true;break;}}}" +
+            "if(!clicked){var as=document.querySelectorAll('a[href^=\"#\"]');for(var i=0;i<as.length;i++){if(norm(as[i].getAttribute('href').slice(1))===want){as[i].click();clicked=true;at=n;break;}}}" +
             "var u=clicked?find():null;if(u){send({u:u});return;}" +
             "if(clicked&&n%15===0){var v=document.querySelector('video');if(v){v.muted=true;try{v.play()}catch(e){}}}" +
-            "if(n>=75){var e=eps();send({err:clicked?'nourl':'noep',eps:e.slice(-4).map(function(h){try{return decodeURIComponent(h)}catch(x){return h}}),href:location.href});}" +
+            "if(clicked&&want&&n-at>=27&&frames().some(function(f){return /^https?:/.test(f)})){send({err:'nourl'});return;}" +
+            "if(n>=max){send({err:clicked?'nourl':'noep',eps:eps().slice(-4).map(function(h){try{return decodeURIComponent(h)}catch(x){return h}})});}" +
             "},300);})();";
         try {
-            const timeout = new Promise((res) => setTimeout(() => res("__timeout__"), 26000));
-            const res = await Promise.race([evaluateJavascriptViaWebview(page, { "Referer": `${DEFAULT_BASE_URL}/` }, [script]), timeout]);
+            const timeout = new Promise((res) => setTimeout(() => res("__timeout__"), limitMs));
+            const res = await Promise.race([evaluateJavascriptViaWebview(page, { "Referer": referer }, [script]), timeout]);
             if (!res || res === "__timeout__") return null;
             return JSON.parse(String(res));
         } catch (e) {
@@ -488,6 +545,7 @@ class DefaultExtension extends MProvider {
         return [
             { type_name: "HeaderFilter", name: "📡 주소: moeni.net" },
             ...notesFilters(KEY),
+            ...this.diagFilters(),
             { type_name: "SeparatorFilter" },
             { type_name: "HeaderFilter", name: "검색어가 없을 때만 적용 (작품 주소를 붙여 넣으면 바로 열기)" },
         ].concat(FILTER_DEFS.map(([name, param, values]) => ({
