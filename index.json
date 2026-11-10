@@ -504,5 +504,27 @@
   "additionalParams": "",
   "sourceCodeLanguage": 1,
   "notes": ""
+ },
+ {
+  "name": "토끼 소설",
+  "id": 1543270643,
+  "baseUrl": "https://sbxh9.com",
+  "lang": "ko",
+  "typeSource": "single",
+  "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-manga-extensions/gh-pages/icon/eu.kanade.tachiyomi.extension.ko.newxtoon.png",
+  "dateFormat": "",
+  "dateFormatLocale": "",
+  "isNsfw": false,
+  "hasCloudflare": true,
+  "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-manga-extensions/gh-pages/mangayomi/tokinovel.js",
+  "apiUrl": "",
+  "version": "0.1.0",
+  "isManga": false,
+  "itemType": 2,
+  "isFullData": false,
+  "appMinVerReq": "0.5.0",
+  "additionalParams": "",
+  "sourceCodeLanguage": 1,
+  "notes": ""
  }
 ]
