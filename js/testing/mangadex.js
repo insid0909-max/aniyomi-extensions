@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 0,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.3",
+    "version": "0.0.4",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "js/testing/mangadex.js"
@@ -23,7 +23,7 @@ const API = "https://api.mangadex.org";
 const SITE = "https://mangadex.org";
 const COVERS = "https://uploads.mangadex.org/covers";
 // 망가덱스 자료 통로는 브라우저 이름(User-Agent)으로 부르면 "Bot challenge" 403 → 앱 이름으로 부름(망가덱스가 앱들에게 권하는 방식)
-const UA = "Mangayomi-KoExt/0.0.3";
+const UA = "Mangayomi-KoExt/0.0.4";
 const PAGE = 30;
 const MAX_OFFSET = 10000; // 망가덱스는 offset+limit 1만까지만 줌
 const NOTE_KEY = "mangadex";
@@ -448,7 +448,17 @@ class DefaultExtension extends MProvider {
         const files = saver && (ch.dataSaver || []).length ? ch.dataSaver : ch.data || [];
         if (!d.baseUrl || !ch.hash || !files.length) throw new Error(`그림 목록이 비어 있어요 [그림 · 파일 ${files.length}개]`);
         const dir = saver && (ch.dataSaver || []).length ? "data-saver" : "data";
-        return files.map((f) => ({ url: `${host}/${dir}/${ch.hash}/${f}`, headers: { "User-Agent": UA } }));
+        const pages = files.map((f) => ({ url: `${host}/${dir}/${ch.hash}/${f}`, headers: { "User-Agent": UA } }));
+        // 0.0.4 (2026-11-11 사용자 화면 녹화: 다음 장마다 1~1.5초 회색 빈칸): 그림 서버는 처음 요청에 1.2~1.3초(서버가 원본에서 가져옴),
+        // 두 번째부터 0.3초 → 회차를 열 때 모든 장을 첫 1바이트만(Range 0-0) 한꺼번에 미리 요청해 서버에 데워 둠(머니툰과 같은 방법).
+        // 최대 1초만 기다림(첫 장이 늦어지지 않게, 망가요미엔 clearTimeout 이 없어 표시 값으로 판단)
+        try {
+            const warm = Promise.all(pages.map((p) => this.client.get(p.url, { "User-Agent": UA, "Range": "bytes=0-0" }).catch(() => null)));
+            await Promise.race([warm, new Promise((ok) => setTimeout(() => ok("timeout"), 1000))]);
+        } catch (e) {
+            // 데우기 실패는 그대로
+        }
+        return pages;
     }
 
     // ================= 필터 · 설정 =================
