@@ -473,6 +473,22 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
                 throw Exception("다른 재생 방식이라 아직 지원 안 함 [mode ${c.optString("mode").take(20).ifEmpty { "-" }} · src ${src.take(24)}$tail (${src.length}자)]")
             }
             if (MP4.containsMatchIn(u)) return Video(u, "$label 원본 (mp4)", u, a, subs)
+            // 재생기에 넘기기 전에 앞부분만 열어 봄 (2026-11-10 리처: 넘겼더니 무한 로딩)
+            val shape = u.substringAfter("://").substringBefore('?').substringBefore('#').take(48)
+            val mode = c.optString("mode").take(20).ifEmpty { "-" }
+            val probe = runCatching {
+                client.newCall(GET(u, a.newBuilder().set("Range", "bytes=0-4095").build())).execute().use { r ->
+                    Triple(r.code, r.header("Content-Type").orEmpty(), r.body.string().take(4096))
+                }
+            }.getOrElse { throw Exception("영상 주소 연결 실패 [mode $mode · $shape · ${it.message?.take(60)}]") }
+            val (code, type, body) = probe
+            val isList = body.trimStart().startsWith("#EXTM3U")
+            if ((code == 200 || code == 206) && !isList && (type.startsWith("video/") || type.contains("octet-stream"))) {
+                return Video(u, "$label 원본", u, a, subs)
+            }
+            if ((code != 200 && code != 206) || !isList) {
+                throw Exception("영상 주소가 재생 목록이 아님 [HTTP $code · mode $mode · $shape · ${type.take(30)} · ${body.replace(SPACES, " ").take(80)}]")
+            }
             val proxied = LocalProxy.playlist(client, a, u)
             return Video(proxied, "$label 자동 (HLS)", proxied, null, subs)
         }
