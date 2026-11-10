@@ -54,15 +54,15 @@
     "dateFormatLocale": "",
     "isNsfw": false,
     "hasCloudflare": false,
-    "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/test/js/hoohootv.js?v=0.0.2",
+    "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/test/js/hoohootv.js?v=0.0.3",
     "apiUrl": "",
-    "version": "0.0.2",
+    "version": "0.0.3",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
     "appMinVerReq": "0.9.95",
     "additionalParams": "",
     "sourceCodeLanguage": 1,
-    "notes": "티비위키의 세션 생성·TVP 재생권 등록·앱 내장 HLS 프록시 인계 코드 적용. 실제 페이지에서 같은 형식이 확인될 때만 사용. 교차 출처 웹뷰 탐색 제거. 문법 및 모의 검사 14개 통과. 실제 후후티비 사이트·휴대폰 재생 미검증. 정식 배포 아님."
+    "notes": "영상 주소 오탐 수정: 일반 video/stream URL은 HLS로 취급하지 않음. 후보 실패 후에도 다른 후보·iframe·세션 탐색 계속. 티비위키 TVP 재생 유지. 토큰을 제외한 단계·경로·HTTP·응답 종류 진단을 오류와 필터에 표시. 문법 및 모의 회귀 검사 23개 통과. 실제 사이트·휴대폰 재생 미검증. 정식 배포 아님."
   }
 ]
