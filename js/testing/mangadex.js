@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 0,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "js/testing/mangadex.js"
@@ -23,7 +23,7 @@ const API = "https://api.mangadex.org";
 const SITE = "https://mangadex.org";
 const COVERS = "https://uploads.mangadex.org/covers";
 // 망가덱스 자료 통로는 브라우저 이름(User-Agent)으로 부르면 "Bot challenge" 403 → 앱 이름으로 부름(망가덱스가 앱들에게 권하는 방식)
-const UA = "Mangayomi-KoExt/0.0.1";
+const UA = "Mangayomi-KoExt/0.0.2";
 const PAGE = 30;
 const MAX_OFFSET = 10000; // 망가덱스는 offset+limit 1만까지만 줌
 const NOTE_KEY = "mangadex";
@@ -356,7 +356,23 @@ class DefaultExtension extends MProvider {
         const a = m.attributes || {};
         const people = (type) => (m.relationships || []).filter((r) => r.type === type && r.attributes).map((r) => r.attributes.name).filter((x) => x);
         const lang = chapterLang();
-        const chapters = await this.chapters(id, lang);
+        let chapters = await this.chapters(id, lang, "");
+        // 빈 화 채우기 (2026-11-10, 사용자 "영어로 빈 화 채우기"): 고른 언어에 없는 화 번호만 다른 언어 회차로 채움
+        const fill = String(pref("mdx_fill", "en") || "en");
+        let filled = 0;
+        if (lang !== "*" && fill !== "off" && fill !== lang) {
+            try {
+                const have = {};
+                for (const c of chapters) have[c._key] = true;
+                const extra = (await this.chapters(id, fill, "fill")).filter((c) => c._lang !== lang && !have[c._key]);
+                filled = extra.length;
+                chapters = chapters.concat(extra);
+            } catch (e) {
+                // 채우기 실패는 고른 언어 회차만
+            }
+        }
+        chapters.sort((x, y) => (y._n - x._n) || (y._t - x._t));
+        chapters = chapters.map((x) => ({ name: x.name, url: x.url, dateUpload: x.dateUpload, scanlator: x.scanlator }));
         const desc = (a.description && (a.description.ko || a.description.en || Object.values(a.description)[0])) || "";
         const langs = (a.availableTranslatedLanguages || []).map((l) => LANG_KO[l] || l);
         const info = [
@@ -365,7 +381,9 @@ class DefaultExtension extends MProvider {
             langs.length ? `번역된 언어: ${langs.join(", ")}` : "",
             a.lastChapter ? `마지막 회차: ${a.lastChapter}화` : "",
         ].filter((x) => x).join("\n");
-        const note = chapters.length ? "" : `⚠️ ${LANG_KO[lang] || lang}로 번역된 회차가 없어요. 확장 설정의 "회차 언어"를 바꾸면 다른 언어 회차를 볼 수 있어요.`;
+        const fillName = fill === "*" ? "다른 언어" : (LANG_KO[fill] || fill);
+        const note = !chapters.length ? `⚠️ ${LANG_KO[lang] || lang}로 번역된 회차가 없어요. 확장 설정의 "회차 언어"·"빈 화 채우기"를 바꾸면 다른 언어 회차를 볼 수 있어요.`
+            : filled ? `ℹ️ ${LANG_KO[lang] || lang} 번역이 없는 ${filled}개 화는 ${fillName} 회차로 채웠어요 (번역팀 칸에 [${fillName}] 표시).` : "";
         return {
             name: titleOf(a),
             imageUrl: coverOf(m),
@@ -380,7 +398,7 @@ class DefaultExtension extends MProvider {
     }
 
     /** 회차: 고른 언어만, 같은 화를 여러 번역팀이 올리면 하나만(먼저 나온 것), 최신이 위 */
-    async chapters(id, lang) {
+    async chapters(id, lang, mode) {
         const out = [];
         const seen = {};
         const ratings = "contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&contentRating[]=pornographic";
@@ -391,8 +409,9 @@ class DefaultExtension extends MProvider {
                 const a = c.attributes || {};
                 if (a.externalUrl || !(Number(a.pages) > 0)) continue;
                 const ch = a.chapter === null || a.chapter === undefined || a.chapter === "" ? "" : String(a.chapter);
-                const key = ch ? `c${ch}` : `v${a.volume || ""}|${a.title || c.id}`;
-                if (seen[key]) continue;
+                const key = ch ? `c${parseFloat(ch)}` : `v${a.volume || ""}|${a.title || c.id}`;
+                // 채우기용은 번호 있는 화만 (단편은 같은 것인지 알 수 없음)
+                if (seen[key] || (mode === "fill" && !ch)) continue;
                 seen[key] = true;
                 const group = (c.relationships || []).filter((r) => r.type === "scanlation_group" && r.attributes).map((r) => r.attributes.name).join(", ");
                 const title = String(a.title || "").trim();
@@ -406,14 +425,14 @@ class DefaultExtension extends MProvider {
                     name,
                     url: c.id,
                     dateUpload: date && !isNaN(Date.parse(date)) ? String(Date.parse(date)) : null,
-                    scanlator: (lang === "*" ? `[${LANG_KO[a.translatedLanguage] || a.translatedLanguage}] ` : "") + (group || ""),
+                    _key: key,
+                    _lang: a.translatedLanguage,
+                    scanlator: (lang === "*" || mode === "fill" ? `[${LANG_KO[a.translatedLanguage] || a.translatedLanguage}] ` : "") + (group || ""),
                 });
             }
             if (offset + 500 >= (Number(d.total) || 0)) break;
         }
-        // 최신(큰 번호)이 위, 번호 없는 단편은 올린 시각 순으로 맨 아래
-        out.sort((x, y) => (y._n - x._n) || (y._t - x._t));
-        return out.map((x) => ({ name: x.name, url: x.url, dateUpload: x.dateUpload, scanlator: x.scanlator }));
+        return out;
     }
 
     // ================= 그림 =================
@@ -465,6 +484,15 @@ class DefaultExtension extends MProvider {
                 valueIndex: 0,
                 entries: LANGS.slice(1).map((x) => x[0]),
                 entryValues: LANGS.slice(1).map((x) => x[1]),
+            },
+        }, {
+            key: "mdx_fill",
+            listPreference: {
+                title: "빈 화 채우기",
+                summary: "회차 언어로 번역되지 않은 화를 다른 언어 회차로 채움 (번역팀 칸에 [언어] 표시)",
+                valueIndex: 0,
+                entries: ["영어로 채우기", "아무 언어로나 채우기", "채우지 않기"],
+                entryValues: ["en", "*", "off"],
             },
         }, {
             key: "mdx_saver",
