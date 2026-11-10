@@ -433,8 +433,10 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
         val c = runCatching { JSONObject(config) }.getOrNull() ?: throw Exception("플레이어 설정 읽기 실패")
         val host = c.optString("host")
         val contentId = c.optString("contentId")
-        if (c.optString("id").isEmpty() || c.optString("pathType") != "e" || !CAST_HOST.matches(host) || !CONTENT_ID.matches(contentId)) {
-            throw Exception("지원하지 않는 재생 설정")
+        val pathType = c.optString("pathType")
+        // 영상 서버는 poorcdn.com 의 어느 서버든(every10 등, 2026-11-10 리처만 안 되던 것), 경로 종류는 한 글자, 영상 번호는 16~64자
+        if (c.optString("id").isEmpty() || !PATH_TYPE.matches(pathType) || !CAST_HOST.matches(host) || !CONTENT_ID.matches(contentId)) {
+            throw Exception("지원하지 않는 재생 설정 [경로 ${pathType.take(8).ifEmpty { "-" }} · 서버 ${host.take(40).ifEmpty { "-" }} · 번호 ${contentId.length}자]")
         }
         val a = Headers.Builder()
             .set("User-Agent", ua())
@@ -463,7 +465,7 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
         if (!l.optBoolean("ok") || l.optString("contentId") != contentId || !TOKEN.matches(token) || token.length > 384) {
             throw Exception("재생권 등록 실패")
         }
-        val list = "$origin/v/e/$contentId/c.html".toHttpUrl().newBuilder().addQueryParameter("cast", token).build().toString()
+        val list = "$origin/v/$pathType/$contentId/c.html".toHttpUrl().newBuilder().addQueryParameter("cast", token).build().toString()
         // 재생 목록 주소가 .m3u8 로 끝나지 않고 재생기는 머리글을 조각마다 못 붙이므로 앱 안 중계로 (망가요미 createHlsProxyUrl 과 같음)
         val proxied = LocalProxy.playlist(client, a, list)
         return Video(proxied, "$label 자동 (HLS)", proxied, null, subs)
@@ -564,8 +566,9 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
         private val SPACES = Regex("""\s+""")
         private val TITLE_YEAR = Regex("""\((?:19|20)\d{2}\)\s*$""")
         private val TVP_CONFIG = Regex("""window\.TVP_CONFIG\s*=\s*(\{[^\n]*?\})\s*;""")
-        private val CAST_HOST = Regex("""^every[1-9]\.poorcdn\.com$""")
-        private val CONTENT_ID = Regex("""^[a-f0-9]{32}$""")
+        private val CAST_HOST = Regex("""^[a-z0-9-]+\.poorcdn\.com$""")
+        private val PATH_TYPE = Regex("""^[a-z]$""")
+        private val CONTENT_ID = Regex("""^[A-Za-z0-9_-]{16,64}$""")
         private val TOKEN = Regex("""^p1\.[A-Za-z0-9_.-]+$""")
         private val DATA_M3U8 = Regex("""data-m3u8=["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE)
         private val ANY_M3U8 = Regex("""https?://[^"'\s<>\\]+\.m3u8[^"'\s<>\\]*""", RegexOption.IGNORE_CASE)
