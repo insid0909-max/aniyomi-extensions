@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 0,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.2",
+    "version": "0.0.3",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "js/testing/mangadex.js"
@@ -23,7 +23,7 @@ const API = "https://api.mangadex.org";
 const SITE = "https://mangadex.org";
 const COVERS = "https://uploads.mangadex.org/covers";
 // 망가덱스 자료 통로는 브라우저 이름(User-Agent)으로 부르면 "Bot challenge" 403 → 앱 이름으로 부름(망가덱스가 앱들에게 권하는 방식)
-const UA = "Mangayomi-KoExt/0.0.2";
+const UA = "Mangayomi-KoExt/0.0.3";
 const PAGE = 30;
 const MAX_OFFSET = 10000; // 망가덱스는 offset+limit 1만까지만 줌
 const NOTE_KEY = "mangadex";
@@ -438,13 +438,17 @@ class DefaultExtension extends MProvider {
     // ================= 그림 =================
     async getPageList(url) {
         const id = String(url || "").split("/").filter((x) => x).pop();
-        const d = await this.api(`/at-home/server/${id}`, "그림 서버");
+        // 443번 문을 쓰는 나눔 서버만 (일부 통신망에서 다른 번호 문이 느리거나 막힘)
+        const d = await this.api(`/at-home/server/${id}?forcePort443=true`, "그림 서버");
         const ch = d.chapter || {};
-        const saver = String(pref("mdx_saver", "false")) === "true";
+        // 0.0.3: 원본 그림(1~2MB)이 휴대폰에서 느려 데이터 절약 그림(약 0.3MB)을 기본으로 (설정 이름을 바꿔 새 기본값이 적용되게)
+        const saver = String(pref("mdx_saver2", "true")) !== "false";
+        // 그림 서버: 자동(나눔 서버) 또는 망가덱스 본 서버
+        const host = String(pref("mdx_host", "auto")) === "main" ? "https://uploads.mangadex.org" : d.baseUrl;
         const files = saver && (ch.dataSaver || []).length ? ch.dataSaver : ch.data || [];
         if (!d.baseUrl || !ch.hash || !files.length) throw new Error(`그림 목록이 비어 있어요 [그림 · 파일 ${files.length}개]`);
         const dir = saver && (ch.dataSaver || []).length ? "data-saver" : "data";
-        return files.map((f) => ({ url: `${d.baseUrl}/${dir}/${ch.hash}/${f}`, headers: { "User-Agent": UA } }));
+        return files.map((f) => ({ url: `${host}/${dir}/${ch.hash}/${f}`, headers: { "User-Agent": UA } }));
     }
 
     // ================= 필터 · 설정 =================
@@ -495,11 +499,20 @@ class DefaultExtension extends MProvider {
                 entryValues: ["en", "*", "off"],
             },
         }, {
-            key: "mdx_saver",
+            key: "mdx_saver2",
             switchPreferenceCompat: {
-                title: "데이터 절약 그림",
-                summary: "그림을 작은 크기로 받기 (데이터 적게 씀, 화질은 낮음)",
-                value: false,
+                title: "데이터 절약 그림 (기본 켬)",
+                summary: "그림을 작은 크기로 받아 빨리 뜸 (약 0.3MB, 끄면 원본 1~2MB · 화질 좋음 · 느림)",
+                value: true,
+            },
+        }, {
+            key: "mdx_host",
+            listPreference: {
+                title: "그림 서버",
+                summary: "그림이 느리면 바꿔 보세요 (자동 = 망가덱스가 골라 주는 나눔 서버)",
+                valueIndex: 0,
+                entries: ["자동 (나눔 서버)", "망가덱스 본 서버"],
+                entryValues: ["auto", "main"],
             },
         }];
     }
