@@ -1,5 +1,5 @@
 const mangayomiSources = [{
-    "name": "[시험] 오리365",
+    "name": "[시험] 애니365",
     "lang": "ko",
     "baseUrl": "https://v2.ohli365.org",
     "apiUrl": "",
@@ -8,13 +8,13 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.3",
+    "version": "0.0.4",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli365.js"
 }];
 
-// 오리365(v2.ohli365.org, 2026-11-10, 해외에서도 열려 실제 구조 확인 후 만듦. 애니24(ohli24)와 이름만 비슷하고 다른 사이트)
+// 애니365(v2.ohli365.org, 2026-11-10, 해외에서도 열려 실제 구조 확인 후 만듦. 애니24(ohli24)와 이름만 비슷하고 다른 사이트)
 // Next.js 화면: 주소에 머리글 "RSC: 1" 을 붙이면 화면 자료(글자)를 줌 → 그 안의 작품 자료(JSON)를 읽음
 // 목록: /?tab={all|today|popular|new|ranking|recommend|completed|movie|quarter|weekday}[&sort=latest|popular|recommend][&filter=요일]&page=N,
 //   카드 {"anime":{id,title,poster,status,releaseYear,episodeCount,…}}, 장르 /finder?tag=장르 (한 쪽에 전부, {"items":[…]}), 검색 /?q=
@@ -23,7 +23,7 @@ const mangayomiSources = [{
 const DEFAULT_BASE_URL = "https://v2.ohli365.org";
 const DOMAIN_RE = /^https:\/\/(?:[a-z0-9-]+\.)?ohli\d*\.[a-z]{2,6}$|^https:\/\/(?:[a-z0-9-]+\.)?ohli365\d*\.[a-z]{2,6}$/;
 const PASTE_RE = /^(?:https?:\/\/)?((?:[a-z0-9-]+\.)?ohli365\d*\.[a-z]{2,6})(?:[/?#]|$)/i;
-const LABEL = "오리365";
+const LABEL = "애니365";
 const KEY = "ohli365";
 const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
     "Chrome/124.0.0.0 Mobile Safari/537.36";
@@ -633,11 +633,11 @@ class DefaultExtension extends MProvider {
         return [{
             key: `${KEY}_domain`,
             editTextPreference: {
-                title: "오리365 주소 직접 지정 (선택)",
+                title: "애니365 주소 직접 지정 (선택)",
                 summary: `비워 두면 기본 주소(${DEFAULT_BASE_URL})를 사용합니다. 검색창에 새 주소를 붙여 넣어도 됩니다.`,
                 value: "",
-                dialogTitle: "오리365 주소",
-                dialogMessage: "https:// 로 시작하는 오리365 주소 (예: https://v2.ohli365.org)",
+                dialogTitle: "애니365 주소",
+                dialogMessage: "https:// 로 시작하는 애니365 주소 (예: https://v2.ohli365.org)",
             },
         }, qualityPreference(`${KEY}_quality`)];
     }
