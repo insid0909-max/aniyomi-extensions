@@ -429,7 +429,7 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
     }
 
     /** 플레이어 설정(TVP_CONFIG)으로 플레이어가 하는 그대로 재생권(cast.php → cast-register)을 받아 재생 목록 주소를 만듦 */
-    private fun castVideo(config: String, playerOrigin: String, label: String, subs: List<Track>): Video {
+    private fun castVideo(config: String, playerOrigin: String, label: String, baseSubs: List<Track>): Video {
         val c = runCatching { JSONObject(config) }.getOrNull() ?: throw Exception("플레이어 설정 읽기 실패")
         val host = c.optString("host")
         val contentId = c.optString("contentId")
@@ -444,6 +444,19 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
             .set("Origin", playerOrigin)
             .set("Accept", "*/*")
             .build()
+        // 자막: 설정의 subtitle 이 플레이어 서버의 subtitle.php 면 한국어 자막으로 붙임
+        val sub = c.optString("subtitle").let { if (it.startsWith("/")) playerOrigin + it else it }
+        val subs = if (sub.startsWith("$playerOrigin/player/api/subtitle.php?")) baseSubs + Track(sub, "한국어") else baseSubs
+        // 경로 "p" 영상(리처 등, 2026-11-10): 재생권 없이 설정 src(/v/p/번호/c.html?…)에 sid 를 붙여 재생
+        if (pathType == "p") {
+            val q = c.optString("src")
+            if (!q.startsWith("https://$host/v/p/$contentId/c.html?") || q.contains('#')) {
+                throw Exception("올바른 영상 주소가 아님 [${q.substringAfter("://").substringBefore('?').take(48)}]")
+            }
+            val sid = if (SID.containsMatchIn(q)) "" else "&sid=" + java.lang.Long.toString(System.currentTimeMillis(), 36) + (1..12).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
+            val proxied = LocalProxy.playlist(client, a, q + sid)
+            return Video(proxied, "$label 자동 (HLS)", proxied, null, subs)
+        }
 
         fun post(url: String, payload: JSONObject, extra: Headers.Builder.() -> Unit = {}): JSONObject {
             val hs = a.newBuilder().apply(extra).build()
@@ -606,6 +619,7 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
         private val TVP_CONFIG = Regex("""window\.TVP_CONFIG\s*=\s*(\{[^\n]*?\})\s*;""")
         private val CAST_HOST = Regex("""^[a-z0-9-]+\.poorcdn\.com$""")
         private val PATH_TYPE = Regex("""^[a-z]$""")
+        private val SID = Regex("""[?&]sid=""")
         private val MP4 = Regex("""\.mp4(?:[?#]|$)""", RegexOption.IGNORE_CASE)
         private val CONTENT_ID = Regex("""^[A-Za-z0-9_-]{16,64}$""")
         private val TOKEN = Regex("""^p1\.[A-Za-z0-9_.-]+$""")
