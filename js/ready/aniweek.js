@@ -8,13 +8,13 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/aniweek.js"
 }];
 
-// 애니위크(aniweek.com, 2026-11-10, 해외에서도 열려 실제 구조 확인 후 만듦) — 코티비씨·북코·툰코와 같은 회사의 애니 사이트(같은 Laravel+Inertia 시스템)
+// 애니위크(aniweek.com, 예비 ani.ohli24.com, 2026-11-10, 해외에서도 열려 실제 구조 확인 후 만듦) — 코티비씨·북코·툰코와 같은 회사의 애니 사이트(같은 Laravel+Inertia 시스템)
 // 작품·회차는 애니울프와 같은 자료(목록 100% 겹침·최신 순서·회차 수 같음) → 애니울프가 막힐 때 쓸 예비용 (코티비씨 kotbc.js 바탕)
 // - 화면 안 <script data-page="app" type="application/json"> 에 화면 데이터
 //   분류 /방영중 (props.items 60개, 한 쪽) · /종영 · /극장판 (props.comics 쪽 나눔 24개, ?page=N)
@@ -24,7 +24,10 @@ const mangayomiSources = [{
 //   회차 {slug, title("5화"), published_at}, 회차 화면 /e/{회차slug} 의 props.playing.body.url = cdndania.com/video/{ID}?t=…
 // - 영상 플레이어 cdndania.com = 애니24·애니울프·코티비씨와 같은 종류 → 재생 확인된 방법(POST getVideo → securedLink) 그대로
 const DEFAULT_BASE_URL = "https://aniweek.com";
-const DOMAIN_RE = /^https:\/\/(?:[a-z0-9]+\.)?aniweek\d*\.[a-z]{2,6}$/;
+// 같은 자료를 "애니24" 이름으로 보여 주는 새 시스템 주소 ani.ohli24.com 도 같은 사이트로 받음 (2026-11-10 확인: 작품 수·순서·주소 모양·플레이어 같음)
+const DOMAIN_RE = /^https:\/\/(?:(?:[a-z0-9]+\.)?aniweek\d*|ani\.ohli24\d*)\.[a-z]{2,6}$/;
+// 지금 주소가 안 열릴 때 마지막으로 확인해 볼 예비 주소
+const BACKUP_URLS = ["https://aniweek.com", "https://ani.ohli24.com"];
 const LABEL = "애니위크";
 const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
     "Chrome/124.0.0.0 Mobile Safari/537.36";
@@ -475,7 +478,7 @@ function hlsHint(list) {
 }
 
 // 주소 바뀜 대응 설정: 사이트 주소 모양, 진짜 사이트 표시 글자, User-Agent, 직접 넣은 주소 설정 키
-const ADDR_HOST = /^(?:[a-z0-9]+\.)?aniweek\d*\.[a-z]{2,6}$/;
+const ADDR_HOST = /^(?:(?:[a-z0-9]+\.)?aniweek\d*|ani\.ohli24\d*)\.[a-z]{2,6}$/;
 // 화면 데이터에 있는 글자 (자매 사이트 목록)
 const ADDR_MARK = "sister_sites";
 const ADDR_UA = UA;
@@ -601,19 +604,21 @@ class DefaultExtension extends MProvider {
         return { "User-Agent": UA, "Referer": `${this.getBaseUrl()}/` };
     }
 
-    /** 사이트 주소가 바뀌었을 때: 저장소 주소 목록 → 주소 안내 사이트(코사이트)에 적힌 애니위크 주소 (진짜 사이트일 때만) */
+    /** 사이트 주소가 바뀌었을 때: 저장소 주소 목록 → 주소 안내 사이트(코사이트)에 적힌 주소 → 예비 주소 (진짜 사이트일 때만) */
     async discover(current) {
         const tries = [];
         const listed = await listedDomain(this.client, "aniweek");
         if (listed && DOMAIN_RE.test(listed)) tries.push(listed);
         try {
             const r = await this.client.get(GUIDE_URL, { "User-Agent": UA });
-            const re = /https?:\/\/((?:[a-z0-9]+\.)?aniweek\d*\.[a-z]{2,6})/gi;
+            const re = /https?:\/\/((?:(?:[a-z0-9]+\.)?aniweek\d*|ani\.ohli24\d*)\.[a-z]{2,6})/gi;
             let m;
             while ((m = re.exec(String(r.body || "")))) tries.push("https://" + m[1].toLowerCase());
         } catch (e) {
             // 다음 방법
         }
+        // 예비 주소 (aniweek.com · ani.ohli24.com)
+        for (const b of BACKUP_URLS) tries.push(b);
         const seen = {};
         for (const t of tries) {
             if (seen[t] || t === current) continue;
@@ -621,6 +626,8 @@ class DefaultExtension extends MProvider {
             if (await addrIsSite(this, t)) {
                 try {
                     new SharedPreferences().setString("aniweek_auto_domain", t);
+                    // 직접 넣은 주소가 끊겼으면 설정 칸도 찾은 주소로 고침 (번호 없는 주소라 번호 비교로 바꿀 수 없음)
+                    if (DOMAIN_RE.test(this.pref("aniweek_domain").replace(/\/+$/, ""))) new SharedPreferences().setString("aniweek_domain", t);
                 } catch (e) {
                     // 그대로
                 }
@@ -734,8 +741,11 @@ class DefaultExtension extends MProvider {
             const path = /^(?:https?:\/\/)?[^/]+(\/[^?#\s]+)/.exec(query);
             if (!path || !this.pathOf(adopted + path[1])) return this.getPopular(1);
         }
+        // 지금 쓰는 사이트 주소만 다시 붙여 넣었으면 인기 목록
+        const only = /^(?:https?:\/\/)?([^/?#\s]+)\/?$/.exec(query);
+        if (only && ADDR_HOST.test(only[1].toLowerCase().replace(/^www\./, ""))) return this.getPopular(1);
         // 작품·회차 주소를 붙여 넣으면 그 작품을 바로 열기
-        if (/aniweek\d*\.[a-z]{2,6}\/\S+/i.test(query)) {
+        if (/(?:aniweek\d*|ani\.ohli24\d*)\.[a-z]{2,6}\/\S+/i.test(query)) {
             const path = this.pathOf(/^https?:\/\//.test(query) ? query : "https://" + query);
             if (path) {
                 const d = await this.getDetail(path);
@@ -1206,13 +1216,13 @@ class DefaultExtension extends MProvider {
                 summary: `비워 두면 기본 주소(${DEFAULT_BASE_URL}) 또는 자동으로 찾은 주소를 사용합니다.`,
                 value: "",
                 dialogTitle: "애니위크 주소",
-                dialogMessage: "https:// 로 시작하는 주소 (예: https://aniweek.com)",
+                dialogMessage: "https:// 로 시작하는 주소 (예: https://aniweek.com · 예비 https://ani.ohli24.com)",
             },
         }, {
             key: "aniweek_auto",
             switchPreferenceCompat: {
                 title: "주소 자동 찾기",
-                summary: "목록이 안 열리면 주소 안내 사이트(코사이트)에서 새 주소를 찾습니다.",
+                summary: "목록이 안 열리면 주소 안내 사이트(코사이트)와 예비 주소(ani.ohli24.com)에서 새 주소를 찾습니다.",
                 value: true,
             },
         }, qualityPreference("aniweek_quality")];
