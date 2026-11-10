@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli365.js"
@@ -531,7 +531,8 @@ class DefaultExtension extends MProvider {
             "Content-Type": "application/json",
             "Accept": "application/json",
         };
-        const res = await this.client.post(`${base}/api/home/playback`, h, JSON.stringify({ episodeId: ep }));
+        // 본문은 객체로 (망가요미가 JSON 으로 바꿔 보냄. 글자로 주면 한 번 더 감싸 사이트가 "재생 대상을 확인해 주세요" 400 — 0.0.1 휴대폰)
+        const res = await this.client.post(`${base}/api/home/playback`, h, { episodeId: ep });
         let d = null;
         try {
             d = JSON.parse(fixUtf8(res.body));
