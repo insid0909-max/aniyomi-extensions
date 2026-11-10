@@ -51,7 +51,7 @@ internal object LocalProxy {
     }
 
     /** 원래 재생 목록 주소 → 재생기에 줄 중계 주소 */
-    fun playlist(client: OkHttpClient, headers: Headers, url: String): String = proxied(newSession(client, headers), url)
+    fun playlist(client: OkHttpClient, headers: Headers, url: String): String = proxied(newSession(client, headers), url, true)
 
     /** 웹뷰 안에서 이미 받은 재생 목록 글자 → 재생기에 줄 중계 주소 (안의 조각은 중계로) */
     fun fromText(client: OkHttpClient, headers: Headers, text: String, baseUrl: String): String {
@@ -69,20 +69,27 @@ internal object LocalProxy {
      * 끝 이름: 재생 목록은 원래 이름(.m3u8), 그 밖(조각·열쇠)은 ".ts" — 조각을 그림(.jpeg·.png)으로 꾸민 사이트가 있어
      * 재생기가 이름·형식 표시로 그림으로 읽으면 "unrecognized file format" (2026-11-09 MissAV)
      */
-    private fun proxied(sid: String, url: String): String {
+    private fun proxied(sid: String, url: String, list: Boolean = false): String {
         val last = url.toHttpUrlOrNull()?.pathSegments?.lastOrNull().orEmpty()
-        val name = if (last.endsWith(".m3u8")) last else "s.ts"
+        // 재생 목록인데 이름이 .m3u8 이 아니면(티비위키 c.html) "index.m3u8" 로
+        val name = if (last.endsWith(".m3u8")) last else if (list) "index.m3u8" else "s.ts"
         return "http://127.0.0.1:${port()}/m/$sid/${enc(url)}/$name"
     }
 
     private fun rewrite(sid: String, text: String, base: String): String {
         val b = base.toHttpUrlOrNull() ?: return text
+        // 화질 목록(#EXT-X-STREAM-INF 다음 줄)·음성/자막 목록(#EXT-X-MEDIA)은 재생 목록 이름으로
+        var nextIsList = false
         return text.lines().joinToString("\n") { line ->
             val t = line.trim()
             when {
                 t.isEmpty() -> line
-                t.startsWith("#") -> URI_ATTR.replace(line) { m -> "URI=\"${proxied(sid, (b.resolve(m.groupValues[1]) ?: return@replace m.value).toString())}\"" }
-                else -> b.resolve(t)?.let { proxied(sid, it.toString()) } ?: line
+                t.startsWith("#") -> {
+                    if (t.startsWith("#EXT-X-STREAM-INF")) nextIsList = true
+                    val tagList = t.startsWith("#EXT-X-MEDIA") || t.startsWith("#EXT-X-I-FRAME-STREAM-INF")
+                    URI_ATTR.replace(line) { m -> "URI=\"${proxied(sid, (b.resolve(m.groupValues[1]) ?: return@replace m.value).toString(), tagList)}\"" }
+                }
+                else -> (b.resolve(t)?.let { proxied(sid, it.toString(), nextIsList) } ?: line).also { nextIsList = false }
             }
         }
     }
@@ -111,7 +118,8 @@ internal object LocalProxy {
             "m" -> {
                 val url = runCatching { dec(parts.getOrNull(2).orEmpty()) }.getOrNull()
                     ?: return@use reply(out, 400, "text/plain", ByteArray(0), head, "bad-path")
-                val listLike = url.substringBefore('?').endsWith(".m3u8")
+                // 중계 주소 끝 이름이 .m3u8 이면(재생 목록으로 만든 주소) 원래 주소가 .m3u8 이 아니어도 재생 목록
+                val listLike = url.substringBefore('?').endsWith(".m3u8") || parts.lastOrNull().orEmpty().endsWith(".m3u8")
 
                 // 재생 목록에는 Range 를 넘기지 않음. 조각은 Range 로 400·416 이면 Range 없이 한 번 더 (2026-11-09 MissAV "400")
                 fun call(withRange: Boolean) = sess.client.newCall(
@@ -125,7 +133,9 @@ internal object LocalProxy {
                 }
                 res.use { rs ->
                     val type = rs.header("Content-Type").orEmpty()
-                    val isList = listLike || type.contains("mpegurl", true)
+                    // 이름·형식 표시가 재생 목록이 아니어도 글자가 #EXTM3U 로 시작하면 재생 목록 (티비위키 c.html 은 text/html 로 올 수 있음)
+                    val isList = listLike || type.contains("mpegurl", true) ||
+                        (rs.isSuccessful && runCatching { rs.peekBody(16).string().trimStart().startsWith("#EXTM3U") }.getOrDefault(false))
                     if (isList && rs.isSuccessful) {
                         reply(out, 200, "application/vnd.apple.mpegurl", rewrite(parts[1], rs.body.string(), rs.request.url.toString()).toByteArray(), head)
                     } else {

@@ -65,6 +65,11 @@ class TVroomFactory : AnimeSourceFactory {
         } catch (e: Throwable) {
             list.add(ErrorSource("미미티비 오류", e))
         }
+        try {
+            list.add(TVwiki()) // 티비위키 (2026-11-10, 망가요미판과 같은 규칙)
+        } catch (e: Throwable) {
+            list.add(ErrorSource("티비위키 오류", e))
+        }
         return list
     }
 }
