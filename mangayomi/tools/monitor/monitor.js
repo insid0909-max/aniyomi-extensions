@@ -128,6 +128,36 @@ async function checkDomains() {
     }
 }
 
+/**
+ * 안내 글 주소 따라가기(2026-11-11, 후후티비): 해외(깃허브)에선 사이트가 막혀 열어 볼 수 없지만, 어디서나 열리는
+ * 안내 글(텔레그래프)에 적힌 주소가 domains.json 과 다르면 domains.json 만 바꿈. 확장이 실제로 열어 확인한 뒤에만 쓰므로 안전.
+ */
+async function checkGuides() {
+    const file = path.join(ROOT, "domains.json");
+    if (!fs.existsSync(file)) return;
+    for (const g of config.guides || []) {
+        try {
+            const res = await withTimeout(fetch(g.url, { headers: { "User-Agent": UA } }), 20000, g.name);
+            const text = await res.text();
+            const hosts = [...new Set((text.match(new RegExp(g.regex, "gi")) || []).map((h) => h.toLowerCase()))];
+            const num = (h) => parseInt((/(\d+)\.[a-z]+$/.exec(h) || [0, 0])[1], 10);
+            hosts.sort((a, b) => num(b) - num(a));
+            const data = JSON.parse(fs.readFileSync(file, "utf8"));
+            const cur = (data.domains[g.key] || {}).baseUrl || "";
+            console.log(`[안내 글] ${g.name} HTTP ${res.status} → ${hosts.join(", ") || "주소 없음"} (지금 ${cur})`);
+            if (res.status !== 200 || !hosts.length) continue;
+            const to = "https://" + hosts[0];
+            if (to === cur || num(hosts[0]) < num(cur)) continue;
+            data.domains[g.key] = { ...(data.domains[g.key] || {}), baseUrl: to, updated: new Date(Date.now() + 9 * 3600000).toISOString().substring(0, 10) };
+            fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n");
+            if (!summary.changedFiles.includes("domains.json")) summary.changedFiles.push("domains.json");
+            summary.domainChanges.push({ name: g.name, from: cur, to, files: ["domains.json"] });
+        } catch (e) {
+            console.log(`[안내 글] ${g.name} 실패: ${e.message}`);
+        }
+    }
+}
+
 /** 주소가 자동으로 바뀌면 업데이트 내역(changelog.json → 업데이트내역.md)에도 적음 (확장 필터 맨 위 📝 줄) */
 function noteDomainChange(site, to) {
     const file = path.join(ROOT, "changelog.json");
@@ -279,6 +309,7 @@ function writeStatus() {
 
 (async () => {
     if (mode === "all" || mode === "domains") await checkDomains();
+    if (mode === "all" || mode === "domains") await checkGuides();
     if (mode === "all" || mode === "health") await checkHealth();
     writeStatus();
     if (mode === "all") state.lastRun = { mode, at: new Date().toISOString() };
