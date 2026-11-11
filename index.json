@@ -64,27 +64,5 @@
     "additionalParams": "",
     "sourceCodeLanguage": 1,
     "notes": ""
-  },
-  {
-    "name": "[시험] 라트펠",
-    "id": 1543279647,
-    "baseUrl": "https://latfel.net",
-    "lang": "ko",
-    "typeSource": "single",
-    "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
-    "dateFormat": "",
-    "dateFormatLocale": "",
-    "isNsfw": false,
-    "hasCloudflare": false,
-    "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/test/js/testing/latfel.js?v=0.0.2",
-    "apiUrl": "",
-    "version": "0.0.2",
-    "isManga": false,
-    "itemType": 1,
-    "isFullData": false,
-    "appMinVerReq": "0.5.0",
-    "additionalParams": "",
-    "sourceCodeLanguage": 1,
-    "notes": "app-frame 내부 문서로 목록·검색·회차·영상 탐색 전환. 바깥 app-shell과 부모 웹뷰 응답 경로 유지. 프레임 로딩 대기·문서 교체·내부 입력 이벤트·부모 작품 경로 보존 및 프레임 진단 추가. 문법·모의 회귀 검사 17개 통과. 실제 사이트 목록·회차·휴대폰 재생 미검증. 최신순·추가 페이지·blob·DRM 미지원. 정식 배포 아님."
   }
 ]
