@@ -1,5 +1,5 @@
 // 일반 브라우저 DOM 기반 실험판. API 주소 추측·TS 단독 반환·DRM 우회 없음.
-const mangayomiSources=[{id:1543279647,name:"[시험] 라트펠",lang:"ko",baseUrl:"https://latfel.net",version:"0.0.1",isNsfw:false,hasCloudflare:false,itemType:1,isManga:false}];
+const mangayomiSources=[{id:1543279647,name:"[시험] 라트펠",lang:"ko",baseUrl:"https://latfel.net",version:"0.0.2",isNsfw:false,hasCloudflare:false,itemType:1,isManga:false}];
 const LF_BASE="https://latfel.net",LF_UA="Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36";
 function lfPath(value){const s=String(value||"");if(/^https?:/i.test(s)&&!/^https:\/\/latfel\.net\//i.test(s))throw new Error("라트펠 주소가 아닙니다.");if(/[\\\r\n]/.test(s))throw new Error("잘못된 경로입니다.");const p=s.replace(/^https:\/\/latfel\.net/i,"");if(!/^\/(?:item\/\d+|[^\s?#]*)(?:[?#][^\s]*)?$/.test(p)||p.startsWith("//"))throw new Error("올바른 사이트 경로가 아닙니다.");return p;}
 function lfPage(p){if(!Number.isSafeInteger(p)||p<1)throw new Error("올바른 페이지 번호가 아닙니다.");return p;}
@@ -34,32 +34,49 @@ class DefaultExtension extends MProvider{
  }
 }
 function latfelTask(kind,data){
+ const root=globalThis.window;
+ let window=root,document=root.document,location=root.location,HTMLInputElement=root.HTMLInputElement,Event=root.Event,KeyboardEvent=root.KeyboardEvent;
+ const getComputedStyle=e=>window.getComputedStyle(e);
+ let frameState="root",previousDocument=null;
+ const workPath=()=>/^\/item\/\d+$/.test(root.location.pathname)?root.location.pathname:location.pathname;
+ function context(){let w=root;const seen=new Set();
+  for(let depth=0;depth<5;depth++){if(seen.has(w)){frameState="frame-loop";return false;}seen.add(w);
+   let d,frame;try{d=w.document;frame=d?.querySelector("iframe#app-frame");}catch(e){frameState="app-frame blocked";return false;}
+   if(!d){frameState="app-frame document waiting";return false;}
+   if(!frame){window=w;document=d;location=w.location;HTMLInputElement=w.HTMLInputElement;Event=w.Event;KeyboardEvent=w.KeyboardEvent;
+    frameState=(w===root?"root":"app-frame")+" "+location.pathname+" ready="+d.readyState;
+    if(previousDocument!==d){previousDocument=d;last="";stable=0;}return true;}
+   try{const next=frame.contentWindow;if(!next||!next.document||next.location.href==="about:blank"){frameState="app-frame loading";return false;}
+    if(next.location.origin!==root.location.origin){frameState="app-frame origin mismatch";return false;}w=next;
+   }catch(e){frameState="app-frame blocked";return false;}
+  }frameState="app-frame depth limit";return false;
+ }
  if(location.origin!=="https://latfel.net"){window.flutter_inappwebview.callHandler("setResponse",JSON.stringify({error:"라트펠 외부 주소로 이동했습니다."}));return;}
- if(window.__lfTaskActive)return;window.__lfTaskActive=true;
+ if(root.__lfTaskActive)return;root.__lfTaskActive=true;
  let done=false,ticks=0,searchSent=false,clicked=false,last="",stable=0;const started=Date.now();
  const text=e=>(e?.innerText||e?.textContent||"").replace(/\s+/g," ").trim();
  const visible=e=>!!e&&!!(e.getClientRects().length)&&getComputedStyle(e).visibility!=="hidden";
  const absolute=(s,base=location.href)=>{if(!String(s||"").trim())return "";try{const u=new URL(s,base);return /^https?:$/.test(u.protocol)?u.href:"";}catch(e){return "";}};
  const enabled=e=>!e.disabled&&e.getAttribute("aria-disabled")!=="true"&&!/재생\s*불가/.test(text(e));
  const epName=s=>/^(?:제\s*)?\d+(?:\.\d+)?\s*(?:화|회)(?:\s|[:.\-]|$)|^(?:특별편|프롤로그|OVA|OAD|SP|PV)(?:\s|[:.\-]|$)/i.test(s);
- const finish=result=>{if(done)return;done=true;clearInterval(timer);window.__lfTaskActive=false;window.flutter_inappwebview.callHandler("setResponse",JSON.stringify(result));};
+ const finish=result=>{if(done)return;done=true;clearInterval(timer);root.__lfTaskActive=false;root.flutter_inappwebview.callHandler("setResponse",JSON.stringify(result));};
  function cards(){const map=new Map();for(const a of document.querySelectorAll("a[href]")){const url=absolute(a.getAttribute("href"));let u;try{u=new URL(url);}catch(e){continue;}if(u.origin!==location.origin||!/^\/item\/\d+\/?$/.test(u.pathname)||!visible(a))continue;
  const image=a.querySelector("img"),title=a.querySelector("[class*='title'],h2,h3,h4"),name=text(title)||a.getAttribute("title")||image?.alt||text(a).replace(/재생\s*(?:불가|가능)|완결/g,"").trim();if(!name)continue;
  if(!map.has(u.pathname))map.set(u.pathname,{name,link:u.pathname,imageUrl:absolute(image?.currentSrc||image?.getAttribute("src")||image?.getAttribute("data-src")||"")});}return [...map.values()];}
  function chapters(){const map=new Map();for(const a of document.querySelectorAll("main a[href],article a[href],a[href]")){const name=text(a);if(!visible(a)||!enabled(a)||!epName(name))continue;const href=absolute(a.getAttribute("href"));let u;try{u=new URL(href);}catch(e){continue;}if(u.origin!==location.origin||u.pathname===location.pathname||u.pathname==="/")continue;map.set(u.href,{name,url:u.pathname+u.search});}
- for(const b of document.querySelectorAll("button,[role='button']")){const name=text(b);if(!visible(b)||!enabled(b)||!epName(name))continue;const url=location.pathname+"#lf-action="+encodeURIComponent(JSON.stringify({label:name}));map.set(url,{name,url});}return [...map.values()];}
+ for(const b of document.querySelectorAll("button,[role='button']")){const name=text(b);if(!visible(b)||!enabled(b)||!epName(name))continue;const url=workPath()+"#lf-action="+encodeURIComponent(JSON.stringify({label:name}));map.set(url,{name,url});}return [...map.values()];}
  function media(){const found=new Map();let drm=false;
  function visit(w,depth){if(depth>3)return;try{const doc=w.document,ref=w.location.href;for(const v of doc.querySelectorAll("video")){if(v.mediaKeys){drm=true;continue;}if(v.paused){try{const p=v.play();if(p?.catch)p.catch(()=>{});}catch(e){}}
  for(const s of [v.currentSrc,v.src,...[...v.querySelectorAll("source[src]")].map(x=>x.src)]){const u=absolute(s||"",ref);if(u&&/\.(?:m3u8|mp4)$/i.test(u.split(/[?#]/)[0]))found.set(u,{url:u,kind:"video",referer:ref});}}
  for(const r of w.performance.getEntriesByType("resource")){const u=absolute(r.name,ref);if(/\.m3u8$/i.test(u.split(/[?#]/)[0])&&!found.has(u))found.set(u,{url:u,kind:"resource",referer:ref});}for(const frame of doc.querySelectorAll("iframe")){try{visit(frame.contentWindow,depth+1);}catch(e){}}}catch(e){}}
  visit(window,0);return {drm,candidates:[...found.values()].slice(0,4)};}
- const timer=setInterval(()=>{if(done)return;try{ticks++;
+ const timer=setInterval(()=>{if(done)return;try{ticks++;if(!context()){if(ticks>=120)finish({error:"라트펠 프레임 접근 실패: "+frameState});return;}
   if(kind==="search"&&data.query&&!searchSent){let input=[...document.querySelectorAll("input")].find(e=>visible(e)&&(e.type==="search"||/검색|search/i.test((e.placeholder||"")+" "+(e.getAttribute("aria-label")||""))));
    if(!input){const opener=document.querySelector("button[aria-label*='검색'],button[title*='검색']");if(opener&&visible(opener))opener.click();}
    else{const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")?.set;setter?setter.call(input,data.query):input.value=data.query;input.dispatchEvent(new Event("input",{bubbles:true}));input.dispatchEvent(new Event("change",{bubbles:true}));input.dispatchEvent(new KeyboardEvent("keydown",{key:"Enter",code:"Enter",bubbles:true}));if(input.form?.requestSubmit)input.form.requestSubmit();searchSent=true;}}
   if(kind==="list"||kind==="search"){let list=cards();if(kind==="search"&&data.query){list=list.filter(x=>x.name.toLowerCase().includes(data.query.toLowerCase()));if(!searchSent)list=[];}const fingerprint=JSON.stringify(list);stable=fingerprint===last?stable+1:0;last=fingerprint;if(list.length&&stable>=4&&Date.now()-started>=1500)return finish({list});if(kind==="search"&&searchSent&&/검색\s*결과(?:가)?\s*(?:없|0)|결과가 없습니다/.test(document.body.innerText))return finish({list:[]});}
-  if(kind==="detail"){const eps=chapters(),hs=[...document.querySelectorAll("h1")].filter(e=>visible(e)&&! /^(설정|검색|로그인)$/.test(text(e))),name=text(hs[0]);if(name&&eps.length&&ticks>=6)return finish({name,link:location.pathname,imageUrl:absolute(document.querySelector("meta[property='og:image']")?.content||""),description:document.querySelector("meta[property='og:description'],meta[name='description']")?.content||"",genre:[],chapters:eps});}
+  if(kind==="detail"){const eps=chapters(),hs=[...document.querySelectorAll("h1")].filter(e=>visible(e)&&! /^(설정|검색|로그인)$/.test(text(e))),name=text(hs[0]);if(name&&eps.length&&ticks>=6)return finish({name,link:workPath(),imageUrl:absolute(document.querySelector("meta[property='og:image']")?.content||""),description:document.querySelector("meta[property='og:description'],meta[name='description']")?.content||"",genre:[],chapters:eps});}
   if(kind==="video"){if(data.label&&!clicked){const target=[...document.querySelectorAll("button,[role='button']")].find(e=>visible(e)&&enabled(e)&&text(e)===data.label);if(target){target.click();clicked=true;}}if(!data.label||clicked){const m=media();if(m.drm)return finish({error:"DRM 보호 영상입니다. 사이트의 정식 플레이어를 이용해야 합니다."});if(m.candidates.length&&ticks>=8)return finish(m);}}
-  if(ticks>=120){const page=location.origin+location.pathname;finish({error:"라트펠 "+kind+" 정보를 찾지 못했습니다 ("+page+"). 일반 페이지 DOM·회차 버튼·재생 권한을 확인해야 합니다. 크롤러 페이지나 교차 출처 프레임은 처리되지 않을 수 있습니다."});}
+  if(ticks>=120)finish({error:"라트펠 "+kind+" 탐색 실패: "+frameState+" a="+document.querySelectorAll("a[href]").length+" buttons="+document.querySelectorAll("button,[role='button']").length+" title="+String(document.title||"").slice(0,60)});
  }catch(e){finish({error:"라트펠 웹뷰 분석 오류: "+String(e.message||e).slice(0,180)});}},250);
 }
