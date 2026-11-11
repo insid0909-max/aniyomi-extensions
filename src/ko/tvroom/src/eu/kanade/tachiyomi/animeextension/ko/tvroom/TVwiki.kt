@@ -132,7 +132,7 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
 
     @Volatile private var lastDiscover = 0L
 
-    /** 저장소 주소 목록 → 안내 페이지(tvwiki.store)에 적힌 주소(큰 번호 3개) → 번호 +1~+3 (1분에 한 번) */
+    /** 저장소 주소 목록 → 안내 페이지(tvwiki.store·텔레그램·tvwikiurl.net)에 적힌 주소(큰 번호 3개) → 번호 +1~+3 (1분에 한 번) */
     private fun discoverDomain(currentHost: String): String? = synchronized(DISCOVER_LOCK) {
         val now = System.currentTimeMillis()
         if (now - lastDiscover < 60_000) return null
@@ -140,12 +140,13 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
         DomainList.host("tvwiki")?.takeIf { HOST_REGEX.matches(it) && it != currentHost }?.let { listed ->
             realHost(listed)?.let { return it }
         }
-        val guided = runCatching {
-            plain.newCall(Request.Builder().url(GUIDE_URL).header("User-Agent", ua()).build()).execute().use { r ->
-                NUM_REGEX.findAll(r.body.string().lowercase()).mapNotNull { it.groupValues[1].toIntOrNull() }
-                    .filter { it > 0 }.distinct().sortedDescending().take(3).toList()
-            }
-        }.getOrDefault(emptyList())
+        val guided = GUIDE_URLS.flatMap { g ->
+            runCatching {
+                plain.newCall(Request.Builder().url(g).header("User-Agent", ua()).build()).execute().use { r ->
+                    if (!r.isSuccessful) emptyList() else NUM_REGEX.findAll(r.body.string().lowercase()).mapNotNull { it.groupValues[1].toIntOrNull() }.toList()
+                }
+            }.getOrDefault(emptyList())
+        }.filter { it > 0 }.distinct().sortedDescending().take(3)
         for (g in guided) {
             val h = "tvwiki$g.net"
             if (h != currentHost) realHost(h)?.let { return it }
@@ -589,7 +590,7 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
         SwitchPreferenceCompat(ctx).apply {
             key = PREF_AUTO_DOMAIN
             title = "도메인 자동 찾기"
-            summary = "접속이 안 되면 주소 목록·안내 페이지(tvwiki.store)·tvwiki 번호 주소 중 열리는 주소로 자동 변경합니다."
+            summary = "접속이 안 되면 주소 목록·안내 페이지(tvwiki.store·텔레그램·tvwikiurl.net)·tvwiki 번호 주소 중 열리는 주소로 자동 변경합니다."
             setDefaultValue(true)
         }.also(screen::addPreference)
 
@@ -603,7 +604,7 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
         private val DISCOVER_LOCK = Any()
         private const val DEFAULT_BASE_URL = "https://tvwiki57.net"
-        private const val GUIDE_URL = "https://tvwiki.store/"
+        private val GUIDE_URLS = listOf("https://tvwiki.store/", "https://t.me/s/tvwiki_link", "https://tvwikiurl.net/")
         private const val LABEL = "티비위키"
         private const val RATE_GAP_MS = 350L
         private const val NO_IMAGE_ALT = "이미지가 없습니다."
