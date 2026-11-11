@@ -182,7 +182,8 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             if (found == null) {
                 if (!isListPath(req)) return res
                 res.close()
-                throw java.io.IOException("후후티비 주소가 바뀐 것 같아요. 웹뷰로 열어 새 주소를 확인한 뒤 그 주소(예: ah.hoohootv464.xyz)를 검색창에 붙여 넣어 주세요.")
+                val why = probeNote().take(90).let { if (it.isEmpty()) "" else " [$it]" }
+                throw java.io.IOException("후후티비 주소가 바뀐 것 같아요. 웹뷰로 열어 새 주소를 확인한 뒤 그 주소(예: at.hoohootv465.xyz)를 검색창에 붙여 넣어 주세요.$why")
             }
             res.close()
             return retryOn(found)
@@ -344,6 +345,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             .callTimeout(8, TimeUnit.SECONDS)
             .build()
         val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
+        val notes = java.util.concurrent.ConcurrentHashMap<String, String>()
         return try {
             val futures = candidates.map { host ->
                 pool.submit<String?> {
@@ -351,20 +353,46 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                         val r = Request.Builder().url("https://$host/home").header("User-Agent", USER_AGENT).build()
                         plain.newCall(r).execute().use { res ->
                             val fh = res.request.url.host
-                            val ok = SUBDOMAIN_REGEX.matches(fh) && res.code == 200 &&
-                                res.peekBody(300_000).string().contains(SITE_MARKER)
+                            val body = if (res.code == 200) res.peekBody(300_000).string() else ""
+                            // 2026-11-11: 사이트 꾸밈이 바뀌어 "HOOHOO TV" 글자가 없어도 작품 링크(/detail/)가 있으면 진짜 화면으로 봄
+                            val real = body.contains(SITE_MARKER) || DETAIL_REGEX.containsMatchIn(body)
+                            val ok = SUBDOMAIN_REGEX.matches(fh) && res.code == 200 && real
+                            notes[host] = when {
+                                ok -> "열림"
+                                !SUBDOMAIN_REGEX.matches(fh) -> "${fh}로 넘김"
+                                res.code != 200 -> "HTTP ${res.code}"
+                                else -> "후후티비 화면 아님"
+                            }
                             if (ok) fh else null
                         }
-                    }.getOrNull()
+                    }.onFailure { notes[host] = if (it is java.net.UnknownHostException) "주소 없음" else "연결 실패" }.getOrNull()
                 }
             }
             val found = futures.mapNotNull { runCatching { it.get() }.getOrNull() }.filter { it != currentHost }
+            saveProbeNote(candidates, notes)
             // 열리는 주소 중 번호가 가장 큰 것 (같으면 후보 순서대로)
             found.maxByOrNull { SUBDOMAIN_REGEX.matchEntire(it)?.groupValues?.get(3)?.toIntOrNull() ?: 0 }
         } finally {
             pool.shutdown()
         }
     }
+
+    // 마지막 주소 확인 결과(필터 🔎 줄·오류 괄호에 보여 줌 — 다음에 또 못 찾으면 어느 주소가 왜 안 됐는지 바로 보이게)
+    private fun saveProbeNote(candidates: List<String>, notes: Map<String, String>) {
+        // 번호 짐작(후보 수십 곳)은 앞의 안내 글 주소 결과를 덮지 않고 한 마디만 덧붙임
+        if (candidates.size > 10) {
+            val opened = notes.count { it.value == "열림" }
+            val prev = probeNote().substringBefore(" · 짐작")
+            prefs()?.edit()?.putString(PREF_PROBE_NOTE, "$prev · 짐작 ${candidates.size}곳 중 열림 $opened")?.apply()
+            return
+        }
+        val time = java.text.SimpleDateFormat("MM.dd HH:mm", java.util.Locale.KOREA).format(java.util.Date())
+        val text = candidates.take(4).joinToString(" · ") { "${it.substringBefore(".hoohootv")}.${it.substringAfter(".hoohootv").substringBefore('.')} ${notes[it] ?: "?"}" } +
+            if (candidates.size > 4) " 외 ${candidates.size - 4}곳" else ""
+        prefs()?.edit()?.putString(PREF_PROBE_NOTE, "$time $text")?.apply()
+    }
+
+    private fun probeNote(): String = prefs()?.getString(PREF_PROBE_NOTE, "").orEmpty()
 
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
         .set("User-Agent", USER_AGENT)
@@ -840,7 +868,14 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
     }
 
     // 맨 위에 최근 업데이트 내역(📝)
-    override fun getFilterList(): AnimeFilterList = ExtStatus.withNotes("hoohootv", baseFilters())
+    // 맨 위에 지금 주소(📡)·마지막 주소 확인 결과(🔎, 숫자 앞 두 글자.번호)
+    override fun getFilterList(): AnimeFilterList {
+        val base = ExtStatus.withNotes("hoohootv", baseFilters())
+        val host = baseUrl.substringAfter("://")
+        val top = listOf("📡 주소: $host · 자동 찾기 ${if (autoDomain()) "켜짐" else "꺼짐"}") +
+            probeNote().takeIf { it.isNotEmpty() }?.let { listOf("🔎 마지막 주소 확인 $it") }.orEmpty()
+        return AnimeFilterList(top.map { AnimeFilter.Header(it) } + base.list)
+    }
 
     private fun baseFilters(): AnimeFilterList = if (kind == KIND_DRAMA) {
         AnimeFilterList(AnimeFilter.Header("드라마 목록입니다 (분류 선택 없음)"))
@@ -925,6 +960,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
         private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
         private const val PREF_LAST_NEWER_CHECK = "pref_last_newer_check"
+        private const val PREF_PROBE_NOTE = "pref_probe_note"
         private const val PREF_AUTOPLAY_HOSTS = "pref_autoplay_hosts"
 
         // 숨은 화면의 영상·소리를 계속 꺼 둠 (플레이어가 나중에 만드는 영상도)
