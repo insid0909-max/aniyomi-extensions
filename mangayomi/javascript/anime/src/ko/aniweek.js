@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/aniweek.js"
@@ -682,8 +682,11 @@ class DefaultExtension extends MProvider {
             const host = (/^https?:\/\/([^/]+)/.exec(p) || [])[1] || "";
             if (!ADDR_HOST.test(host.toLowerCase())) return null;
             p = m[1];
+        } else {
+            // 확장이 넘겨받는 작품·회차 주소("/c/작품이름")는 작품 이름에 ? 가 들어 있을 수 있어 # 뒤(재생 표시)만 뗌
+            // (0.1.1, 2026-11-11 "추방된 치트 부여 마술사는…괜찮아?~" 가 ? 에서 잘려 HTTP 404)
+            p = p.split("#")[0];
         }
-        p = p.split(/[?#]/)[0];
         const parts = p.split("/").filter(Boolean).map((x) => safeDecode(x));
         if (parts.length < 2 || (parts[0] !== "c" && parts[0] !== "e")) return null;
         return `/${parts[0]}/${parts[1]}`;
