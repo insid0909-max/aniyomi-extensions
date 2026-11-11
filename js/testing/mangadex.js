@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 0,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.6",
+    "version": "0.0.7",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "js/testing/mangadex.js"
@@ -23,7 +23,7 @@ const API = "https://api.mangadex.org";
 const SITE = "https://mangadex.org";
 const COVERS = "https://uploads.mangadex.org/covers";
 // 망가덱스 자료 통로는 브라우저 이름(User-Agent)으로 부르면 "Bot challenge" 403 → 앱 이름으로 부름(망가덱스가 앱들에게 권하는 방식)
-const UA = "Mangayomi-KoExt/0.0.6";
+const UA = "Mangayomi-KoExt/0.0.7";
 const PAGE = 30;
 const MAX_OFFSET = 10000; // 망가덱스는 offset+limit 1만까지만 줌
 const NOTE_KEY = "mangadex";
@@ -410,7 +410,7 @@ class DefaultExtension extends MProvider {
         }
         const note = !chapters.length && gone > 0 ? `⚠️ 이 작품은 회차가 모두 내려가(저작권 등) 망가덱스에서 볼 수 있는 회차가 없어요 (내려간 회차 ${gone}개). 다른 확장에서 찾아 보세요.`
             : !chapters.length ? `⚠️ ${LANG_KO[lang] || lang}로 번역된 회차가 없고, ${fill === "off" ? "빈 화 채우기가 꺼져 있어요" : `${fillName}로도 볼 수 있는 회차가 없어요`}. 확장 설정의 "회차 언어"·"빈 화 채우기"를 바꿔 보세요.`
-            : filled ? `ℹ️ ${LANG_KO[lang] || lang} 번역이 없는 ${filled}개 화는 ${fillName} 회차로 채웠어요 (번역팀 칸에 "${fill === "*" ? "영어" : fillName} 번역: 팀 이름"처럼 표시).` : "";
+            : filled ? `ℹ️ ${LANG_KO[lang] || lang} 번역이 없는 ${filled}개 화는 ${fillName} 회차로 채웠어요 (번역팀 칸에 "${fill === "*" ? "영어" : fillName} 번역"처럼 표시 — 회차 목록 필터의 번역팀에서 "${LANG_KO[lang] || lang} 번역"만 고르면 따로 볼 수 있어요).` : "";
         return {
             name: titleOf(a),
             imageUrl: coverOf(m),
@@ -454,11 +454,9 @@ class DefaultExtension extends MProvider {
                     dateUpload: date && !isNaN(Date.parse(date)) ? String(Date.parse(date)) : null,
                     _key: key,
                     _lang: a.translatedLanguage,
-                    // 0.0.6 (사용자 "lilyfever 번역자인가? 한국어로 통일"): 번역팀 칸을 "번역: 팀", 다른 언어는 "베트남어 번역: 팀"
-                    scanlator: (() => {
-                        const who = lang === "*" || mode === "fill" ? `${LANG_KO[a.translatedLanguage] || a.translatedLanguage} 번역` : "번역";
-                        return group ? `${who}: ${group}` : (who === "번역" ? "" : who);
-                    })(),
+                    // 0.0.7 (사용자 "한국어만 따로 분리"): 번역팀 칸 = 언어만("한국어 번역"·"영어 번역") → 앱 회차 목록 필터(번역팀)에서
+                    // 언어별로 골라 볼 수 있게. 팀 이름을 넣으면 팀마다 따로 나뉘어 언어로 묶이지 않음
+                    scanlator: `${LANG_KO[a.translatedLanguage] || a.translatedLanguage} 번역`,
                 });
             }
             if (offset + 500 >= (Number(d.total) || 0)) break;
@@ -534,7 +532,7 @@ class DefaultExtension extends MProvider {
             key: "mdx_fill",
             listPreference: {
                 title: "빈 화 채우기",
-                summary: "회차 언어로 번역되지 않은 화를 다른 언어 회차로 채움 (번역팀 칸에 \"영어 번역: 팀\" 처럼 표시, 아무 언어로나는 영어 먼저)",
+                summary: "회차 언어로 번역되지 않은 화를 다른 언어 회차로 채움 (번역팀 칸에 \"영어 번역\" 처럼 언어 표시, 아무 언어로나는 영어 먼저)",
                 valueIndex: 0,
                 entries: ["영어로 채우기", "아무 언어로나 채우기 (영어 먼저)", "채우지 않기"],
                 entryValues: ["en", "*", "off"],
