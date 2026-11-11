@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 0,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.7",
+    "version": "0.0.8",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "js/testing/mangadex.js"
@@ -23,7 +23,7 @@ const API = "https://api.mangadex.org";
 const SITE = "https://mangadex.org";
 const COVERS = "https://uploads.mangadex.org/covers";
 // 망가덱스 자료 통로는 브라우저 이름(User-Agent)으로 부르면 "Bot challenge" 403 → 앱 이름으로 부름(망가덱스가 앱들에게 권하는 방식)
-const UA = "Mangayomi-KoExt/0.0.7";
+const UA = "Mangayomi-KoExt/0.0.8";
 const PAGE = 30;
 const MAX_OFFSET = 10000; // 망가덱스는 offset+limit 1만까지만 줌
 const NOTE_KEY = "mangadex";
@@ -155,10 +155,13 @@ function titleOf(a) {
     if (ko) return String(ko.ko).trim();
     const t = (a && a.title) || {};
     if (t.ko) return String(t.ko).trim();
+    // 0.0.8: 한국어 제목이 없으면 영어 제목(별칭의 en) — 대표 제목 en 은 일본어 로마자("Isekai Ojisan")인 경우가 많음
+    const original = String(a && a.originalLanguage || "");
+    const en = alt.find((x) => x && x.en);
+    if (en && original !== "en") return String(en.en).trim();
     if (t.en) return String(t.en).trim();
     const first = Object.keys(t)[0];
     if (first) return String(t[first]).trim();
-    const en = alt.find((x) => x && x.en);
     return en ? String(en.en).trim() : "(제목 없음)";
 }
 
@@ -297,7 +300,8 @@ class DefaultExtension extends MProvider {
     // ================= 목록 =================
     listPath(q, page, title) {
         const p = [`limit=${PAGE}`, `offset=${(page - 1) * PAGE}`, "includes[]=cover_art", "hasAvailableChapters=true"];
-        const lang = LANGS[q.lang][1] || chapterLang();
+        // 0.0.8: 검색어가 있으면 번역 언어를 직접 고르지 않은 한 모든 작품에서 찾음(한국어가 없으면 빈 화 채우기로 다른 언어)
+        const lang = LANGS[q.lang][1] || (title ? "*" : chapterLang());
         if (lang !== "*") p.push(`availableTranslatedLanguage[]=${encodeURIComponent(lang)}`);
         for (const o of ORIGS[q.orig][1]) p.push(`originalLanguage[]=${encodeURIComponent(o)}`);
         for (const r of RATINGS[q.rating][1]) p.push(`contentRating[]=${r}`);
@@ -308,6 +312,8 @@ class DefaultExtension extends MProvider {
         let sort = SORTS[q.sort];
         // "검색어와 가까운 순"은 검색어가 있을 때만 (없으면 인기순)
         if (sort[1] === "relevance" && !title) sort = SORTS[1];
+        // 검색어가 있고 정렬을 고르지 않았으면 검색어와 가까운 순
+        if (title && q.sort === 0) sort = SORTS[6];
         p.push(`order[${sort[1]}]=${sort[2]}`);
         if (title) p.push(`title=${encodeURIComponent(title)}`);
         return "/manga?" + p.join("&");
@@ -667,5 +673,40 @@ function notesFilters(key) {
             x.name = lead && parseFloat(lead[1]) === v && !/^\s*\d+(?:\.\d+)?\s*[-.,]\s*\d/.test(plain) ? plain : `${fmt(v)}. ${plain}`;
         }
         return d;
+    };
+})();
+
+// ---------- 검색 띄어쓰기 (2026-11-05, 웹툰 확장들과 같은 코드) ----------
+// 결과가 0개일 때만: 기호 뺀 검색어·앞쪽 단어·띄어쓰기 뺀 검색어·앞부분·두 글자씩으로 최대 8번 다시 찾아, 검색어가 든 작품만
+(function () {
+    const base = DefaultExtension.prototype.search;
+    DefaultExtension.prototype.search = async function (query, page, filters) {
+        const r = await base.apply(this, arguments);
+        const q = String(query || "").trim();
+        if (!q || Number(page) > 1 || /^(?:https?:\/\/|[\w-]+(?:\.[\w-]+)+(?:[/?#]|$))/i.test(q) || (r && r.list && r.list.length)) return r;
+        const squash = (s) => String(s || "").normalize("NFC").replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+        const want = squash(q);
+        if (want.length < 2) return r;
+        const joined = q.replace(/\s+/g, "");
+        const tries = [];
+        const add = (t) => { if (t && t.length >= 2 && t !== q && tries.indexOf(t) < 0) tries.push(t); };
+        const plain = q.replace(/[^\p{L}\p{N}\s]+/gu, " ").replace(/[\u3400-\u9fff]+/g, " ").replace(/\s+/g, " ").trim();
+        const words = plain.split(" ").filter((w) => w);
+        add(plain);
+        if (words.length > 2) add(words.slice(0, words.length - 1).join(" "));
+        if (words.length > 1) add(words.slice(0, Math.ceil(words.length / 2)).join(" "));
+        add(joined);
+        if (joined.length > 2) add(joined.substring(0, Math.max(2, Math.ceil(joined.length / 2))));
+        for (let i = 0; i + 2 <= joined.length; i++) add(joined.substring(i, i + 2));
+        for (const t of tries.slice(0, 8)) {
+            try {
+                const r2 = await base.call(this, t, 1, filters);
+                const hit = ((r2 && r2.list) || []).filter((x) => squash(x && x.name).includes(want));
+                if (hit.length) return { list: hit, hasNextPage: false };
+            } catch (e) {
+                // 다음 방법으로
+            }
+        }
+        return r;
     };
 })();
