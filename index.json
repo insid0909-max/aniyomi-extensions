@@ -64,5 +64,27 @@
     "additionalParams": "",
     "sourceCodeLanguage": 1,
     "notes": ""
+  },
+  {
+    "name": "[시험] 라트펠",
+    "id": 1543279647,
+    "baseUrl": "https://latfel.net",
+    "lang": "ko",
+    "typeSource": "single",
+    "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
+    "dateFormat": "",
+    "dateFormatLocale": "",
+    "isNsfw": false,
+    "hasCloudflare": false,
+    "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/test/js/testing/latfel.js?v=0.0.1",
+    "apiUrl": "",
+    "version": "0.0.1",
+    "isManga": false,
+    "itemType": 1,
+    "isFullData": false,
+    "appMinVerReq": "0.5.0",
+    "additionalParams": "",
+    "sourceCodeLanguage": 1,
+    "notes": "일반 웹뷰 DOM 기반 초기 시험판. 화면에 로드된 작품·검색 결과·회차 링크/버튼 탐색. 최신순·추가 페이지는 미지원. HLS는 실제 재생 목록 확인 후 반환하며 TS 단독·blob·DRM은 지원하지 않음. 문법 및 모의 검사 32개 통과. 일반 페이지 DOM·실제 회차·Android 재생은 미검증. 정식 배포 아님."
   }
 ]
