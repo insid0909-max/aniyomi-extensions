@@ -273,9 +273,11 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
         val title = titleOf(doc)
         val movie = isMovieCat(path)
         val info = doc.select("dl.bo_v_info dd").map { it.text().trim() }.filter { it.isNotEmpty() }
-        val year = info.firstOrNull { it.startsWith("개봉") }?.let { YEAR_ANY.find(it)?.value }
         val latest = registeredAt(doc)
         val airing = !movie && latest > 0 && System.currentTimeMillis() - latest <= 21L * 86_400_000L
+        // 영화는 "개봉년도", 끝난 드라마·예능은 사이트에 연도가 없어 마지막 회차 날짜의 연도
+        val year = info.firstOrNull { it.startsWith("개봉") }?.let { YEAR_ANY.find(it)?.value }
+            ?: if (!movie && !airing && latest > 0) Calendar.getInstance(KST).apply { timeInMillis = latest }.get(Calendar.YEAR).toString() else null
         return SAnime.create().apply {
             // 애니요미는 서재 제목을 갱신하지 않아 방영일은 제목 대신 설명 맨 위에. 끝난 작품만 (연도)
             this.title = if (!airing && year != null && title.isNotEmpty() && !TITLE_YEAR.containsMatchIn(title)) "$title ($year)" else title
@@ -331,7 +333,7 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
         val doc = response.asDoc()
         val title = titleOf(doc)
         val latest = registeredAt(doc)
-        class Row(val path: String, val label: String, val on: Boolean)
+        class Row(val path: String, val label: String, val on: Boolean, val date: Long)
         val seen = HashSet<String>()
         val rows = doc.select("li[data-ep-idx]").mapNotNull { li ->
             val a = li.selectFirst("a.title.ep-link") ?: return@mapNotNull null
@@ -341,7 +343,8 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
             if (!seen.add(path)) return@mapNotNull null
             var label = a.text().trim()
             if (title.isNotEmpty()) label = label.replace(title, "").trim()
-            Row(path, label.ifEmpty { a.text().trim() }.replace(SPACES, " "), a.hasClass("on"))
+            // 최근 회차는 줄거리 칸이 "2026-11-08 …" 처럼 방송 날짜로 시작함
+            Row(path, label.ifEmpty { a.text().trim() }.replace(SPACES, " "), a.hasClass("on"), dayOf(li.selectFirst("p")?.text().orEmpty()))
         }
         // 오래된 회차부터 번호 매기기 (번호 없음·겹침이면 앞 번호 + 1, 그래도 겹치면 +0.01)
         val oldestFirst = rows.reversed()
@@ -352,7 +355,7 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
             var no = nums[i] ?: (prev + 1f)
             while (!used.add(no)) no = Math.round((no + 0.01f) * 100f) / 100f
             prev = no
-            val date = if (r.on && latest > 0) latest else 0L
+            val date = if (r.on && latest > 0) latest else r.date
             val short = if (date > 0) synchronized(SHORT_FMT) { " (" + SHORT_FMT.format(java.util.Date(date)) + ")" } else ""
             SEpisode.create().apply {
                 url = r.path
@@ -363,6 +366,14 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
             }
         }.reversed()
         return MovieName.unify(eps)
+    }
+
+    private fun dayOf(text: String): Long {
+        val m = LEAD_DATE.find(text) ?: return 0L
+        return Calendar.getInstance(KST).apply {
+            clear()
+            set(m.groupValues[1].toInt(), m.groupValues[2].toInt() - 1, m.groupValues[3].toInt(), 0, 0, 0)
+        }.timeInMillis
     }
 
     private fun fmt(n: Float): String = if (n == n.toInt().toFloat()) n.toInt().toString() else n.toString()
@@ -613,6 +624,7 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
         private val EP_NUM = Regex("""(?:제\s*)?(\d+(?:\.\d+)?)\s*(화|회)""")
         private val SPECIAL = Regex("""특집|특별편|예고|외전|미방영|\b(?:OVA|SP\d*|SPECIAL)\b""", RegexOption.IGNORE_CASE)
         private val DATE_REGEX = Regex("""(20\d{2})[-./](\d{1,2})[-./](\d{1,2})""")
+        private val LEAD_DATE = Regex("""^\s*(20\d{2})-(\d{2})-(\d{2})(?:\s|$)""")
         private val YEAR_ANY = Regex("""(?:19|20)\d{2}""")
         private val SPACES = Regex("""\s+""")
         private val TITLE_YEAR = Regex("""\((?:19|20)\d{2}\)\s*$""")
