@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 0,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.4",
+    "version": "0.0.5",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "js/testing/mangadex.js"
@@ -23,7 +23,7 @@ const API = "https://api.mangadex.org";
 const SITE = "https://mangadex.org";
 const COVERS = "https://uploads.mangadex.org/covers";
 // 망가덱스 자료 통로는 브라우저 이름(User-Agent)으로 부르면 "Bot challenge" 403 → 앱 이름으로 부름(망가덱스가 앱들에게 권하는 방식)
-const UA = "Mangayomi-KoExt/0.0.4";
+const UA = "Mangayomi-KoExt/0.0.5";
 const PAGE = 30;
 const MAX_OFFSET = 10000; // 망가덱스는 offset+limit 1만까지만 줌
 const NOTE_KEY = "mangadex";
@@ -382,7 +382,18 @@ class DefaultExtension extends MProvider {
             a.lastChapter ? `마지막 회차: ${a.lastChapter}화` : "",
         ].filter((x) => x).join("\n");
         const fillName = fill === "*" ? "다른 언어" : (LANG_KO[fill] || fill);
-        const note = !chapters.length ? `⚠️ ${LANG_KO[lang] || lang}로 번역된 회차가 없어요. 확장 설정의 "회차 언어"·"빈 화 채우기"를 바꾸면 다른 언어 회차를 볼 수 있어요.`
+        // 0.0.5 (2026-11-11 사용자 "한국어 회차가 없으면 채우기가 안 먹힘"): 실제로는 회차가 모두 내려간(isUnavailable) 작품 —
+        // 망가덱스의 "번역된 언어" 정보는 예전 그대로라 목록에 나옴. 몇 개가 내려갔는지 세어 정확히 안내
+        let gone = 0;
+        if (!chapters.length) {
+            try {
+                gone = Number((await this.api(`/manga/${id}/feed?limit=1&includeUnavailable=1&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&contentRating[]=pornographic`, "회차")).total) || 0;
+            } catch (e) {
+                gone = 0;
+            }
+        }
+        const note = !chapters.length && gone > 0 ? `⚠️ 이 작품은 회차가 모두 내려가(저작권 등) 망가덱스에서 볼 수 있는 회차가 없어요 (내려간 회차 ${gone}개). 다른 확장에서 찾아 보세요.`
+            : !chapters.length ? `⚠️ ${LANG_KO[lang] || lang}로 번역된 회차가 없고, ${fill === "off" ? "빈 화 채우기가 꺼져 있어요" : `${fillName}로도 볼 수 있는 회차가 없어요`}. 확장 설정의 "회차 언어"·"빈 화 채우기"를 바꿔 보세요.`
             : filled ? `ℹ️ ${LANG_KO[lang] || lang} 번역이 없는 ${filled}개 화는 ${fillName} 회차로 채웠어요 (번역팀 칸에 [${fillName}] 표시).` : "";
         return {
             name: titleOf(a),
