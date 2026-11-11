@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 0,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.5",
+    "version": "0.0.6",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "js/testing/mangadex.js"
@@ -23,7 +23,7 @@ const API = "https://api.mangadex.org";
 const SITE = "https://mangadex.org";
 const COVERS = "https://uploads.mangadex.org/covers";
 // 망가덱스 자료 통로는 브라우저 이름(User-Agent)으로 부르면 "Bot challenge" 403 → 앱 이름으로 부름(망가덱스가 앱들에게 권하는 방식)
-const UA = "Mangayomi-KoExt/0.0.5";
+const UA = "Mangayomi-KoExt/0.0.6";
 const PAGE = 30;
 const MAX_OFFSET = 10000; // 망가덱스는 offset+limit 1만까지만 줌
 const NOTE_KEY = "mangadex";
@@ -105,7 +105,16 @@ const TAGS = [
 ];
 const TAG_KO = {};
 for (const t of TAGS) TAG_KO[t[0]] = t[1];
-const LANG_KO = { ko: "한국어", en: "영어", ja: "일본어", zh: "중국어(간체)", "zh-hk": "중국어(번체)", "es-la": "스페인어", es: "스페인어", "pt-br": "포르투갈어", fr: "프랑스어", id: "인도네시아어", vi: "베트남어", th: "태국어", ru: "러시아어" };
+const LANG_KO = {
+    ko: "한국어", en: "영어", ja: "일본어", zh: "중국어(간체)", "zh-hk": "중국어(번체)", "es-la": "스페인어(중남미)", es: "스페인어",
+    "pt-br": "포르투갈어(브라질)", pt: "포르투갈어", fr: "프랑스어", id: "인도네시아어", vi: "베트남어", th: "태국어", ru: "러시아어",
+    tr: "튀르키예어", de: "독일어", it: "이탈리아어", pl: "폴란드어", ar: "아랍어", uk: "우크라이나어", ms: "말레이어", tl: "필리핀어",
+    fil: "필리핀어", hu: "헝가리어", cs: "체코어", ro: "루마니아어", he: "히브리어", fa: "페르시아어", bn: "벵골어", hi: "힌디어",
+    nl: "네덜란드어", sv: "스웨덴어", ca: "카탈루냐어", el: "그리스어", my: "미얀마어", mn: "몽골어", lt: "리투아니아어", bg: "불가리아어",
+    sr: "세르비아어", hr: "크로아티아어", da: "덴마크어", no: "노르웨이어", fi: "핀란드어", ta: "타밀어", kk: "카자흐어", uz: "우즈베크어",
+    sk: "슬로바키아어", et: "에스토니아어", lv: "라트비아어", ka: "조지아어", az: "아제르바이잔어", ne: "네팔어", ur: "우르두어",
+    eo: "에스페란토", la: "라틴어", "ja-ro": "일본어(로마자)", "ko-ro": "한국어(로마자)", "zh-ro": "중국어(로마자)",
+};
 const STATUS_KO = { ongoing: 0, completed: 1, hiatus: 2, cancelled: 3 };
 
 function prefs() {
@@ -364,7 +373,14 @@ class DefaultExtension extends MProvider {
             try {
                 const have = {};
                 for (const c of chapters) have[c._key] = true;
-                const extra = (await this.chapters(id, fill, "fill")).filter((c) => c._lang !== lang && !have[c._key]);
+                // 아무 언어로나: 영어를 먼저 채우고, 영어에도 없는 화만 다른 언어로
+                let extra = [];
+                for (const fl of fill === "*" ? ["en", "*"] : [fill]) {
+                    if (fl === lang) continue;
+                    const more = (await this.chapters(id, fl, "fill")).filter((c) => c._lang !== lang && !have[c._key]);
+                    for (const c of more) have[c._key] = true;
+                    extra = extra.concat(more);
+                }
                 filled = extra.length;
                 chapters = chapters.concat(extra);
             } catch (e) {
@@ -394,7 +410,7 @@ class DefaultExtension extends MProvider {
         }
         const note = !chapters.length && gone > 0 ? `⚠️ 이 작품은 회차가 모두 내려가(저작권 등) 망가덱스에서 볼 수 있는 회차가 없어요 (내려간 회차 ${gone}개). 다른 확장에서 찾아 보세요.`
             : !chapters.length ? `⚠️ ${LANG_KO[lang] || lang}로 번역된 회차가 없고, ${fill === "off" ? "빈 화 채우기가 꺼져 있어요" : `${fillName}로도 볼 수 있는 회차가 없어요`}. 확장 설정의 "회차 언어"·"빈 화 채우기"를 바꿔 보세요.`
-            : filled ? `ℹ️ ${LANG_KO[lang] || lang} 번역이 없는 ${filled}개 화는 ${fillName} 회차로 채웠어요 (번역팀 칸에 [${fillName}] 표시).` : "";
+            : filled ? `ℹ️ ${LANG_KO[lang] || lang} 번역이 없는 ${filled}개 화는 ${fillName} 회차로 채웠어요 (번역팀 칸에 "${fill === "*" ? "영어" : fillName} 번역: 팀 이름"처럼 표시).` : "";
         return {
             name: titleOf(a),
             imageUrl: coverOf(m),
@@ -438,7 +454,11 @@ class DefaultExtension extends MProvider {
                     dateUpload: date && !isNaN(Date.parse(date)) ? String(Date.parse(date)) : null,
                     _key: key,
                     _lang: a.translatedLanguage,
-                    scanlator: (lang === "*" || mode === "fill" ? `[${LANG_KO[a.translatedLanguage] || a.translatedLanguage}] ` : "") + (group || ""),
+                    // 0.0.6 (사용자 "lilyfever 번역자인가? 한국어로 통일"): 번역팀 칸을 "번역: 팀", 다른 언어는 "베트남어 번역: 팀"
+                    scanlator: (() => {
+                        const who = lang === "*" || mode === "fill" ? `${LANG_KO[a.translatedLanguage] || a.translatedLanguage} 번역` : "번역";
+                        return group ? `${who}: ${group}` : (who === "번역" ? "" : who);
+                    })(),
                 });
             }
             if (offset + 500 >= (Number(d.total) || 0)) break;
@@ -514,9 +534,9 @@ class DefaultExtension extends MProvider {
             key: "mdx_fill",
             listPreference: {
                 title: "빈 화 채우기",
-                summary: "회차 언어로 번역되지 않은 화를 다른 언어 회차로 채움 (번역팀 칸에 [언어] 표시)",
+                summary: "회차 언어로 번역되지 않은 화를 다른 언어 회차로 채움 (번역팀 칸에 \"영어 번역: 팀\" 처럼 표시, 아무 언어로나는 영어 먼저)",
                 valueIndex: 0,
-                entries: ["영어로 채우기", "아무 언어로나 채우기", "채우지 않기"],
+                entries: ["영어로 채우기", "아무 언어로나 채우기 (영어 먼저)", "채우지 않기"],
                 entryValues: ["en", "*", "off"],
             },
         }, {
