@@ -102,6 +102,7 @@
 - 앱의 `Video`는 data class가 아님 → `copy()` 쓰면 "No static method copy$default" 오류. 새 `Video(url, quality, videoUrl, headers)`로 만들 것.
 - 망가요미는 필터를 돌려줄 때 `_status` 같은 사용자 정의 표시를 지움 → 상태 줄은 글자(📡/🩺/❌/🛡)로도 거를 것 (gogotv·livesports2·tvchak).
 - 망가요미 목록 표지는 확장의 `getHeaders(url)`(UA + Referer)가 있어야 뜸.
+- **GitHub 이 fork 저장소 Actions 를 스스로 끔**(2026-11-10 밤~11-12, 계속 커밋하던 중에도): 빌드·합친 목록 갱신 모두 멈춰 애니요미 업데이트가 안 나옴, API 로 돌리면 "Actions has been disabled for this repository". 설정(Allow all)은 켜져 있어도 Actions 탭에 "Workflows on this fork have been disabled" + 초록 버튼 "I understand my workflows, go ahead and re-enable them" → 사용자가 눌러야 다시 켜짐. 애니요미 업데이트가 안 나오면 먼저 build_push 최근 실행을 확인할 것. 합친 목록 30분마다 줄이기는 사용자 "일단 지켜보자"(2026-11-12).
 - Mangayomi JS는 master raw에서 바로 배포(빌드 불필요), Kotlin APK는 master push CI(`build_push.yml`)로 배포. PR 검사(googledrive-extractor)는 원래 실패하므로 무시. 저장소 Actions가 꺼지면 빌드가 안 돌므로 사용자에게 켜 달라고 안내.
 
 ### 소스별
