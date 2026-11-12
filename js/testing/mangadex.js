@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 0,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.8",
+    "version": "0.0.9",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "js/testing/mangadex.js"
@@ -394,6 +394,15 @@ class DefaultExtension extends MProvider {
             }
         }
         chapters.sort((x, y) => (y._n - x._n) || (y._t - x._t));
+        // 0.0.9 (2026-11-12 사용자 "총 몇화 한국 몇화 설명 쪽에"): 설명 맨 위에 회차 수 한 줄 — 총 · 고른 언어 · 채운 회차(언어별)
+        const per = {};
+        for (const c of chapters) per[c._lang] = (per[c._lang] || 0) + 1;
+        const mine = per[lang] || 0;
+        const others = Object.keys(per).filter((l) => l !== lang).sort((x, y) => per[y] - per[x]);
+        const countLine = chapters.length
+            ? `📚 총 ${chapters.length}화 · ${LANG_KO[lang] || lang} ${mine}화` +
+                (others.length ? ` · 다른 언어로 채움 ${chapters.length - mine}화 (${others.map((l) => `${LANG_KO[l] || l} ${per[l]}`).join(", ")})` : "")
+            : "";
         chapters = chapters.map((x) => ({ name: x.name, url: x.url, dateUpload: x.dateUpload, scanlator: x.scanlator }));
         const desc = (a.description && (a.description.ko || a.description.en || Object.values(a.description)[0])) || "";
         const langs = (a.availableTranslatedLanguages || []).map((l) => LANG_KO[l] || l);
@@ -423,7 +432,7 @@ class DefaultExtension extends MProvider {
             link: `${SITE}/title/${id}`,
             author: people("author").join(", "),
             artist: people("artist").join(", "),
-            description: [note, String(desc).replace(/\r/g, "").trim(), info].filter((x) => x).join("\n\n"),
+            description: [countLine, note, String(desc).replace(/\r/g, "").trim(), info].filter((x) => x).join("\n\n"),
             genre: (a.tags || []).map((t) => TAG_KO[t.id] || (t.attributes && t.attributes.name && t.attributes.name.en)).filter((x) => x),
             status: STATUS_KO[a.status] !== undefined ? STATUS_KO[a.status] : 5,
             chapters,
