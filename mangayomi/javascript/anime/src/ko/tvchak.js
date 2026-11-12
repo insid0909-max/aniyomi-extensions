@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.54",
+    "version": "0.1.55",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -832,7 +832,7 @@ class DefaultExtension extends MProvider {
             // 쉬는 중이면 지난 실패 이유를 그대로 보여 줌
             if (why) p.setString("year_fail_why", why);
             const pause = !batch.length && todo.length && now < stopUntil ? ` · 쉬는 중 ${Math.ceil((stopUntil - now) / 60000)}분 남음` : "";
-            const lastWhy = fail || pause ? p.getString("year_fail_why", "") : "";
+            const lastWhy = why || (fail || pause ? p.getString("year_fail_why", "") : "") || (fail ? "이유 기록 없음" : "");
             p.setString("year_diag", `카드 ${result.list.length}개 중 날짜 붙음 ${years + airs}개 (연도 ${years} · 방영일 ${airs}) · 이번에 읽음 ${ok}개 · 남은 ${todo.length - ok}개${fail ? " · 실패해서 10분 쉼" : pause}${lastWhy ? ` [${lastWhy}]` : ""}`);
         } catch (e) {
             // 무시
