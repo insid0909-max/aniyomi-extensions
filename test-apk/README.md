@@ -9,7 +9,7 @@
 
 ## 쓰는 법
 1. 시험할 코드를 이 `test-apk` 가지에 올림(정식 코드가 바뀌었으면 master 를 먼저 합쳐 옴).
-2. `test-apk/modules.txt` 에 빌드할 모듈(tvroom·livesports·adult)·칸·`sites=시험할 사이트` 를 적음(사이트를 안 적으면 그 모듈 사이트가 전부 들어가 [시험] 사이트가 많아짐).
+2. `test-apk/modules.txt` 에 빌드할 모듈(tvroom·livesports 등)·칸·`sites=시험할 사이트` 를 적음(사이트를 안 적으면 그 모듈 사이트가 전부 들어가 [시험] 사이트가 많아짐).
 3. 올리면 자동으로 빌드(`.github/workflows/test_apk.yml`) → `apk-test` 가지에 시험 저장소가 만들어짐.
 4. 휴대폰에서 잘 되면 칸을 "배포전" 으로 바꾸고, **사용자가 허락할 때만** master 에 합쳐 정식 배포.
 
