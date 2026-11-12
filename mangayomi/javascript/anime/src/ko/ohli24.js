@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.24",
+    "version": "0.1.25",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli24.js"
@@ -539,8 +539,10 @@ class DefaultExtension extends MProvider {
         });
         const latest = Math.max(0, ...raw.map((e) => e.date));
         const year = ((meta["방영일"] || "").match(/(?:19|20)\d{2}/) || [""])[0];
-        const h2 = first(doc, "header.top-movies-list-title h2");
-        let title = h2 ? h2.text.trim() : "";
+        // 2026-11-12: 사이트가 제목을 h1 로 옮기고 첫 h2 에 "총 에피소드(2화)" 를 둠 → h1 먼저, h2 는 "총 에피소드" 가 아닐 때만
+        const h1 = first(doc, "header.top-movies-list-title h1");
+        const h2s = doc.select("header.top-movies-list-title h2").map((e) => e.text.trim()).filter((t) => t && !/^총\s*에피소드/.test(t));
+        let title = (h1 ? h1.text.trim() : "") || h2s[0] || "";
         if (kind === "방영중" && latest) title = `${title} · ${mmdd(latest)}`;
         else if (kind && kind !== "방영중" && year && !title.includes(`(${year})`)) title = `${title} (${year})`;
         const img = first(doc, ".article-box-img img");
