@@ -1,5 +1,13 @@
 {
  "label": "애니",
+ "guides": [
+  {
+   "name": "후후티비",
+   "key": "hoohootv",
+   "url": "https://telegra.ph/%ED%9B%84%ED%9B%84%ED%8B%B0%EB%B9%84-%EC%B5%9C%EC%8B%A0-%EC%A3%BC%EC%86%8C-09-03",
+   "regex": "[a-z]{2}\\.hoohootv\\d+\\.[a-z]{2,6}"
+  }
+ ],
  "sites": [
   {
    "name": "고고티비",

@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.53",
+    "version": "0.1.56",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -744,15 +744,11 @@ class DefaultExtension extends MProvider {
         return max > curNum;
     }
 
-    /**
-     * 목록 카드의 영화 제목 옆에 개봉 연도를 붙임.
-     * 목록 페이지에는 연도가 없어서, 영화 분류 목록일 때 각 작품 상세 페이지에서 연도를 읽어 폰에 저장해 두고
-     * (한 번 읽은 작품은 다시 읽지 않음) 모든 목록에서 저장된 연도를 붙인다.
-     */
     // 목록 카드 제목 뒤에 정보를 붙임: 영화와 방영이 끝난 드라마·예능은 연도 "(2024)", 방영 중이면 최근 방영일 " · 10.04".
-    // 목록 페이지에는 둘 다 없어서 각 작품 상세 페이지에서 읽어 폰에 저장해 둔다.
-    // 영화 연도는 한 번만 읽고, 방영일은 6시간이 지나면 다시 읽는다.
-    async withYears(result, movieList) {
+    // 목록 페이지에는 둘 다 없어서 작품 화면을 열 때(getDetail) 읽어 폰에 저장해 둔 것만 붙인다.
+    // 예전엔 목록마다 작품 화면 1개를 몰래 읽었지만, 사이트 보안 확인(HTTP 202)에 매번 막혀 0개였음 →
+    // 웹뷰로 통과시키면 목록이 2~4초 늦어져서 몰래 읽기는 뺌 (사용자 선택, 2026-11-12, 0.1.56)
+    async withYears(result) {
         let p;
         try {
             p = new SharedPreferences();
@@ -761,48 +757,11 @@ class DefaultExtension extends MProvider {
         }
         const idOf = (x) => (/\/id\/(\d+)/.exec(x.link) || [])[1];
         const now = Date.now();
-        const ids = result.list.map(idOf).filter((id) => id);
-        // 처음 보는 작품 먼저, 그다음 방영일이 오래된 시리즈 (영화 목록에서는 시리즈를 다시 읽지 않음)
-        const unknown = ids.filter((id) => !p.getString(`year_${id}`, ""));
-        // 방영 중인 시리즈는 6시간, 끝난 시리즈는 7일마다 다시 읽음
-        const stale = movieList ? [] : ids.filter((id) => {
-            const [latest, checked] = airOf(p, id);
-            const ttl = now - latest <= ONGOING_DAYS * 86400000 ? AIR_TTL_MS : ENDED_TTL_MS;
-            return p.getString(`year_${id}`, "") === "-" && now - checked > ttl;
-        });
-        const todo = unknown.concat(stale);
-        let ok = 0;
-        let fail = 0;
-        // 한꺼번에 많이 읽으면 사이트(CloudFront)가 접속을 잠시 차단하므로 한 번에 하나씩 읽는다.
-        // 목록은 이 읽기가 끝나야 뜨므로(망가요미는 뒤에서 읽을 수 없음) 목록 한 번에 1개만 읽는다
-        // (전엔 3개 + 0.7초 쉼씩 → 목록이 3~5초 늦게 뜸, 2026-11-01). 작품 화면을 열 때도 저장되니 곧 채워짐. 막히면 즉시 멈춤
-        const stopUntil = Number(p.getString("year_pause_until", "0")) || 0;
-        const batch = now < stopUntil ? [] : todo.slice(0, 1);
-        for (const id of batch) {
-            try {
-                const { html, res } = await this.getHtml(`/index.php/vod/detail/id/${id}.html`);
-                const code = res ? Number(res.statusCode) : 200;
-                if (code === 403 || code === 202 || code === 429 || !String(html || "").includes("maccms")) {
-                    fail++;
-                    // 10분 동안 읽기를 쉼
-                    p.setString("year_pause_until", String(Date.now() + 10 * 60000));
-                    break;
-                }
-                saveInfo(p, id, new Document(html));
-                ok++;
-            } catch (e) {
-                fail++;
-                break;
-            }
-        }
-        let years = 0;
-        let airs = 0;
         for (const x of result.list) {
             const id = idOf(x);
             const y = id ? p.getString(`year_${id}`, "") : "";
             if (/^(?:19|20)\d{2}$/.test(y)) {
                 if (!x.name.includes(y)) x.name = `${x.name} (${y})`;
-                years++;
             } else if (y === "-") {
                 const latest = airOf(p, id)[0];
                 if (!latest) continue;
@@ -811,20 +770,12 @@ class DefaultExtension extends MProvider {
                     // 방영 중: 제목 뒤에 최근 방영일
                     const pad = (n) => String(n).padStart(2, "0");
                     x.name = `${x.name} · ${pad(k.getUTCMonth() + 1)}.${pad(k.getUTCDate())}`;
-                    airs++;
                 } else {
                     // 방영이 끝남: 제목 뒤에 연도 (사이트 표기, 없으면 마지막 방영 연도)
                     const sy = seriesYear(p, id) || String(k.getUTCFullYear());
                     if (!x.name.includes(sy)) x.name = `${x.name} (${sy})`;
-                    years++;
                 }
             }
-        }
-        // 필터 화면에 보여 줄 진단
-        try {
-            p.setString("year_diag", `목록 ${result.list.length}개 · 남은 ${todo.length - ok}개 · 이번에 읽음 ${ok}개${fail ? " · 사이트가 막아 10분 쉼" : ""} · 연도 ${years}개 · 방영일 ${airs}개`);
-        } catch (e) {
-            // 무시
         }
         return result;
     }
@@ -1060,14 +1011,7 @@ class DefaultExtension extends MProvider {
     }
 
     getFilterList() {
-        let diag = "";
-        try {
-            diag = new SharedPreferences().getString("year_diag", "");
-        } catch (e) {
-            diag = "";
-        }
-        const extra = diag ? [{ type_name: "HeaderFilter", name: `🎬 영화 연도: ${diag}`, _status: true }] : [];
-        return statusFilters("tvchak", this.getBaseUrl(), this.autoOn()).concat(extra, this.baseFilterList());
+        return statusFilters("tvchak", this.getBaseUrl(), this.autoOn()).concat(this.baseFilterList());
     }
 
     async getPopular(page) {
@@ -1088,7 +1032,7 @@ class DefaultExtension extends MProvider {
         await statusRefresh(this.client);
         // 앱이 돌려준 필터에 param 이 빠져 있을 수 있어 같은 이름의 원래 필터에서 채움
         const base = this.baseFilterList();
-        const list = (filters || []).filter((f) => f && !f._status && !(f.type_name === "HeaderFilter" && /^(?:📡|🩺|❌|🛡|📝|🎬)/.test(String(f.name || ""))));
+        const list = (filters || []).filter((f) => f && !f._status && !(f.type_name === "HeaderFilter" && /^(?:📡|🩺|❌|🛡|📝|🎬|📅)/.test(String(f.name || ""))));
         for (const f of list) {
             if (!f.param) {
                 const b = base.find((x) => x.name === f.name && x.type_name === f.type_name);
