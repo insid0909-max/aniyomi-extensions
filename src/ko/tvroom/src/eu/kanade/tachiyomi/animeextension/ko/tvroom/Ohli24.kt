@@ -246,7 +246,10 @@ class Ohli24 : AnimeHttpSource(), ConfigurableAnimeSource {
         val latest = eps.mapNotNull { it.date }.maxOrNull()
         val year = YEAR_REGEX.find(m["방영일"].orEmpty())?.value
         return SAnime.create().apply {
-            val t = doc.selectFirst("header.top-movies-list-title h2")?.text()?.trim().orEmpty()
+            // 2026-11-12: 사이트가 제목을 h1 로 옮기고 첫 h2 에 "총 에피소드(2화)" 를 둠 → h1 먼저, h2 는 "총 에피소드" 가 아닐 때만
+            val t = doc.selectFirst("header.top-movies-list-title h1")?.text()?.trim()?.ifEmpty { null }
+                ?: doc.select("header.top-movies-list-title h2").map { it.text().trim() }
+                    .firstOrNull { it.isNotEmpty() && !it.startsWith("총 에피소드") && !it.startsWith("총에피소드") }.orEmpty()
             title = if (kind != "방영중" && kind.isNotEmpty() && year != null && !t.contains("($year)")) "$t ($year)" else t
             thumbnail_url = doc.selectFirst(".article-box-img img")?.attr("abs:src")?.ifEmpty { null }
             genre = m["장르"]?.split(',', '/', '·')?.map { it.trim() }?.filter { it.isNotEmpty() }?.joinToString(", ")?.ifEmpty { null }
