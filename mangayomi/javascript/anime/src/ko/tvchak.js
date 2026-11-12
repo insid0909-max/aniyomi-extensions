@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.53",
+    "version": "0.1.54",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvchak.js"
@@ -773,6 +773,7 @@ class DefaultExtension extends MProvider {
         const todo = unknown.concat(stale);
         let ok = 0;
         let fail = 0;
+        let why = "";
         // 한꺼번에 많이 읽으면 사이트(CloudFront)가 접속을 잠시 차단하므로 한 번에 하나씩 읽는다.
         // 목록은 이 읽기가 끝나야 뜨므로(망가요미는 뒤에서 읽을 수 없음) 목록 한 번에 1개만 읽는다
         // (전엔 3개 + 0.7초 쉼씩 → 목록이 3~5초 늦게 뜸, 2026-11-01). 작품 화면을 열 때도 저장되니 곧 채워짐. 막히면 즉시 멈춤
@@ -782,8 +783,13 @@ class DefaultExtension extends MProvider {
             try {
                 const { html, res } = await this.getHtml(`/index.php/vod/detail/id/${id}.html`);
                 const code = res ? Number(res.statusCode) : 200;
-                if (code === 403 || code === 202 || code === 429 || !String(html || "").includes("maccms")) {
+                const body = String(html || "");
+                if (code === 403 || code === 202 || code === 429 || !body.includes("maccms")) {
                     fail++;
+                    // 실패 이유: HTTP 코드 · 보안 확인 화면인지 · 응답 앞부분 (태그 빼고)
+                    const kind = /Just a moment|challenge|captcha|cf-|aws-waf|awswaf|Request could not be satisfied/i.test(body) ? "보안 확인 화면" : body.length ? "작품 화면 아님" : "빈 응답";
+                    const head = body.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 40);
+                    why = `HTTP ${code} · ${kind} · ${body.length}자${head ? ` · "${head}"` : ""}`;
                     // 10분 동안 읽기를 쉼
                     p.setString("year_pause_until", String(Date.now() + 10 * 60000));
                     break;
@@ -792,6 +798,7 @@ class DefaultExtension extends MProvider {
                 ok++;
             } catch (e) {
                 fail++;
+                why = `연결 실패 · ${String((e && e.message) || e).slice(0, 40)}`;
                 break;
             }
         }
@@ -822,7 +829,11 @@ class DefaultExtension extends MProvider {
         }
         // 필터 화면에 보여 줄 진단
         try {
-            p.setString("year_diag", `목록 ${result.list.length}개 · 남은 ${todo.length - ok}개 · 이번에 읽음 ${ok}개${fail ? " · 사이트가 막아 10분 쉼" : ""} · 연도 ${years}개 · 방영일 ${airs}개`);
+            // 쉬는 중이면 지난 실패 이유를 그대로 보여 줌
+            if (why) p.setString("year_fail_why", why);
+            const pause = !batch.length && todo.length && now < stopUntil ? ` · 쉬는 중 ${Math.ceil((stopUntil - now) / 60000)}분 남음` : "";
+            const lastWhy = fail || pause ? p.getString("year_fail_why", "") : "";
+            p.setString("year_diag", `카드 ${result.list.length}개 중 날짜 붙음 ${years + airs}개 (연도 ${years} · 방영일 ${airs}) · 이번에 읽음 ${ok}개 · 남은 ${todo.length - ok}개${fail ? " · 실패해서 10분 쉼" : pause}${lastWhy ? ` [${lastWhy}]` : ""}`);
         } catch (e) {
             // 무시
         }
@@ -1066,7 +1077,7 @@ class DefaultExtension extends MProvider {
         } catch (e) {
             diag = "";
         }
-        const extra = diag ? [{ type_name: "HeaderFilter", name: `🎬 영화 연도: ${diag}`, _status: true }] : [];
+        const extra = diag ? [{ type_name: "HeaderFilter", name: `📅 목록 날짜 붙이기: ${diag}`, _status: true }] : [];
         return statusFilters("tvchak", this.getBaseUrl(), this.autoOn()).concat(extra, this.baseFilterList());
     }
 
@@ -1088,7 +1099,7 @@ class DefaultExtension extends MProvider {
         await statusRefresh(this.client);
         // 앱이 돌려준 필터에 param 이 빠져 있을 수 있어 같은 이름의 원래 필터에서 채움
         const base = this.baseFilterList();
-        const list = (filters || []).filter((f) => f && !f._status && !(f.type_name === "HeaderFilter" && /^(?:📡|🩺|❌|🛡|📝|🎬)/.test(String(f.name || ""))));
+        const list = (filters || []).filter((f) => f && !f._status && !(f.type_name === "HeaderFilter" && /^(?:📡|🩺|❌|🛡|📝|🎬|📅)/.test(String(f.name || ""))));
         for (const f of list) {
             if (!f.param) {
                 const b = base.find((x) => x.name === f.name && x.type_name === f.type_name);
