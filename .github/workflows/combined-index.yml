@@ -50,8 +50,9 @@ jobs:
           cp "$RUNNER_TEMP/out/index.json" "$DIR/index.json"
           cp mangayomi/tools/combined/README.md "$DIR/README.md"
           # 확장 상태판 (2026-11-13): 감시 결과·주소·버전·업데이트 내역을 한 장으로
-          node mangayomi/tools/combined/status.js . "$RUNNER_TEMP/out/상태판.md" "$DIR/상태판.md" > /dev/null || true
+          node mangayomi/tools/combined/status.js . "$RUNNER_TEMP/out/상태판.md" "$DIR/상태판.md" "$DIR/status.json" > /dev/null || true
           if [ -f "$RUNNER_TEMP/out/상태판.md" ]; then cp "$RUNNER_TEMP/out/상태판.md" "$DIR/상태판.md"; fi
+          if [ -f "$RUNNER_TEMP/out/status.json" ]; then cp "$RUNNER_TEMP/out/status.json" "$DIR/status.json"; fi
           cd "$DIR"
           git config user.name "insid0909-max"
           git config user.email "266083559+insid0909-max@users.noreply.github.com"
@@ -59,3 +60,19 @@ jobs:
           if git diff --cached --quiet; then echo "바뀐 것 없음"; exit 0; fi
           git commit -q -m "합친 확장 목록 갱신"
           git push -q origin repo
+
+      - name: Status app page on GitHub Pages
+        # 앱 모양 상태판(gh-pages /status/)이 없거나 다르면 넣음 (애니요미 빌드가 gh-pages 를 바꿀 때도 같이 넣지만, 그 사이 빈틈 대비)
+        run: |
+          REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          DIR="$RUNNER_TEMP/pages"
+          git clone -q --depth 1 -b gh-pages "$REMOTE" "$DIR" || exit 0
+          mkdir -p "$DIR/status"
+          if cmp -s mangayomi/tools/combined/status.html "$DIR/status/index.html"; then echo "상태판 화면 그대로"; exit 0; fi
+          cp mangayomi/tools/combined/status.html "$DIR/status/index.html"
+          cd "$DIR"
+          git config user.name "insid0909-max"
+          git config user.email "266083559+insid0909-max@users.noreply.github.com"
+          git add status/index.html
+          git commit -q -m "상태판 화면 갱신"
+          git push -q origin gh-pages
