@@ -540,7 +540,7 @@
   "hasCloudflare": true,
   "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-manga-extensions/gh-pages/mangayomi/tokinovel.js",
   "apiUrl": "",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "isManga": false,
   "itemType": 2,
   "isFullData": false,
