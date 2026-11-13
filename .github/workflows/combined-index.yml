@@ -9,6 +9,8 @@ on:
     paths:
       - 'mangayomi/anime_index.json'
       - 'mangayomi/tools/combined/**'
+      - 'domains.json'
+      - 'changelog.json'
   schedule:
     - cron: '7,37 * * * *'
   workflow_dispatch:
@@ -47,6 +49,9 @@ jobs:
           fi
           cp "$RUNNER_TEMP/out/index.json" "$DIR/index.json"
           cp mangayomi/tools/combined/README.md "$DIR/README.md"
+          # 확장 상태판 (2026-11-13): 감시 결과·주소·버전·업데이트 내역을 한 장으로
+          node mangayomi/tools/combined/status.js . "$RUNNER_TEMP/out/상태판.md" "$DIR/상태판.md" > /dev/null || true
+          if [ -f "$RUNNER_TEMP/out/상태판.md" ]; then cp "$RUNNER_TEMP/out/상태판.md" "$DIR/상태판.md"; fi
           cd "$DIR"
           git config user.name "insid0909-max"
           git config user.email "266083559+insid0909-max@users.noreply.github.com"
