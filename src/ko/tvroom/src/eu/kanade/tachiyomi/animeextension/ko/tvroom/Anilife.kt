@@ -642,6 +642,7 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         return AnimeFilterList(
             listOf(
                 AnimeFilter.Header("📡 주소: $host · 자동 찾기 ${if (autoDomain()) "켜짐" else "꺼짐"}"),
+                *listOfNotNull(DomainList.note("anilife")?.let { AnimeFilter.Header("🔎 주소 목록 확인: $it") }).toTypedArray(),
                 AnimeFilter.Separator(),
                 AnimeFilter.Header("검색어와 함께 쓸 수 있음 (작품 주소를 붙여 넣으면 바로 열기)"),
                 ScopeFilter(),

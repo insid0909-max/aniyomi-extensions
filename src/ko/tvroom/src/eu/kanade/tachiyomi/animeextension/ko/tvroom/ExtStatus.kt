@@ -116,6 +116,7 @@ internal object ExtStatus {
             null -> ""
         }
         val out = mutableListOf("📡 주소: $host$auto")
+        DomainList.note(key)?.let { out.add("🔎 주소 목록 확인: $it") }
         val item = data()?.optJSONObject("items")?.optJSONObject(key)
         out.add(
             when {

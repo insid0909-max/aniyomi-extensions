@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.22",
+    "version": "0.1.23",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/kotbc.js"
@@ -536,18 +536,65 @@ async function addrFollow(ext) {
     try {
         if (!ext.autoOn()) return;
         const p = new SharedPreferences();
-        const at = Number(p.getString(key + "_listed_at", "0")) || 0;
-        if (Date.now() - at < 6 * 3600000) return;
-        p.setString(key + "_listed_at", String(Date.now()));
         const host = (u) => String(u || "").replace(/^https?:\/\//, "").replace(/[/?#].*$/, "").replace(/^www\./, "").toLowerCase();
-        const work = async () => {
-            const listed = host(await listedDomain(ext.client, key));
-            if (!listed || !ADDR_HOST.test(listed) || !addrNewer(listed, host(addrCurrent(ext)))) return;
-            if (await addrIsSite(ext, "https://" + listed)) p.setString(key + "_auto_domain", "https://" + listed);
+        const pad = (n) => String(n).padStart(2, "0");
+        const note = (msg) => {
+            const d = new Date(Date.now() + 9 * 3600000);
+            try { p.setString(key + "_listed_note", `${pad(d.getUTCMonth() + 1)}.${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} ${msg}`); } catch (e) { /* 그대로 */ }
         };
-        await Promise.race([work(), new Promise((r) => setTimeout(r, 6000))]);
+        const adopt = (origin) => {
+            p.setString(key + "_auto_domain", origin);
+            // 직접 넣은 주소가 있으면 그 칸도 새 주소로 (옛 주소는 넘겨 주기만 하므로)
+            try { if (String(p.get(ADDR_PREF) || "").trim()) p.setString(ADDR_PREF, origin); } catch (e) { /* 그대로 */ }
+        };
+        const work = async () => {
+            const cur = host(addrCurrent(ext));
+            // ① 1시간에 한 번: 지금 주소가 다른 주소로 넘겨 주면(301·302) 그 주소가 진짜 사이트인지 확인 후 바로 그 주소로 (2026-11-13)
+            if (Date.now() - (Number(p.getString(key + "_moved_at", "0")) || 0) >= 3600000) {
+                p.setString(key + "_moved_at", String(Date.now()));
+                try {
+                    const c = new Client({ useDartHttpClient: true, followRedirects: false, timeout: 4, connectTimeout: 3 });
+                    const r = await c.get("https://" + cur + "/", { "User-Agent": ADDR_UA });
+                    const code = Number(r.statusCode);
+                    const loc = String(Object.entries(r.headers || {}).find(([k]) => k.toLowerCase() === "location")?.[1] || "");
+                    const to = host(loc);
+                    if (code >= 300 && code < 400 && to && to !== cur && (ADDR_HOST.test(to) || ADDR_HOST.test("www." + to))) {
+                        if (await addrIsSite(ext, "https://" + to)) {
+                            adopt("https://" + to);
+                            note(`넘김 → ${to} 로 바꿈`);
+                            return;
+                        }
+                        note(`넘김 → ${to} (확인 안 돼 그대로)`);
+                    }
+                } catch (e) {
+                    // 아래 목록 확인으로
+                }
+            }
+            // ② 6시간에 한 번: 저장소 주소 목록에 같은 이름·더 큰 번호 주소가 있고 진짜 사이트면 그 주소로
+            if (Date.now() - (Number(p.getString(key + "_listed_at", "0")) || 0) < 6 * 3600000) return;
+            p.setString(key + "_listed_at", String(Date.now()));
+            const listed = host(await listedDomain(ext.client, key));
+            if (!listed) return note("목록 못 받음");
+            if (!(ADDR_HOST.test(listed) || ADDR_HOST.test("www." + listed)) || !addrNewer(listed, cur)) return note(`같음 (${listed})`);
+            if (await addrIsSite(ext, "https://" + listed)) {
+                p.setString(key + "_auto_domain", "https://" + listed);
+                return note(`새 주소 ${listed} 로 바꿈`);
+            }
+            note(`${listed} 가 아직 안 열려 그대로`);
+        };
+        await Promise.race([work(), new Promise((r) => setTimeout(r, 7000))]);
     } catch (e) {
         // 다음 기회에
+    }
+}
+
+// 필터 📡 줄 끝에 붙일 마지막 주소 확인 결과
+function addrNoteText() {
+    try {
+        const v = String(new SharedPreferences().getString(ADDR_PREF.replace(/_domain$/, "") + "_listed_note", "") || "");
+        return v ? ` · 🔎 ${v}` : "";
+    } catch (e) {
+        return "";
     }
 }
 
@@ -1240,7 +1287,7 @@ class DefaultExtension extends MProvider {
     getFilterList() {
         const host = this.getBaseUrl().replace(/^https?:\/\//, "");
         return [
-            { type_name: "HeaderFilter", name: `📡 주소: ${host}` },
+            { type_name: "HeaderFilter", name: `📡 주소: ${host}` + addrNoteText() },
             ...notesFilters("kotbc"),
             { type_name: "SeparatorFilter" },
             { type_name: "HeaderFilter", name: "검색어와 함께 써도 됨 · 작품·사이트 주소를 붙여 넣으면 바로 열기" },

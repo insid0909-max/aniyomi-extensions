@@ -53,6 +53,14 @@ internal object DomainList {
     // → 다음 요청부터 그 주소(직접 넣은 주소도 DomainGuard.pick 이 번호를 비교해 고침)
     private val LAST_LOOK = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
+    private val NOTES = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** 필터 맨 위에 보일 마지막 주소 목록 확인 결과 (예: "11.13 14:00 · 같음") */
+    fun note(key: String): String? = NOTES[key]
+
+    private fun stamp(): String = java.text.SimpleDateFormat("MM.dd HH:mm", java.util.Locale.KOREA)
+        .apply { timeZone = java.util.TimeZone.getTimeZone("Asia/Seoul") }.format(java.util.Date())
+
     fun followLater(
         key: String,
         sp: android.content.SharedPreferences?,
@@ -61,7 +69,10 @@ internal object DomainList {
         autoOn: Boolean,
         isReal: (String) -> Boolean,
     ) {
-        if (!autoOn || sp == null) return
+        if (sp == null) return
+        val noteKey = "${prefKey}_listed_note"
+        if (!NOTES.containsKey(key)) runCatching { sp.getString(noteKey, null) }.getOrNull()?.let { NOTES[key] = it }
+        if (!autoOn) return
         val now = System.currentTimeMillis()
         if (now - (LAST_LOOK[key] ?: 0L) < 600_000) return
         LAST_LOOK[key] = now
@@ -69,13 +80,26 @@ internal object DomainList {
         val at = runCatching { sp.getLong(atKey, 0L) }.getOrDefault(0L)
         if (now - at < 6 * 3600_000L) return
         Thread {
+            fun save(msg: String) {
+                val v = "${stamp()} · $msg"
+                NOTES[key] = v
+                runCatching { sp.edit().putString(noteKey, v).apply() }
+            }
             try {
                 runCatching { sp.edit().putLong(atKey, now).apply() }
                 val cur = current.substringAfter("://").substringBefore('/').lowercase().removePrefix("www.")
-                val h = host(key)?.removePrefix("www.") ?: return@Thread
-                if (newer(h, cur) && isReal(h)) DomainGuard.saveAuto(sp, prefKey, "https://$h")
+                val h = host(key)
+                when {
+                    h == null -> save("목록 못 받음")
+                    !newer(h.removePrefix("www."), cur) -> save("같음 (${h.removePrefix("www.")})")
+                    isReal(h) -> {
+                        DomainGuard.saveAuto(sp, prefKey, "https://$h")
+                        save("새 주소 $h 로 바꿈")
+                    }
+                    else -> save("$h 가 아직 안 열려 그대로")
+                }
             } catch (e: Throwable) {
-                // 다음 기회에
+                save("확인 실패")
             }
         }.start()
     }
