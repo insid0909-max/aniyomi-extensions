@@ -64,6 +64,28 @@ function versionOf(list, file) {
     return e ? e.version : "";
 }
 
+// 주소를 어디서 확인하는지 (감시 작업 설정의 안내 페이지 → 사람이 읽기 쉬운 이름)
+function sourceName(url) {
+    let h = "";
+    try {
+        h = require("url").domainToUnicode(new URL(url).hostname);
+    } catch (e) {
+        return "";
+    }
+    if (/telegra\.ph$/.test(h)) return "텔레그래프 안내 글";
+    if (/^t\.me$/.test(h)) return "텔레그램 " + (String(url).split("/").filter(Boolean).pop() || "");
+    return h;
+}
+function sourceOf(key, cfg) {
+    const g = ((cfg && cfg.guides) || []).filter((x) => x.key === key).map((x) => sourceName(x.url)).filter(Boolean);
+    const site = ((cfg && cfg.sites) || []).find((x) => x.key === key);
+    if (site && site.guide) g.unshift(sourceName(site.guide));
+    const uniq = [...new Set(g.filter(Boolean))];
+    if (uniq.length) return "안내: " + uniq.slice(0, 2).join(" · ");
+    if (site) return "감시 작업 번호 확인";
+    return "";
+}
+
 function rows(sites, src) {
     const out = [];
     const items = [];
@@ -71,6 +93,7 @@ function rows(sites, src) {
     for (const s of sites) {
         const st = ((src.status || {}).items || {})[s.key] || {};
         const listed = (((src.domains || {}).domains || {})[s.key] || {}).baseUrl || "";
+        const listedAt = (((src.domains || {}).domains || {})[s.key] || {}).updated || "";
         const addr = host(listed || st.origin) || s.addr || "—";
         let check;
         if (st.domain === "dead" && !s.abroad) {
@@ -98,6 +121,8 @@ function rows(sites, src) {
             since: st.domain === "dead" ? st.domainSince || "" : "",
             js: versionOf(src.index, s.js) || "",
             kt: !!s.kt,
+            source: sourceOf(s.key, src.config),
+            addrSince: (st.domain === "alive" && st.domainSince) || listedAt,
             note: note ? { d: note.d, t: cell(String(note.t).replace(/^(망가요미|애니요미):\s*/, "")) } : null,
         });
     }
@@ -124,7 +149,7 @@ function runLine(label, state) {
     };
     const A = RAW + "aniyomi-extensions/";
     const W = RAW + "aniyomi-manga-extensions/";
-    const [aStatus, aState, wStatus, wState, wDomains, wLog, wIndex, wNovel] = await Promise.all([
+    const [aStatus, aState, wStatus, wState, wDomains, wLog, wIndex, wNovel, wConfig] = await Promise.all([
         getJson(A + "monitor-state/status.json"),
         getJson(A + "monitor-state/state.json"),
         getJson(W + "monitor-state/status.json"),
@@ -133,9 +158,10 @@ function runLine(label, state) {
         getJson(W + "main/changelog.json"),
         getJson(W + "gh-pages/mangayomi/index.json"),
         getJson(W + "gh-pages/mangayomi/novel_index.json"),
+        getJson(W + "main/monitor/config.json"),
     ]);
-    const anime = rows(ANIME, { status: aStatus, domains: read("domains.json"), changelog: read("changelog.json"), index: read("mangayomi/anime_index.json") });
-    const webtoon = rows(WEBTOON, { status: wStatus, domains: wDomains, changelog: wLog, index: [...(wIndex || []), ...(wNovel || [])] });
+    const anime = rows(ANIME, { status: aStatus, domains: read("domains.json"), changelog: read("changelog.json"), index: read("mangayomi/anime_index.json"), config: read("mangayomi/tools/monitor/config.json") });
+    const webtoon = rows(WEBTOON, { status: wStatus, domains: wDomains, changelog: wLog, index: [...(wIndex || []), ...(wNovel || [])], config: wConfig });
     const bad = anime.bad + webtoon.bad;
     const head = "| 확장 | 지금 주소 | 점검 (해외 감시 작업) | 버전 | 마지막 업데이트 |\n|---|---|---|---|---|";
     const md = `# 확장 상태판
