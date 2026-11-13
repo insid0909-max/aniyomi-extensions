@@ -110,6 +110,16 @@ h1 { font-size: 22px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
 .row.open .note { -webkit-line-clamp: unset; }
 .row.open .more { display: grid; }
 .more b { color: var(--fg); font-weight: 500; }
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.brand img { width: 44px; height: 44px; border-radius: 12px; flex: none; }
+.sub.late { color: #b45309; } .sub.critical { color: var(--bad); font-weight: 600; }
+.copy { margin-left: auto; border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 8px; padding: 3px 10px; font: 500 12px var(--sans); cursor: pointer; }
+.copy:active { background: var(--accent-soft); }
+.src { padding-left: 19px; font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.meta { flex-wrap: nowrap; }
+.meta .addr { min-width: 0; }
+.problem { padding-left: 19px; font-size: 13px; color: var(--bad); overflow-wrap: anywhere; }
+.toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 12px; font-size: 13.5px; max-width: calc(100% - 32px); text-align: center; box-shadow: var(--shadow); z-index: 20; }
 .empty { padding: 24px 16px; text-align: center; color: var(--muted); font-size: 14px; }
 footer { color: var(--muted); font-size: 12px; text-align: center; line-height: 1.6; padding-top: 6px; }
 @media (prefers-reduced-motion: reduce) { .refresh.spin svg { animation: none; } }
@@ -119,9 +129,12 @@ footer { color: var(--muted); font-size: 12px; text-align: center; line-height: 
 <body>
 <div class="wrap">
   <header>
-    <div>
-      <h1>확장 상태판</h1>
-      <div class="sub" id="sub">불러오는 중…</div>
+    <div class="brand">
+      <img src="https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png" alt="" width="44" height="44">
+      <div>
+        <h1>확장 상태판</h1>
+        <div class="sub" id="sub">불러오는 중…</div>
+      </div>
     </div>
     <button class="refresh" id="refresh" type="button" aria-label="새로 고침">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 4v5h-5"/></svg>
@@ -158,10 +171,12 @@ footer { color: var(--muted); font-size: 12px; text-align: center; line-height: 
 
   <div id="groups"></div>
 
+  <div class="toast" id="toast" role="status" hidden></div>
+
   <footer>
     점검은 하루 한 번 해외 서버(GitHub)에서 목록·회차를 열어 봐요.<br>
     <b>해외 확인 불가</b>는 해외에서 막힌 사이트예요. 휴대폰에서 안 되면 필터 맨 위 📡·🔎 줄을 찍어 보내 주세요.<br>
-    줄을 누르면 마지막 업데이트 내용과 점검 결과가 펼쳐져요.
+    줄을 누르면 마지막 업데이트 내용과 점검 결과가 펼쳐져요. <b>복사</b>한 주소를 확장 검색창에 붙여 넣으면 그 주소로 바로 바뀌어요.
   </footer>
 </div>
 
@@ -207,7 +222,9 @@ footer { color: var(--muted); font-size: 12px; text-align: center; line-height: 
       : "감시 작업이 열어 본 확장 " + (n.ok) + "개가 모두 잘 열려요. 전체 " + all.length + "개.";
 
     var runs = data.runs || {}, last = [runs.anime, runs.webtoon].filter(Boolean).sort().pop();
+    var age = last ? (Date.now() - Date.parse(last)) / 3600000 : 999;
     $("sub").textContent = last ? "마지막 점검 " + kst(last) + " · " + ago(last) : "점검 기록 없음";
+    $("sub").className = "sub" + (age > 48 ? " critical" : age > 30 ? " late" : "");
     var stale = [["애니", runs.anime], ["웹툰", runs.webtoon]].filter(function (r) { return !r[1] || (Date.now() - Date.parse(r[1])) / 3600000 > 36; });
     var warn = $("warn");
     if (stale.length) {
@@ -236,7 +253,9 @@ footer { color: var(--muted); font-size: 12px; text-align: center; line-height: 
           : "감시 작업이 매일 열어 보는 목록에 없는 확장이에요.";
         html += '<div class="row' + (open[id] ? " open" : "") + '" data-state="' + it.state + '" data-id="' + esc(id) + '" tabindex="0" role="button" aria-expanded="' + (open[id] ? "true" : "false") + '">'
           + '<div class="row-top"><span class="dot" aria-hidden="true"></span><span class="name">' + esc(it.name) + '</span><span class="pill">' + LABEL[it.state] + "</span></div>"
-          + '<div class="meta">' + addr + vers + "</div>"
+          + '<div class="meta">' + addr + (it.link ? '<button type="button" class="copy" data-copy="' + esc(it.addr) + '">복사</button>' : "") + "</div>"
+          + '<div class="src">' + vers + esc([it.source, it.addrSince ? md(String(it.addrSince).slice(0, 10)) + "부터 이 주소" : ""].filter(Boolean).join(" · ")) + "</div>"
+          + (it.state === "bad" && it.msg ? '<div class="problem">' + esc(it.msg) + "</div>" : "")
           + (it.note ? '<div class="note"><time>' + md(it.note.d) + "</time>" + esc(it.note.t) + "</div>" : "")
           + '<div class="more"><div>' + check + "</div></div></div>";
       });
@@ -245,6 +264,23 @@ footer { color: var(--muted); font-size: 12px; text-align: center; line-height: 
     if (!shown && onlyBad) html = '<div class="list"><div class="empty">문제 있는 확장이 없어요 👍</div></div>';
     $("groups").innerHTML = html;
     $("count").textContent = shown + "개";
+  }
+
+  var toastTimer = 0;
+  function toast(msg) {
+    var t = $("toast"); t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.hidden = true; }, 2600);
+  }
+  function copy(text) {
+    var done = function () { toast(text + " 복사했어요 — 확장 검색창에 붙여 넣으면 바로 바뀌어요"); };
+    var fallback = function () {
+      var ta = document.createElement("textarea"); ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      var ok = false; try { ok = document.execCommand("copy"); } catch (e) {}
+      document.body.removeChild(ta);
+      ok ? done() : toast("복사가 안 돼요. 주소를 길게 눌러 복사해 주세요: " + text);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback); else fallback();
   }
 
   function load() {
@@ -267,6 +303,8 @@ footer { color: var(--muted); font-size: 12px; text-align: center; line-height: 
     if (t) { tab = t.getAttribute("data-tab"); try { localStorage.setItem("st_tab", tab); } catch (x) {} render(); return; }
     if (e.target.closest("#onlyBad")) { onlyBad = !onlyBad; render(); return; }
     if (e.target.closest("#refresh")) { load(); return; }
+    var c = e.target.closest("[data-copy]");
+    if (c) { copy(c.getAttribute("data-copy")); return; }
     if (e.target.closest("a")) return;
     var row = e.target.closest(".row");
     if (row) { var id = row.getAttribute("data-id"); open[id] = !open[id]; render(); }
