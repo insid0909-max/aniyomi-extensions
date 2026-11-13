@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.2",
+    "version": "0.0.3",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "js/testing/statusboard.js"
@@ -120,7 +120,8 @@ class DefaultExtension extends MProvider {
         if (!it) throw new Error("상태판에서 이 확장을 찾지 못했어요. 목록을 새로 고쳐 주세요.");
         const run = runs[it.group];
         const stale = run && (Date.now() - Date.parse(run)) / 3600000 > 36;
-        const check = it.state === "ok" ? `✅ 정상 · ${kst(it.checkedAt)} 점검 · ${it.msg}`
+        const check = it.indirect ? `${it.state === "ok" ? "✅ 정상" : "❌ 문제"} (간접 확인 · 30분마다) · ${it.msg}\n${/해외/.test(it.msg) ? "해외에서 막혀 목록은 못 열고, 서버가 답하는지로 살아 있는지 봤어요." : "서버가 답하는지로 살아 있는지 봤어요."}`
+            : it.state === "ok" ? `✅ 정상 · ${kst(it.checkedAt)} 점검 · ${it.msg}`
             : it.state === "bad" ? `❌ 문제 · ${it.since ? kst(it.since) + "부터 · " : ""}${kst(it.checkedAt)} 점검\n${it.msg}`
             : it.state === "abroad" ? "🌐 해외 서버에서 막혀 감시 작업이 못 열어요. 휴대폰에서 안 되면 그 확장 필터 맨 위 📡·🔎 줄을 찍어 보내 주세요."
             : "➖ 감시 작업이 매일 열어 보는 목록에 없는 확장이에요.";
