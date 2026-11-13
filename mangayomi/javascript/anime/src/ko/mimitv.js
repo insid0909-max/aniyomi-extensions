@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.9",
+    "version": "0.1.11",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/mimitv.js"
@@ -285,7 +285,88 @@ async function addrAdopt(ext, query) {
 
 // 인기·최신 첫 쪽이 오류이거나 비었는데 지금 주소가 사이트가 아니면(끊김·빈 페이지·404) 새 주소를 찾아 다시 불러옴,
 // 못 찾으면 붙여 넣기 안내 (지금 주소가 진짜 사이트면 원래 결과·오류 그대로)
+// 2026-11-13 안내 페이지 주소 따라가기: 감시 작업이 매일 안내 페이지를 읽어 저장소 주소 목록(domains.json)을 고치므로,
+// 6시간마다 목록의 주소를 봐서 지금 주소와 같은 사이트 이름이고 번호가 더 크며 진짜 사이트로 열리면 자동 주소로 저장
+// (직접 넣은 주소도 getBaseUrl 이 번호를 비교해 고침). 잘 열리는 동안에도 따라가지만, 안내에 적힌 주소만 씀
+function addrNewer(a, b) {
+    const brand = (h) => h.replace(/\d+/g, "").split(".").slice(0, -1).sort((x, y) => y.length - x.length)[0] || "";
+    const nums = (h) => (h.match(/\d+/g) || []).map(Number);
+    if (a === b || !brand(a) || brand(a) !== brand(b)) return false;
+    const x = nums(a);
+    const y = nums(b);
+    for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i] > y[i];
+    return x.length > y.length;
+}
+
+async function addrFollow(ext) {
+    const key = ADDR_PREF.replace(/_domain$/, "");
+    try {
+        if (!ext.autoOn()) return;
+        const p = new SharedPreferences();
+        const host = (u) => String(u || "").replace(/^https?:\/\//, "").replace(/[/?#].*$/, "").replace(/^www\./, "").toLowerCase();
+        const pad = (n) => String(n).padStart(2, "0");
+        const note = (msg) => {
+            const d = new Date(Date.now() + 9 * 3600000);
+            try { p.setString(key + "_listed_note", `${pad(d.getUTCMonth() + 1)}.${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} ${msg}`); } catch (e) { /* 그대로 */ }
+        };
+        const adopt = (origin) => {
+            p.setString(key + "_auto_domain", origin);
+            // 직접 넣은 주소가 있으면 그 칸도 새 주소로 (옛 주소는 넘겨 주기만 하므로)
+            try { if (String(p.get(ADDR_PREF) || "").trim()) p.setString(ADDR_PREF, origin); } catch (e) { /* 그대로 */ }
+        };
+        const work = async () => {
+            const cur = host(addrCurrent(ext));
+            // ① 1시간에 한 번: 지금 주소가 다른 주소로 넘겨 주면(301·302) 그 주소가 진짜 사이트인지 확인 후 바로 그 주소로 (2026-11-13)
+            if (Date.now() - (Number(p.getString(key + "_moved_at", "0")) || 0) >= 3600000) {
+                p.setString(key + "_moved_at", String(Date.now()));
+                try {
+                    const c = new Client({ useDartHttpClient: true, followRedirects: false, timeout: 4, connectTimeout: 3 });
+                    const r = await c.get("https://" + cur + "/", { "User-Agent": ADDR_UA });
+                    const code = Number(r.statusCode);
+                    const loc = String(Object.entries(r.headers || {}).find(([k]) => k.toLowerCase() === "location")?.[1] || "");
+                    const to = host(loc);
+                    if (code >= 300 && code < 400 && to && to !== cur && (ADDR_HOST.test(to) || ADDR_HOST.test("www." + to))) {
+                        if (await addrIsSite(ext, "https://" + to)) {
+                            adopt("https://" + to);
+                            note(`넘김 → ${to} 로 바꿈`);
+                            return;
+                        }
+                        note(`넘김 → ${to} (확인 안 돼 그대로)`);
+                    }
+                } catch (e) {
+                    // 아래 목록 확인으로
+                }
+            }
+            // ② 6시간에 한 번: 저장소 주소 목록에 같은 이름·더 큰 번호 주소가 있고 진짜 사이트면 그 주소로
+            if (Date.now() - (Number(p.getString(key + "_listed_at", "0")) || 0) < 6 * 3600000) return;
+            p.setString(key + "_listed_at", String(Date.now()));
+            const listed = host(await listedDomain(ext.client, key));
+            if (!listed) return note("목록 못 받음");
+            if (!(ADDR_HOST.test(listed) || ADDR_HOST.test("www." + listed)) || !addrNewer(listed, cur)) return note(`같음 (${listed})`);
+            if (await addrIsSite(ext, "https://" + listed)) {
+                p.setString(key + "_auto_domain", "https://" + listed);
+                return note(`새 주소 ${listed} 로 바꿈`);
+            }
+            note(`${listed} 가 아직 안 열려 그대로`);
+        };
+        await Promise.race([work(), new Promise((r) => setTimeout(r, 7000))]);
+    } catch (e) {
+        // 다음 기회에
+    }
+}
+
+// 필터 📡 줄 끝에 붙일 마지막 주소 확인 결과
+function addrNoteText() {
+    try {
+        const v = String(new SharedPreferences().getString(ADDR_PREF.replace(/_domain$/, "") + "_listed_note", "") || "");
+        return v ? ` · 🔎 ${v}` : "";
+    } catch (e) {
+        return "";
+    }
+}
+
 async function addrGuard(ext, page, fn) {
+    if (page === 1) await addrFollow(ext);
     let r = null;
     let err = null;
     try {
@@ -946,7 +1027,7 @@ async function statusRefresh(client) {
 
 function statusFilters(key, base, autoOn) {
     const host = String(base || "").replace(/^https?:\/\//, "").replace(/\/+$/, "");
-    const lines = [`📡 주소: ${host}` + (autoOn === null || autoOn === undefined ? "" : ` · 자동 찾기 ${autoOn ? "켜짐" : "꺼짐"}`)];
+    const lines = [`📡 주소: ${host}` + (autoOn === null || autoOn === undefined ? "" : ` · 자동 찾기 ${autoOn ? "켜짐" : "꺼짐"}`) + addrNoteText()];
     let item = null;
     try {
         item = (JSON.parse(new SharedPreferences().getString("status_json", "") || "{}").items || {})[key] || null;

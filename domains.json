@@ -3,8 +3,8 @@
   "note": "소스별 지금 주소. 확장이 스스로 새 주소를 못 찾을 때 이 주소를 먼저 확인함(진짜 사이트일 때만 씀). 바뀌면 baseUrl 만 고치면 됨(확장 업데이트 불필요).",
   "domains": {
     "hoohootv": {
-      "baseUrl": "https://at.hoohootv465.xyz",
-      "updated": "2026-11-11"
+      "baseUrl": "https://cd.hoohootv465.xyz",
+      "updated": "2026-11-13"
     },
     "tvchak": {
       "baseUrl": "https://tvchak208.com",
@@ -19,8 +19,8 @@
       "updated": "2026-11-03"
     },
     "kotbc": {
-      "baseUrl": "https://k05.kotbc2.com",
-      "updated": "2026-11-03"
+      "baseUrl": "https://k07.kotbc2.com",
+      "updated": "2026-11-13"
     },
     "livesports1": {
       "baseUrl": "https://goodlivetv2.com",
@@ -31,11 +31,12 @@
       "updated": "2026-11-03"
     },
     "mimitv": {
-      "baseUrl": "https://mimitv13.com",
-      "updated": "2026-11-09"
+      "baseUrl": "https://mimitv14.com",
+      "updated": "2026-11-13"
     },
     "tvwiki": {
-      "baseUrl": "https://tvwiki58.net"
+      "baseUrl": "https://tvwiki59.net",
+      "updated": "2026-11-13"
     },
     "aniweek": {
       "baseUrl": "https://aniweek.com",

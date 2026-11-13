@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>확장 상태판</title>
+<meta name="theme-color" content="#f3f5f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1418" media="(prefers-color-scheme: dark)">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* 한 손으로 보는 상태 앱: 위에 요약 카드, 그 아래 분류 탭과 확장 목록(줄을 누르면 자세히) */
+:root {
+  --bg: #f3f5f7;
+  --surface: #ffffff;
+  --line: #e2e7ec;
+  --fg: #16202a;
+  --muted: #64707d;
+  --accent: #0f766e;
+  --accent-soft: #e3f3f1;
+  --ok: #15803d;
+  --ok-soft: #e6f4ea;
+  --bad: #c2410c;
+  --bad-soft: #fdece4;
+  --far: #4b5f86;
+  --far-soft: #e9edf6;
+  --none: #7a8591;
+  --none-soft: #eef1f4;
+  --shadow: 0 1px 2px rgba(22, 32, 42, .06), 0 4px 16px rgba(22, 32, 42, .05);
+  --sans: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1418; --surface: #171e24; --line: #26303a; --fg: #e6ebf0; --muted: #93a0ad;
+    --accent: #2dd4bf; --accent-soft: #123330; --ok: #4ade80; --ok-soft: #12301f;
+    --bad: #fb923c; --bad-soft: #3a2116; --far: #9db1d9; --far-soft: #1d2638;
+    --none: #94a0ad; --none-soft: #1f272f; --shadow: none; color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--fg); font: 15px/1.5 var(--sans);
+  padding: env(safe-area-inset-top, 0px) max(16px, env(safe-area-inset-right, 0px)) calc(32px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  -webkit-text-size-adjust: 100%;
+}
+.wrap { max-width: 640px; margin: 0 auto; display: grid; gap: 14px; padding-top: 18px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+h1 { font-size: 22px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
+.sub { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.refresh {
+  width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface);
+  color: var(--fg); display: grid; place-items: center; cursor: pointer; flex: none;
+}
+.refresh:focus-visible, .seg button:focus-visible, .row:focus-visible, .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.refresh svg { width: 18px; height: 18px; }
+.refresh.spin svg { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.hero { background: var(--surface); border-radius: 18px; padding: 18px; box-shadow: var(--shadow); border: 1px solid var(--line); display: grid; gap: 14px; }
+.hero-top { display: flex; align-items: center; gap: 14px; }
+.badge { width: 52px; height: 52px; border-radius: 16px; display: grid; place-items: center; flex: none; }
+.badge svg { width: 28px; height: 28px; }
+.hero.ok .badge { background: var(--ok-soft); color: var(--ok); }
+.hero.bad .badge { background: var(--bad-soft); color: var(--bad); }
+.hero h2 { margin: 0; font-size: 20px; font-weight: 700; }
+.hero p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.stat { border-radius: 12px; padding: 10px 8px; text-align: center; background: var(--bg); }
+.stat b { display: block; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 11.5px; color: var(--muted); }
+.stat.ok b { color: var(--ok); } .stat.bad b { color: var(--bad); } .stat.far b { color: var(--far); } .stat.none b { color: var(--none); }
+
+.warn { background: var(--bad-soft); color: var(--bad); border-radius: 12px; padding: 12px 14px; font-size: 13.5px; font-weight: 500; }
+
+.seg { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 4px; gap: 4px; }
+.seg button { border: 0; background: transparent; color: var(--muted); font: 600 14px var(--sans); padding: 9px 4px; border-radius: 9px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.tools { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.chip { border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 999px; padding: 6px 12px; font: 500 13px var(--sans); cursor: pointer; }
+.chip[aria-pressed="true"] { border-color: var(--bad); color: var(--bad); background: var(--bad-soft); }
+.count { color: var(--muted); font-size: 13px; }
+
+.group { display: grid; gap: 8px; }
+.group h3 { margin: 6px 4px 0; font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: .02em; }
+.list { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; box-shadow: var(--shadow); }
+.row { display: grid; gap: 6px; padding: 14px 16px; border-top: 1px solid var(--line); cursor: pointer; }
+.row:first-child { border-top: 0; }
+.row-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.row[data-state="ok"] .dot { background: var(--ok); }
+.row[data-state="bad"] .dot { background: var(--bad); box-shadow: 0 0 0 4px var(--bad-soft); }
+.row[data-state="abroad"] .dot { background: var(--far); }
+.row[data-state="none"] .dot { background: var(--none); }
+.name { font-weight: 600; font-size: 15.5px; }
+.tag { font-size: 11px; color: var(--far); background: var(--far-soft); border-radius: 6px; padding: 1px 6px; font-weight: 500; }
+.pill { margin-left: auto; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.row[data-state="ok"] .pill { background: var(--ok-soft); color: var(--ok); }
+.row[data-state="bad"] .pill { background: var(--bad-soft); color: var(--bad); }
+.row[data-state="abroad"] .pill { background: var(--far-soft); color: var(--far); }
+.row[data-state="none"] .pill { background: var(--none-soft); color: var(--none); }
+.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding-left: 19px; min-width: 0; }
+.addr { font: 13px var(--mono); color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
+.ver { font: 12px var(--mono); color: var(--muted); background: var(--bg); border-radius: 6px; padding: 1px 6px; }
+.note { padding-left: 19px; color: var(--muted); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.note time { color: var(--fg); font-weight: 500; font-variant-numeric: tabular-nums; margin-right: 6px; }
+.more { display: none; padding-left: 19px; font-size: 13px; color: var(--muted); gap: 4px; }
+.row.open .note { -webkit-line-clamp: unset; }
+.row.open .more { display: grid; }
+.more b { color: var(--fg); font-weight: 500; }
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.brand img { width: 44px; height: 44px; border-radius: 12px; flex: none; }
+.sub.late { color: #b45309; } .sub.critical { color: var(--bad); font-weight: 600; }
+.copy { margin-left: auto; border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 8px; padding: 3px 10px; font: 500 12px var(--sans); cursor: pointer; }
+.copy:active { background: var(--accent-soft); }
+.src { padding-left: 19px; font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.meta { flex-wrap: nowrap; }
+.meta .addr { min-width: 0; }
+.problem { padding-left: 19px; font-size: 13px; color: var(--bad); overflow-wrap: anywhere; }
+.toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 12px; font-size: 13.5px; max-width: calc(100% - 32px); text-align: center; box-shadow: var(--shadow); z-index: 20; }
+.empty { padding: 24px 16px; text-align: center; color: var(--muted); font-size: 14px; }
+footer { color: var(--muted); font-size: 12px; text-align: center; line-height: 1.6; padding-top: 6px; }
+@media (prefers-reduced-motion: reduce) { .refresh.spin svg { animation: none; } }
+@media (max-width: 360px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <img src="https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png" alt="" width="44" height="44">
+      <div>
+        <h1>확장 상태판</h1>
+        <div class="sub" id="sub">불러오는 중…</div>
+      </div>
+    </div>
+    <button class="refresh" id="refresh" type="button" aria-label="새로 고침">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 4v5h-5"/></svg>
+    </button>
+  </header>
+
+  <section class="hero ok" id="hero" aria-live="polite">
+    <div class="hero-top">
+      <div class="badge" id="badge"></div>
+      <div>
+        <h2 id="heroTitle">확인 중</h2>
+        <p id="heroText">감시 작업 결과를 불러오고 있어요.</p>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat ok"><b id="nOk">–</b><span>정상</span></div>
+      <div class="stat bad"><b id="nBad">–</b><span>문제</span></div>
+      <div class="stat far"><b id="nFar">–</b><span>간접 확인</span></div>
+      <div class="stat none"><b id="nNone">–</b><span>점검 안 함</span></div>
+    </div>
+  </section>
+
+  <div class="warn" id="warn" hidden></div>
+
+  <div class="seg" role="group" aria-label="분류">
+    <button type="button" id="tab-all" data-tab="all" aria-pressed="true">전체</button>
+    <button type="button" id="tab-anime" data-tab="anime" aria-pressed="false">애니</button>
+    <button type="button" id="tab-webtoon" data-tab="webtoon" aria-pressed="false">웹툰</button>
+  </div>
+  <div class="tools">
+    <button type="button" class="chip" id="onlyBad" aria-pressed="false">문제만 보기</button>
+    <span class="count" id="count"></span>
+  </div>
+
+  <div id="groups"></div>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <footer>
+    점검은 하루 한 번 해외 서버(GitHub)에서 목록·회차를 열어 봐요.<br>
+    <b>간접 확인</b>은 해외에서 막힌 사이트를 30분마다 두드려 서버가 답하는지로 본 결과예요.<br>
+    줄을 누르면 마지막 업데이트 내용과 점검 결과가 펼쳐져요. <b>복사</b>한 주소를 확장 검색창에 붙여 넣으면 그 주소로 바로 바뀌어요.
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var DATA_URL = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/repo/status.json";
+  var LABEL = { ok: "정상", bad: "문제", abroad: "해외 확인 불가", none: "점검 안 함" };
+  var ICON = {
+    ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+    bad: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 7v6"/><path d="M12 17h.01"/></svg>'
+  };
+  var data = null, tab = "all", onlyBad = false, open = {};
+  try { tab = localStorage.getItem("st_tab") || "all"; } catch (e) {}
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function kst(iso) {
+    var t = Date.parse(iso); if (!isFinite(t)) return "";
+    var d = new Date(t + 9 * 3600000), z = function (n) { return (n < 10 ? "0" : "") + n; };
+    return z(d.getUTCMonth() + 1) + "." + z(d.getUTCDate()) + " " + z(d.getUTCHours()) + ":" + z(d.getUTCMinutes());
+  }
+  function md(d) { return String(d || "").slice(5).replace("-", "."); }
+  function ago(iso) {
+    var h = (Date.now() - Date.parse(iso)) / 3600000;
+    if (!isFinite(h)) return "";
+    if (h < 1) return "방금"; if (h < 24) return Math.floor(h) + "시간 전"; return Math.floor(h / 24) + "일 전";
+  }
+
+  function render() {
+    if (!data) return;
+    var all = [];
+    data.groups.forEach(function (g) { g.items.forEach(function (it) { all.push(it); }); });
+    var n = { ok: 0, bad: 0, abroad: 0, none: 0 };
+    all.forEach(function (it) { n[it.state] = (n[it.state] || 0) + 1; });
+    $("nOk").textContent = n.ok; $("nBad").textContent = n.bad; $("nFar").textContent = all.filter(function (it) { return it.indirect && it.state === "ok"; }).length; $("nNone").textContent = n.none;
+    var hero = $("hero");
+    hero.className = "hero " + (n.bad ? "bad" : "ok");
+    $("badge").innerHTML = n.bad ? ICON.bad : ICON.ok;
+    $("heroTitle").textContent = n.bad ? "문제 " + n.bad + "곳" : "모두 정상";
+    $("heroText").textContent = n.bad
+      ? "아래 주황색 줄을 확인해 주세요. 확장 " + all.length + "개 중 정상 " + n.ok + "개."
+      : "확장 " + all.length + "개 중 " + n.ok + "개 정상" + (n.none ? ", " + n.none + "개는 점검 안 함" : "") + ".";
+
+    var runs = data.runs || {}, last = [runs.anime, runs.webtoon].filter(Boolean).sort().pop();
+    var age = last ? (Date.now() - Date.parse(last)) / 3600000 : 999;
+    $("sub").textContent = last ? "마지막 점검 " + kst(last) + " · " + ago(last) : "점검 기록 없음";
+    $("sub").className = "sub" + (age > 48 ? " critical" : age > 30 ? " late" : "");
+    var stale = [["애니", runs.anime], ["웹툰", runs.webtoon]].filter(function (r) { return !r[1] || (Date.now() - Date.parse(r[1])) / 3600000 > 36; });
+    var warn = $("warn");
+    if (stale.length) {
+      warn.hidden = false;
+      warn.textContent = "⚠ " + stale.map(function (r) { return r[0]; }).join("·") + " 감시 작업이 하루 넘게 멈춰 있어요. GitHub Actions 가 꺼졌을 수 있어요 — 저에게 알려 주세요.";
+    } else warn.hidden = true;
+
+    ["all", "anime", "webtoon"].forEach(function (t) { $("tab-" + t).setAttribute("aria-pressed", String(t === tab)); });
+    $("onlyBad").setAttribute("aria-pressed", String(onlyBad));
+
+    var html = "", shown = 0;
+    data.groups.forEach(function (g) {
+      if (tab !== "all" && tab !== g.id) return;
+      var items = g.items.filter(function (it) { return !onlyBad || it.state === "bad"; });
+      shown += items.length;
+      if (!items.length && onlyBad) return;
+      html += '<section class="group"><h3>' + esc(g.title) + "</h3><div class=\"list\">";
+      if (!items.length) html += '<div class="empty">표시할 확장이 없어요.</div>';
+      items.forEach(function (it) {
+        var id = g.id + "-" + it.key;
+        var vers = (it.js ? '<span class="ver">망가요미 ' + esc(it.js) + "</span>" : "") + (it.kt ? '<span class="ver">애니요미</span>' : "");
+        var addr = it.link ? '<a class="addr" href="' + esc(it.link) + '" target="_blank" rel="noopener">' + esc(it.addr) + "</a>" : '<span class="addr" style="color:var(--muted)">' + esc(it.addr) + "</span>";
+        var check = it.indirect ? (it.state === "ok" ? "" : "<b>문제</b> ") + esc(it.msg) + " (30분마다 확인)<br>" + (/해외/.test(it.msg) ? "해외에서 막혀 목록은 못 열고, 서버가 답하는지로 살아 있는지 봤어요." : "목록까지 여는 매일 점검에는 없어서, 서버가 답하는지로 살아 있는지 봤어요.") + " 휴대폰에서 안 되면 그 확장 필터 맨 위 📡·🔎 줄을 찍어 보내 주세요."
+          : it.state === "ok" ? "점검 " + kst(it.checkedAt) + " · " + esc(it.msg)
+          : it.state === "bad" ? "<b>문제</b> " + (it.since ? kst(it.since) + "부터 · " : "") + kst(it.checkedAt) + " · " + esc(it.msg)
+          : it.state === "abroad" ? "해외 서버에서는 이 사이트가 막혀 있어 휴대폰에서만 확인할 수 있어요."
+          : "감시 작업이 매일 열어 보는 목록에 없는 확장이에요.";
+        html += '<div class="row' + (open[id] ? " open" : "") + '" data-state="' + it.state + '" data-id="' + esc(id) + '" tabindex="0" role="button" aria-expanded="' + (open[id] ? "true" : "false") + '">'
+          + '<div class="row-top"><span class="dot" aria-hidden="true"></span><span class="name">' + esc(it.name) + "</span>" + (it.indirect ? '<span class="tag">간접 확인</span>' : "") + '<span class="pill">' + LABEL[it.state] + "</span></div>"
+          + '<div class="meta">' + addr + (it.link ? '<button type="button" class="copy" data-copy="' + esc(it.addr) + '">복사</button>' : "") + "</div>"
+          + '<div class="src">' + vers + esc([it.source, it.addrSince ? md(String(it.addrSince).slice(0, 10)) + "부터 이 주소" : ""].filter(Boolean).join(" · ")) + "</div>"
+          + (it.state === "bad" && it.msg ? '<div class="problem">' + esc(it.msg) + "</div>" : "")
+          + (it.note ? '<div class="note"><time>' + md(it.note.d) + "</time>" + esc(it.note.t) + "</div>" : "")
+          + '<div class="more"><div>' + check + "</div></div></div>";
+      });
+      html += "</div></section>";
+    });
+    if (!shown && onlyBad) html = '<div class="list"><div class="empty">문제 있는 확장이 없어요 👍</div></div>';
+    $("groups").innerHTML = html;
+    $("count").textContent = shown + "개";
+  }
+
+  var toastTimer = 0;
+  function toast(msg) {
+    var t = $("toast"); t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.hidden = true; }, 2600);
+  }
+  function copy(text) {
+    var done = function () { toast(text + " 복사했어요 — 확장 검색창에 붙여 넣으면 바로 바뀌어요"); };
+    var fallback = function () {
+      var ta = document.createElement("textarea"); ta.value = text; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      var ok = false; try { ok = document.execCommand("copy"); } catch (e) {}
+      document.body.removeChild(ta);
+      ok ? done() : toast("복사가 안 돼요. 주소를 길게 눌러 복사해 주세요: " + text);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback); else fallback();
+  }
+
+  function load() {
+    var btn = $("refresh"); btn.classList.add("spin");
+    fetch(DATA_URL + "?t=" + Date.now(), { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function (j) { data = j; render(); try { localStorage.setItem("st_data", JSON.stringify(j)); } catch (e) {} })
+      .catch(function (e) {
+        if (!data) {
+          try { data = JSON.parse(localStorage.getItem("st_data") || "null"); } catch (x) {}
+          if (data) render();
+        }
+        $("sub").textContent = "불러오기 실패 (" + e.message + ") — 잠시 뒤 새로 고침을 눌러 주세요";
+      })
+      .then(function () { btn.classList.remove("spin"); });
+  }
+
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest("[data-tab]");
+    if (t) { tab = t.getAttribute("data-tab"); try { localStorage.setItem("st_tab", tab); } catch (x) {} render(); return; }
+    if (e.target.closest("#onlyBad")) { onlyBad = !onlyBad; render(); return; }
+    if (e.target.closest("#refresh")) { load(); return; }
+    var c = e.target.closest("[data-copy]");
+    if (c) { copy(c.getAttribute("data-copy")); return; }
+    if (e.target.closest("a")) return;
+    var row = e.target.closest(".row");
+    if (row) { var id = row.getAttribute("data-id"); open[id] = !open[id]; render(); }
+  });
+  document.addEventListener("keydown", function (e) {
+    if ((e.key === "Enter" || e.key === " ") && e.target.classList && e.target.classList.contains("row")) { e.preventDefault(); e.target.click(); }
+  });
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) load(); });
+  setInterval(load, 5 * 60000);
+  load();
+})();
+</script>
+</body>
+</html>

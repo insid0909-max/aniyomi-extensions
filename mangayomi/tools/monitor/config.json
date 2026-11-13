@@ -6,6 +6,43 @@
    "key": "hoohootv",
    "url": "https://telegra.ph/%ED%9B%84%ED%9B%84%ED%8B%B0%EB%B9%84-%EC%B5%9C%EC%8B%A0-%EC%A3%BC%EC%86%8C-09-03",
    "regex": "[a-z]{2}\\.hoohootv\\d+\\.[a-z]{2,6}"
+  },
+  {
+   "name": "티비착",
+   "key": "tvchak",
+   "url": "https://tvchak.org/main.html",
+   "regex": "tvchak\\d+\\.com"
+  },
+  {
+   "name": "코티비씨",
+   "key": "kotbc",
+   "url": "https://korsite.net/",
+   "regex": "k\\d+\\.kotbc\\d*\\.com"
+  },
+  {
+   "name": "티비위키",
+   "key": "tvwiki",
+   "url": "https://tvwiki.store/",
+   "regex": "tvwiki\\d+\\.net"
+  },
+  {
+   "name": "티비위키(텔레그램)",
+   "key": "tvwiki",
+   "url": "https://t.me/s/tvwiki_link",
+   "regex": "tvwiki\\d+\\.net"
+  },
+  {
+   "name": "티비위키(가이드)",
+   "key": "tvwiki",
+   "url": "https://tvwikiurl.net/",
+   "regex": "tvwiki\\d+\\.net"
+  },
+  {
+   "name": "미미티비",
+   "key": "mimitv",
+   "url": "https://xn--hg3ba87o95e83l04o.com/",
+   "regex": "mimitv\\d+\\.com",
+   "verify": "shplay.php"
   }
  ],
  "sites": [

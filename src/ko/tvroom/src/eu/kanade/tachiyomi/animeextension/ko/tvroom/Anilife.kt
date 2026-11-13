@@ -75,7 +75,10 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
 
     // 직접 넣은 주소는 바로, 더 새 주소가 확인되면 자동으로 바뀜 (DomainGuard.pick)
     override val baseUrl: String
-        get() = DomainGuard.pick(prefs(), PREF_DOMAIN_KEY, DEFAULT_BASE_URL, autoDomain(), { DOMAIN_REGEX.matches(it) })
+        get() = DomainGuard.pick(prefs(), PREF_DOMAIN_KEY, DEFAULT_BASE_URL, autoDomain(), { DOMAIN_REGEX.matches(it) }).also { cur ->
+            // 6시간마다 저장소 주소 목록(감시 작업이 안내 페이지로 고침)에 더 큰 번호가 있고 진짜 사이트면 그 주소로 (뒤에서)
+            DomainList.followLater("anilife", prefs(), PREF_DOMAIN_KEY, cur, autoDomain()) { h -> HOST_REGEX.matches(h) && DomainList.realSite(h, USER_AGENT, SITE_MARKER) }
+        }
 
     override val client: OkHttpClient = network.client.newBuilder()
         .apply { interceptors().add(0, FriendlyNet) }
@@ -639,6 +642,7 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         return AnimeFilterList(
             listOf(
                 AnimeFilter.Header("📡 주소: $host · 자동 찾기 ${if (autoDomain()) "켜짐" else "꺼짐"}"),
+                *listOfNotNull(DomainList.note("anilife")?.let { AnimeFilter.Header("🔎 주소 목록 확인: $it") }).toTypedArray(),
                 AnimeFilter.Separator(),
                 AnimeFilter.Header("검색어와 함께 쓸 수 있음 (작품 주소를 붙여 넣으면 바로 열기)"),
                 ScopeFilter(),
