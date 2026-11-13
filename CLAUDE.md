@@ -59,6 +59,7 @@
 - 망가요미도 넘겨 준 주소를 읽을 수 있음(2026-11-08): `new Client({useDartHttpClient:true, followRedirects:false})` 면 301·302 와 location 머리글을 그대로 줌(순정 m_client.dart). 웹툰 JS 10개 공통 movedOrigin·movedTarget·movedSelf — 주소 찾기는 저장소 목록 다음에 지금 주소·안내 주소(블랙툰 blacktoon.cc·굿툰 goodtoon.top·툰코 toonkor.site)가 넘겨 주는 주소, 정상으로 열릴 때는 앱을 켤 때 주소마다 한 번 HEAD 로 확인. 둘 다 AUTO_HOST 모양 + 첫 화면 200 + 표시 글자일 때만 저장. 새 JS 소스도 넣기. 시험 런타임(monitor/runtime.js)도 followRedirects:false·head 흉내.
 - 주소 찾기는 5xx·연결 실패·목록 0개+표시 글자 없음일 때만. Cloudflare 보안 확인(403 "Just a moment")·재생 API 403·차단 응답 없음은 주소 바뀜 아님(티비착·애니라이프·머니툰).
 - 못 찾으면 할 일 안내(잠시 뒤·앱 재시작·DNS·새 주소 붙여 넣기), UnknownHost 는 쉬운 말로.
+- 영어 접속 오류(Connection refused·Timeout·Handshake 등) 한글화와 "새 주소 찾는 중, 1~2분 뒤 다시" 안내는 모든 확장에 한꺼번에 넣지 않고, 막힌 확장이 생길 때 하나씩 대응(사용자 "막히면 그때 하나씩 대응 하자", 2026-11-13 — 티비룸 글리치전용 "사이트 이동 주소가 올바르지 않습니다" = 옛 주소가 새 주소로 넘겨 줌 → 넘겨 준 주소 확인 후 적용으로 고침).
 
 ### 통신·속도
 - 망가요미는 목록을 40초까지만 기다림 → 목록 한 번 30초 안, 웹뷰 확인 짧게, 목록 화면 5분 메모리 저장(티비착).
