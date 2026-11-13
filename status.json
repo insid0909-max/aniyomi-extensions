@@ -1,0 +1,421 @@
+{
+ "generatedAt": "2026-11-13T09:25:14.550Z",
+ "runs": {
+  "anime": "2026-11-13T03:36:20.120Z",
+  "webtoon": "2026-11-13T03:35:57.552Z"
+ },
+ "groups": [
+  {
+   "id": "anime",
+   "title": "애니·드라마·스포츠",
+   "items": [
+    {
+     "key": "gogotv",
+     "name": "고고티비",
+     "addr": "gogotv4.xyz",
+     "link": "https://gogotv4.xyz",
+     "state": "ok",
+     "checkedAt": "2026-11-13T03:36:17.198Z",
+     "msg": "목록 24개, 회차 10개, 연재",
+     "since": "",
+     "js": "0.1.48",
+     "kt": true,
+     "note": {
+      "d": "2026-11-13",
+      "t": "옛 주소가 새 주소로 넘겨 주면 바로 그 주소로(망가요미, 1시간에 한 번 확인) · 필터 맨 위 📡 줄에 🔎 마지막 주소 확인 결과 (망가요미 0.1.48·애니요미 TVroom 8775)"
+     }
+    },
+    {
+     "key": "tvchak",
+     "name": "티비착",
+     "addr": "tvchak208.com",
+     "link": "https://tvchak208.com",
+     "state": "abroad",
+     "checkedAt": "",
+     "msg": "",
+     "since": "",
+     "js": "0.1.58",
+     "kt": true,
+     "note": {
+      "d": "2026-11-13",
+      "t": "옛 주소가 새 주소로 넘겨 주면 바로 그 주소로(망가요미, 1시간에 한 번 확인) · 필터 맨 위 📡 줄에 🔎 마지막 주소 확인 결과 (망가요미 0.1.58·애니요미 TVroom 8775)"
+     }
+    },
+    {
+     "key": "hoohootv",
+     "name": "후후티비",
+     "addr": "cd.hoohootv465.xyz",
+     "link": "https://cd.hoohootv465.xyz",
+     "state": "abroad",
+     "checkedAt": "",
+     "msg": "",
+     "since": "",
+     "js": "",
+     "kt": true,
+     "note": {
+      "d": "2026-11-11",
+      "t": "주소 at.hoohootv465.xyz · 새 주소 확인 때 작품 링크만 있어도 진짜 화면으로 봄 · 필터 맨 위에 지금 주소(📡)와 마지막 주소 확인 결과(🔎) (TVroom 8772)"
+     }
+    },
+    {
+     "key": "tvwiki",
+     "name": "티비위키",
+     "addr": "tvwiki58.net",
+     "link": "https://tvwiki58.net",
+     "state": "abroad",
+     "checkedAt": "",
+     "msg": "",
+     "since": "",
+     "js": "1.0.22",
+     "kt": true,
+     "note": {
+      "d": "2026-11-13",
+      "t": "옛 주소가 새 주소로 넘겨 주면 바로 그 주소로(망가요미, 1시간에 한 번 확인) · 필터 맨 위 📡 줄에 🔎 마지막 주소 확인 결과 (망가요미 1.0.22·애니요미 TVroom 8775)"
+     }
+    },
+    {
+     "key": "mimitv",
+     "name": "미미티비",
+     "addr": "mimitv14.com",
+     "link": "https://mimitv14.com",
+     "state": "ok",
+     "checkedAt": "2026-11-13T03:36:18.922Z",
+     "msg": "목록 24개, 회차 78개, 연재",
+     "since": "",
+     "js": "0.1.11",
+     "kt": true,
+     "note": {
+      "d": "2026-11-13",
+      "t": "옛 주소가 새 주소로 넘겨 주면 바로 그 주소로(망가요미, 1시간에 한 번 확인) · 필터 맨 위 📡 줄에 🔎 마지막 주소 확인 결과 (망가요미 0.1.11·애니요미 TVroom 8775)"
+     }
+    },
+    {
+     "key": "kotbc",
+     "name": "코티비씨",
+     "addr": "k07.kotbc2.com",
+     "link": "https://k07.kotbc2.com",
+     "state": "abroad",
+     "checkedAt": "",
+     "msg": "",
+     "since": "",
+     "js": "0.1.23",
+     "kt": false,
+     "note": {
+      "d": "2026-11-13",
+      "t": "옛 주소가 새 주소로 넘겨 주면 바로 그 주소로(망가요미, 1시간에 한 번 확인) · 필터 맨 위 📡 줄에 🔎 마지막 주소 확인 결과 (망가요미 0.1.23)"
+     }
+    },
+    {
+     "key": "anilife",
+     "name": "애니라이프",
+     "addr": "anilife01.tv",
+     "link": "https://anilife01.tv",
+     "state": "abroad",
+     "checkedAt": "",
+     "msg": "",
+     "since": "",
+     "js": "0.1.23",
+     "kt": true,
+     "note": {
+      "d": "2026-11-13",
+      "t": "옛 주소가 새 주소로 넘겨 주면 바로 그 주소로(망가요미, 1시간에 한 번 확인) · 필터 맨 위 📡 줄에 🔎 마지막 주소 확인 결과 (망가요미 0.1.23·애니요미 TVroom 8775)"
+     }
+    },
+    {
+     "key": "ohli24",
+     "name": "애니24",
+     "addr": "www.ohli24.net",
+     "link": "https://www.ohli24.net",
+     "state": "ok",
+     "checkedAt": "2026-11-13T03:36:18.062Z",
+     "msg": "목록 20개, 회차 2개, 연재",
+     "since": "",
+     "js": "0.1.25",
+     "kt": true,
+     "note": {
+      "d": "2026-11-12",
+      "t": "작품 제목이 \"총 에피소드(2화)\"로 나오던 것 — 사이트가 제목 칸을 바꿈 (망가요미 0.1.25·TVroom 8773)"
+     }
+    },
+    {
+     "key": "aniwolf",
+     "name": "애니울프",
+     "addr": "aniwolf.com",
+     "link": "https://aniwolf.com",
+     "state": "none",
+     "checkedAt": "",
+     "msg": "",
+     "since": "",
+     "js": "0.1.6",
+     "kt": true,
+     "note": {
+      "d": "2026-11-10",
+      "t": "재생 안 되던 것 고침 — 사이트가 재생 주소를 따로 받게 바뀜(바로 보기 단추와 같은 방법으로 받음, 망가요미 0.1.6·애니요미)"
+     }
+    },
+    {
+     "key": "aniweek",
+     "name": "애니위크",
+     "addr": "aniweek.com",
+     "link": "https://aniweek.com",
+     "state": "none",
+     "checkedAt": "",
+     "msg": "",
+     "since": "",
+     "js": "0.1.2",
+     "kt": true,
+     "note": {
+      "d": "2026-11-13",
+      "t": "옛 주소가 새 주소로 넘겨 주면 바로 그 주소로(망가요미, 1시간에 한 번 확인) · 필터 맨 위 📡 줄에 🔎 마지막 주소 확인 결과 (망가요미 0.1.2)"
+     }
+    },
+    {
+     "key": "aniya24",
+     "name": "애니야24",
+     "addr": "www.aniya24.com",
+     "link": "https://www.aniya24.com",
+     "state": "abroad",
+     "checkedAt": "",
+     "msg": "",
+     "since": "",
+     "js": "",
+     "kt": true,
+     "note": {
+      "d": "2026-11-09",
+      "t": "Cloudflare 인증이 계속 반복되던 것 고침 — 사이트에 휴대폰 웹뷰의 실제 브라우저 이름(User-Agent)을 보냄 (TVroom 8761)"
+     }
+    },
+    {
+     "key": "livesports1",
+     "name": "실시간스포츠1",
+     "addr": "goodlivetv2.com",
+     "link": "https://goodlivetv2.com",
+     "state": "ok",
+     "checkedAt": "2026-11-13T03:36:19.466Z",
+     "msg": "목록 6개",
+     "since": "",
+     "js": "0.1.7",
+     "kt": true,
+     "note": {
+      "d": "2026-11-09",
+      "t": "사이트 이름이 goodlivetv2.com 으로 바뀜 → 기본 주소 바꾸고 새 중계 화면(/live.php)에서도 주소 찾기 (망가요미 0.1.7 · LiveSports 8774)"
+     }
+    },
+    {
+     "key": "livesports2",
+     "name": "실시간스포츠2",
+     "addr": "www.tongtv.net",
+     "link": "https://www.tongtv.net",
+     "state": "ok",
+     "checkedAt": "2026-11-13T03:36:20.119Z",
+     "msg": "목록 7개",
+     "since": "",
+     "js": "0.1.20",
+     "kt": true,
+     "note": {
+      "d": "2026-11-03",
+      "t": "주소를 못 찾으면 저장소의 주소 목록 파일(domains.json)에 적힌 주소도 확인 — 새 주소를 확장 업데이트 없이 알려 줄 수 있게"
+     }
+    },
+    {
+     "key": "samsungtvplus",
+     "name": "삼성 TV 플러스",
+     "addr": "삼성 공식 채널",
+     "link": "",
+     "state": "none",
+     "checkedAt": "",
+     "msg": "",
+     "since": "",
+     "js": "0.1.8",
+     "kt": true,
+     "note": {
+      "d": "2026-11-09",
+      "t": "채널 목록 한글 깨짐 방지(글자 방식 표시 없는 응답), 예비 목록에도 편성표 붙임 (0.1.8)"
+     }
+    }
+   ]
+  },
+  {
+   "id": "webtoon",
+   "title": "웹툰·소설",
+   "items": [
+    {
+     "key": "wolftoon",
+     "name": "늑대닷컴",
+     "addr": "wfwf537.com",
+     "link": "https://wfwf537.com",
+     "state": "ok",
+     "checkedAt": "2026-11-13T03:35:50.721Z",
+     "msg": "목록 36개, 회차 128개, 이미지 62장, 연재",
+     "since": "",
+     "js": "0.1.80",
+     "kt": true,
+     "note": {
+      "d": "2026-11-13",
+      "t": "필터 맨 위에 🔎 마지막 주소 확인 결과(같음·새 주소로 바꿈·넘김·아직 안 열림) (망가요미 0.1.80·만화 0.1.73·애니요미)"
+     }
+    },
+    {
+     "key": "blacktoon",
+     "name": "블랙툰",
+     "addr": "blacktoon428.com",
+     "link": "https://blacktoon428.com",
+     "state": "ok",
+     "checkedAt": "2026-11-13T03:35:46.349Z",
+     "msg": "목록 24개, 회차 221개, 이미지 16장, 완결",
+     "since": "",
+     "js": "0.3.81",
+     "kt": true,
+     "note": {
+      "d": "2026-11-13",
+      "t": "필터 맨 위에 🔎 마지막 주소 확인 결과(같음·새 주소로 바꿈·넘김·아직 안 열림) (망가요미 0.3.81·애니요미)"
+     }
+    },
+    {
+     "key": "goraetoon",
+     "name": "고래툰",
+     "addr": "004.grtoon.com",
+     "link": "https://004.grtoon.com",
+     "state": "ok",
+     "checkedAt": "2026-11-13T03:35:57.552Z",
+     "msg": "목록 30개, 회차 252개, 이미지 23장, 연재",
+     "since": "",
+     "js": "0.1.39",
+     "kt": true,
+     "note": {
+      "d": "2026-11-13",
+      "t": "필터 맨 위에 🔎 마지막 주소 확인 결과(같음·새 주소로 바꿈·넘김·아직 안 열림) (망가요미 0.1.39·애니요미)"
+     }
+    },
+    {
+     "key": "goodtoon",
+     "name": "굿툰",
+     "addr": "www.goodtoon011.com",
+     "link": "https://www.goodtoon011.com",
+     "state": "ok",
+     "checkedAt": "2026-11-13T03:35:45.029Z",
+     "msg": "목록 63개, 회차 346개, 이미지 168장, 연재",
+     "since": "",
+     "js": "0.3.74",
+     "kt": true,
+     "note": {
+      "d": "2026-11-13",
+      "t": "필터 맨 위에 🔎 마지막 주소 확인 결과(같음·새 주소로 바꿈·넘김·아직 안 열림) (망가요미 0.3.74·애니요미)"
+     }
+    },
+    {
+     "key": "toonkor",
+     "name": "툰코",
+     "addr": "006.toonkor.net",
+     "link": "https://006.toonkor.net",
+     "state": "ok",
+     "checkedAt": "2026-11-13T03:35:54.293Z",
+     "msg": "목록 30개, 회차 237개, 이미지 141장, 연재",
+     "since": "",
+     "js": "0.1.78",
+     "kt": true,
+     "note": {
+      "d": "2026-11-13",
+      "t": "필터 맨 위에 🔎 마지막 주소 확인 결과(같음·새 주소로 바꿈·넘김·아직 안 열림) (망가요미 0.1.78·애니요미)"
+     }
+    },
+    {
+     "key": "mtoon",
+     "name": "머니툰",
+     "addr": "mtoon168.asia",
+     "link": "https://mtoon168.asia",
+     "state": "none",
+     "checkedAt": "",
+     "msg": "",
+     "since": "",
+     "js": "0.1.41",
+     "kt": true,
+     "note": {
+      "d": "2026-11-13",
+      "t": "필터 맨 위에 🔎 마지막 주소 확인 결과(같음·새 주소로 바꿈·넘김·아직 안 열림) (망가요미 0.1.41·애니요미)"
+     }
+    },
+    {
+     "key": "toon11",
+     "name": "11툰",
+     "addr": "update.spotv24.com",
+     "link": "https://update.spotv24.com",
+     "state": "ok",
+     "checkedAt": "2026-11-13T03:35:49.445Z",
+     "msg": "목록 101개, 회차 317개, 이미지 17장, 상태 미확인",
+     "since": "",
+     "js": "0.3.72",
+     "kt": true,
+     "note": {
+      "d": "2026-11-13",
+      "t": "필터 맨 위에 🔎 마지막 주소 확인 결과(같음·새 주소로 바꿈·넘김·아직 안 열림) (망가요미 0.3.72·애니요미)"
+     }
+    },
+    {
+     "key": "newxtoon",
+     "name": "뉴엑스툰",
+     "addr": "newxtoon5.com",
+     "link": "https://newxtoon5.com",
+     "state": "abroad",
+     "checkedAt": "2026-11-13T03:35:43.053Z",
+     "msg": "주소가 바뀐 것 같아요. 브라우저에서 사이트가 열리면 그 주소를 검색창에 붙여 넣어 주세요. 브라우저에서는 열리는데 앱에서만 안 되면: 잠시 뒤 다시 · 앱 완전히 껐다 켜기 · 유니콘 등 DNS 앱을 쓰면 DNS 를 Google 로. [사이트가 접속을 막았어요 (HTTP 403). 오른쪽 위 웹뷰로 한 번 열어 본 뒤 다시 시도해 주세요.]",
+     "since": "2026-11-04T03:16:50.106Z",
+     "js": "0.3.74",
+     "kt": true,
+     "note": {
+      "d": "2026-11-13",
+      "t": "필터 맨 위에 🔎 마지막 주소 확인 결과(같음·새 주소로 바꿈·넘김·아직 안 열림) (망가요미 0.3.74·애니요미)"
+     }
+    },
+    {
+     "key": "naverwebtoon",
+     "name": "네이버웹툰",
+     "addr": "comic.naver.com",
+     "link": "https://comic.naver.com",
+     "state": "abroad",
+     "checkedAt": "",
+     "msg": "",
+     "since": "",
+     "js": "0.1.27",
+     "kt": true,
+     "note": {
+      "d": "2026-11-11",
+      "t": "빠진 회차 줄: 여러 화를 묶은 회차(\"14~18화\")는 그 범위를 모두 있는 것으로 셈 (망가요미 0.1.27·애니요미)"
+     }
+    },
+    {
+     "key": "bookkor",
+     "name": "북코 소설",
+     "addr": "013.bookkor.com",
+     "link": "https://013.bookkor.com",
+     "state": "ok",
+     "checkedAt": "2026-11-13T03:35:52.902Z",
+     "msg": "목록 10개, 회차 1989개, 본문 5320자, 연재",
+     "since": "",
+     "js": "0.1.55",
+     "kt": true,
+     "note": {
+      "d": "2026-11-13",
+      "t": "필터 맨 위에 🔎 마지막 주소 확인 결과(같음·새 주소로 바꿈·넘김·아직 안 열림) (망가요미 0.1.55·애니요미)"
+     }
+    },
+    {
+     "key": "tokinovel",
+     "name": "토끼 소설",
+     "addr": "toki36.com",
+     "link": "https://toki36.com",
+     "state": "abroad",
+     "checkedAt": "",
+     "msg": "",
+     "since": "",
+     "js": "0.1.2",
+     "kt": true,
+     "note": {
+      "d": "2026-11-13",
+      "t": "필터 맨 위에 🔎 마지막 주소 확인 결과"
+     }
+    }
+   ]
+  }
+ ]
+}
