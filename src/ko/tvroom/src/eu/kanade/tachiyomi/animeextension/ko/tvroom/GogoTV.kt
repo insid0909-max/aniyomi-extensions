@@ -73,7 +73,10 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
 
     // 직접 넣은 주소는 바로, 더 새 주소가 확인되면 자동으로 바뀜 (DomainGuard.pick)
     override val baseUrl: String
-        get() = DomainGuard.pick(sitePrefs(), PREF_DOMAIN_KEY, DEFAULT_BASE_URL, autoDomain(), { DOMAIN_REGEX.matches(it) })
+        get() = DomainGuard.pick(sitePrefs(), PREF_DOMAIN_KEY, DEFAULT_BASE_URL, autoDomain(), { DOMAIN_REGEX.matches(it) }).also { cur ->
+            // 6시간마다 저장소 주소 목록(감시 작업이 안내 페이지로 고침)에 더 큰 번호가 있고 진짜 사이트면 그 주소로 (뒤에서)
+            DomainList.followLater("gogotv", sitePrefs(), PREF_DOMAIN_KEY, cur, autoDomain()) { h -> HOST_REGEX.matches(h) && realPage(DomainList.plainClient, h) != null }
+        }
 
     private fun autoDomain(): Boolean = sitePrefs()?.getBoolean(PREF_AUTO_DOMAIN, true) ?: true
 
