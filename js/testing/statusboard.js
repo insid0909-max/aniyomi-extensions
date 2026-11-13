@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "js/testing/statusboard.js"
@@ -127,11 +127,12 @@ class DefaultExtension extends MProvider {
         const desc = [
             check,
             `주소: ${it.addr}${it.link ? " (오른쪽 위 지구본을 누르면 사이트가 열려요)" : ""}`,
+            [it.source, it.addrSince ? kst(it.addrSince.length > 10 ? it.addrSince : it.addrSince + "T12:00:00+09:00").slice(0, 5) + "부터 이 주소" : ""].filter(Boolean).join(" · "),
             `버전: ${[it.js && "망가요미 " + it.js, it.kt && "애니요미 있음"].filter(Boolean).join(" · ") || "-"}`,
             `감시 작업 마지막 실행: ${kst(run) || "기록 없음"}${stale ? " ⚠ 하루 넘게 멈춤 — GitHub Actions 가 꺼졌을 수 있어요" : ""}`,
             `상태판 자료: ${kst(d.generatedAt)}`,
             "아래 목록은 이 확장의 업데이트 내역이에요.",
-        ].join("\n");
+        ].filter(Boolean).join("\n");
         let notes = [];
         try {
             const log = await this.json(LOG_URLS[it.group]);
