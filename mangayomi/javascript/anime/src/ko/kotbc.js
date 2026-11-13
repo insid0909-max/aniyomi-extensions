@@ -1,14 +1,14 @@
 const mangayomiSources = [{
     "name": "코티비씨",
     "lang": "ko",
-    "baseUrl": "https://k05.kotbc2.com",
+    "baseUrl": "https://k07.kotbc2.com",
     "apiUrl": "",
     "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
     "typeSource": "single",
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.20",
+    "version": "0.1.21",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/kotbc.js"
@@ -23,7 +23,7 @@ const mangayomiSources = [{
 //   회차 {title("47화"), sort, published_at, slug, body{url:"https://nnmo0oi1.com/video/{영상ID}", iframe}}
 // - 분류 /영화 · /드라마 · /예능시사 · /해외드라마 (?page=N), 필터는 첫 화면 주소 /?sort=…&types[0]=…&genres[0]=…&years[0]=… (props.comics)
 // - 영상 플레이어 nnmo0oi1.com/video/{ID} = 애니24 와 같은 종류 → 애니24 에서 재생 확인된 방법(POST getVideo → securedLink) 그대로
-const DEFAULT_BASE_URL = "https://k05.kotbc2.com";
+const DEFAULT_BASE_URL = "https://k07.kotbc2.com"; // 2026-11-13 안내 페이지 korsite.net 에 k07 (사용자: k05 웹뷰 안 열림)
 // 같은 사이트의 두 이름: 코티비씨(kotbc2.com) · 코무비(kormovie.com) — 화면·작품·주소 모양이 같음 (2026-10-30 사용자 확인)
 const DOMAIN_RE = /^https:\/\/(?:[a-z]\d+\.)?(?:kotbc\d*|kormovie)\.[a-z]{2,6}$/;
 const LABEL = "코티비씨";
@@ -596,7 +596,12 @@ class DefaultExtension extends MProvider {
             }
             return manual;
         }
-        return DOMAIN_RE.test(auto) ? auto : DEFAULT_BASE_URL;
+        // 예전에 자동으로 잡아 둔 주소보다 기본 주소 번호가 크면(같은 이름끼리) 기본 주소 (2026-11-13: k05 를 계속 잡고 있던 것)
+        if (DOMAIN_RE.test(auto)) {
+            const brand = (u) => (/kormovie/.test(u) ? "m" : "t");
+            return brand(auto) === brand(DEFAULT_BASE_URL) && num(DEFAULT_BASE_URL) > num(auto) ? DEFAULT_BASE_URL : auto;
+        }
+        return DEFAULT_BASE_URL;
     }
 
     autoOn() {
