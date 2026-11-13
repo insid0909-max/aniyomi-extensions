@@ -96,6 +96,7 @@ h1 { font-size: 22px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
 .row[data-state="abroad"] .dot { background: var(--far); }
 .row[data-state="none"] .dot { background: var(--none); }
 .name { font-weight: 600; font-size: 15.5px; }
+.tag { font-size: 11px; color: var(--far); background: var(--far-soft); border-radius: 6px; padding: 1px 6px; font-weight: 500; }
 .pill { margin-left: auto; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
 .row[data-state="ok"] .pill { background: var(--ok-soft); color: var(--ok); }
 .row[data-state="bad"] .pill { background: var(--bad-soft); color: var(--bad); }
@@ -152,7 +153,7 @@ footer { color: var(--muted); font-size: 12px; text-align: center; line-height: 
     <div class="stats">
       <div class="stat ok"><b id="nOk">–</b><span>정상</span></div>
       <div class="stat bad"><b id="nBad">–</b><span>문제</span></div>
-      <div class="stat far"><b id="nFar">–</b><span>해외 차단</span></div>
+      <div class="stat far"><b id="nFar">–</b><span>간접 확인</span></div>
       <div class="stat none"><b id="nNone">–</b><span>점검 안 함</span></div>
     </div>
   </section>
@@ -175,7 +176,7 @@ footer { color: var(--muted); font-size: 12px; text-align: center; line-height: 
 
   <footer>
     점검은 하루 한 번 해외 서버(GitHub)에서 목록·회차를 열어 봐요.<br>
-    <b>해외 확인 불가</b>는 해외에서 막힌 사이트예요. 휴대폰에서 안 되면 필터 맨 위 📡·🔎 줄을 찍어 보내 주세요.<br>
+    <b>간접 확인</b>은 해외에서 막힌 사이트를 30분마다 두드려 서버가 답하는지로 본 결과예요.<br>
     줄을 누르면 마지막 업데이트 내용과 점검 결과가 펼쳐져요. <b>복사</b>한 주소를 확장 검색창에 붙여 넣으면 그 주소로 바로 바뀌어요.
   </footer>
 </div>
@@ -212,14 +213,14 @@ footer { color: var(--muted); font-size: 12px; text-align: center; line-height: 
     data.groups.forEach(function (g) { g.items.forEach(function (it) { all.push(it); }); });
     var n = { ok: 0, bad: 0, abroad: 0, none: 0 };
     all.forEach(function (it) { n[it.state] = (n[it.state] || 0) + 1; });
-    $("nOk").textContent = n.ok; $("nBad").textContent = n.bad; $("nFar").textContent = n.abroad; $("nNone").textContent = n.none;
+    $("nOk").textContent = n.ok; $("nBad").textContent = n.bad; $("nFar").textContent = all.filter(function (it) { return it.indirect && it.state === "ok"; }).length; $("nNone").textContent = n.none;
     var hero = $("hero");
     hero.className = "hero " + (n.bad ? "bad" : "ok");
     $("badge").innerHTML = n.bad ? ICON.bad : ICON.ok;
     $("heroTitle").textContent = n.bad ? "문제 " + n.bad + "곳" : "모두 정상";
     $("heroText").textContent = n.bad
       ? "아래 주황색 줄을 확인해 주세요. 확장 " + all.length + "개 중 정상 " + n.ok + "개."
-      : "감시 작업이 열어 본 확장 " + (n.ok) + "개가 모두 잘 열려요. 전체 " + all.length + "개.";
+      : "확장 " + all.length + "개 중 " + n.ok + "개 정상" + (n.none ? ", " + n.none + "개는 점검 안 함" : "") + ".";
 
     var runs = data.runs || {}, last = [runs.anime, runs.webtoon].filter(Boolean).sort().pop();
     var age = last ? (Date.now() - Date.parse(last)) / 3600000 : 999;
@@ -247,12 +248,13 @@ footer { color: var(--muted); font-size: 12px; text-align: center; line-height: 
         var id = g.id + "-" + it.key;
         var vers = (it.js ? '<span class="ver">망가요미 ' + esc(it.js) + "</span>" : "") + (it.kt ? '<span class="ver">애니요미</span>' : "");
         var addr = it.link ? '<a class="addr" href="' + esc(it.link) + '" target="_blank" rel="noopener">' + esc(it.addr) + "</a>" : '<span class="addr" style="color:var(--muted)">' + esc(it.addr) + "</span>";
-        var check = it.state === "ok" ? "점검 " + kst(it.checkedAt) + " · " + esc(it.msg)
+        var check = it.indirect ? (it.state === "ok" ? "" : "<b>문제</b> ") + esc(it.msg) + " (30분마다 확인)<br>" + (/해외/.test(it.msg) ? "해외에서 막혀 목록은 못 열고, 서버가 답하는지로 살아 있는지 봤어요." : "목록까지 여는 매일 점검에는 없어서, 서버가 답하는지로 살아 있는지 봤어요.") + " 휴대폰에서 안 되면 그 확장 필터 맨 위 📡·🔎 줄을 찍어 보내 주세요."
+          : it.state === "ok" ? "점검 " + kst(it.checkedAt) + " · " + esc(it.msg)
           : it.state === "bad" ? "<b>문제</b> " + (it.since ? kst(it.since) + "부터 · " : "") + kst(it.checkedAt) + " · " + esc(it.msg)
           : it.state === "abroad" ? "해외 서버에서는 이 사이트가 막혀 있어 휴대폰에서만 확인할 수 있어요."
           : "감시 작업이 매일 열어 보는 목록에 없는 확장이에요.";
         html += '<div class="row' + (open[id] ? " open" : "") + '" data-state="' + it.state + '" data-id="' + esc(id) + '" tabindex="0" role="button" aria-expanded="' + (open[id] ? "true" : "false") + '">'
-          + '<div class="row-top"><span class="dot" aria-hidden="true"></span><span class="name">' + esc(it.name) + '</span><span class="pill">' + LABEL[it.state] + "</span></div>"
+          + '<div class="row-top"><span class="dot" aria-hidden="true"></span><span class="name">' + esc(it.name) + "</span>" + (it.indirect ? '<span class="tag">간접 확인</span>' : "") + '<span class="pill">' + LABEL[it.state] + "</span></div>"
           + '<div class="meta">' + addr + (it.link ? '<button type="button" class="copy" data-copy="' + esc(it.addr) + '">복사</button>' : "") + "</div>"
           + '<div class="src">' + vers + esc([it.source, it.addrSince ? md(String(it.addrSince).slice(0, 10)) + "부터 이 주소" : ""].filter(Boolean).join(" · ")) + "</div>"
           + (it.state === "bad" && it.msg ? '<div class="problem">' + esc(it.msg) + "</div>" : "")
