@@ -132,22 +132,55 @@ async function checkDomains() {
  * 안내 글 주소 따라가기(2026-11-11, 후후티비): 해외(깃허브)에선 사이트가 막혀 열어 볼 수 없지만, 어디서나 열리는
  * 안내 글(텔레그래프)에 적힌 주소가 domains.json 과 다르면 domains.json 만 바꿈. 확장이 실제로 열어 확인한 뒤에만 쓰므로 안전.
  */
+// 같은 사이트 이름(숫자 뺀 가장 긴 이름 칸)이고 숫자들을 앞에서부터 비교해 a 가 b 보다 크면 true (k07.kotbc2 > k05.kotbc2, 확장과 같은 방식)
+function hostNewer(a, b) {
+    const brand = (h) => h.replace(/\d+/g, "").split(".").slice(0, -1).sort((x, y) => y.length - x.length)[0] || "";
+    const nums = (h) => (h.match(/\d+/g) || []).map(Number);
+    if (a === b || !brand(a) || brand(a) !== brand(b)) return false;
+    const x = nums(a);
+    const y = nums(b);
+    for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i] > y[i];
+    return x.length > y.length;
+}
+
+/**
+ * 안내 페이지(텔레그래프·korsite·tvchak.org 등)에 적힌 주소 중 가장 새 주소가 지금 domains.json 주소보다 옛 번호가 아니면 domains.json 을 고침.
+ * verify 가 있으면 그 주소 첫 화면이 200 + 표시 글자일 때만(미미티비 "다음 주소"처럼 미리 적힌 주소 거름, 해외에서 열리는 사이트만),
+ * 없으면(해외 차단 사이트) 그대로 적음 — 확장이 휴대폰에서 진짜 사이트인지 확인한 뒤에만 씀
+ */
 async function checkGuides() {
     const file = path.join(ROOT, "domains.json");
     if (!fs.existsSync(file)) return;
+    const plainHost = (u) => String(u || "").replace(/^https?:\/\//, "").replace(/[/?#].*$/, "").replace(/^www\./, "").toLowerCase();
     for (const g of config.guides || []) {
         try {
             const res = await withTimeout(fetch(g.url, { headers: { "User-Agent": UA } }), 20000, g.name);
             const text = await res.text();
-            const hosts = [...new Set((text.match(new RegExp(g.regex, "gi")) || []).map((h) => h.toLowerCase()))];
-            const num = (h) => parseInt((/(\d+)\.[a-z]+$/.exec(h) || [0, 0])[1], 10);
-            hosts.sort((a, b) => num(b) - num(a));
+            const hosts = [...new Set((text.match(new RegExp(g.regex, "gi")) || []).map((h) => plainHost(h)))];
+            hosts.sort((a, b) => (hostNewer(a, b) ? -1 : hostNewer(b, a) ? 1 : 0));
             const data = JSON.parse(fs.readFileSync(file, "utf8"));
             const cur = (data.domains[g.key] || {}).baseUrl || "";
+            const curHost = plainHost(cur);
             console.log(`[안내 글] ${g.name} HTTP ${res.status} → ${hosts.join(", ") || "주소 없음"} (지금 ${cur})`);
             if (res.status !== 200 || !hosts.length) continue;
-            const to = "https://" + hosts[0];
-            if (to === cur || num(hosts[0]) < num(cur)) continue;
+            let to = "";
+            for (const h of hosts) {
+                if (h === curHost || (curHost && hostNewer(curHost, h))) continue;
+                if (g.verify) {
+                    let ok = false;
+                    try {
+                        const r = await withTimeout(fetch("https://" + h + "/", { headers: { "User-Agent": UA } }), 15000, h);
+                        ok = r.status === 200 && plainHost(r.url) === h && (await r.text()).includes(g.verify);
+                    } catch (e) {
+                        ok = false;
+                    }
+                    console.log(`[안내 글] ${g.name} ${h} 확인 ${ok ? "열림" : "안 열림(건너뜀)"}`);
+                    if (!ok) continue;
+                }
+                to = "https://" + h;
+                break;
+            }
+            if (!to) continue;
             data.domains[g.key] = { ...(data.domains[g.key] || {}), baseUrl: to, updated: new Date(Date.now() + 9 * 3600000).toISOString().substring(0, 10) };
             fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n");
             if (!summary.changedFiles.includes("domains.json")) summary.changedFiles.push("domains.json");

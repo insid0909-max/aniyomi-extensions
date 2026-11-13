@@ -63,7 +63,10 @@ class TVchak : AnimeHttpSource(), ConfigurableAnimeSource {
 
     // 직접 넣은 주소는 바로, 더 새 주소가 확인되면 자동으로 바뀜 (DomainGuard.pick)
     override val baseUrl: String
-        get() = DomainGuard.pick(prefs(), PREF_DOMAIN_KEY, DEFAULT_BASE_URL, autoDomain(), { DOMAIN_REGEX.matches(it) })
+        get() = DomainGuard.pick(prefs(), PREF_DOMAIN_KEY, DEFAULT_BASE_URL, autoDomain(), { DOMAIN_REGEX.matches(it) }).also { cur ->
+            // 6시간마다 저장소 주소 목록(감시 작업이 안내 페이지로 고침)에 더 큰 번호가 있고 진짜 사이트면 그 주소로 (뒤에서)
+            DomainList.followLater("tvchak", prefs(), PREF_DOMAIN_KEY, cur, autoDomain()) { h -> HOST_REGEX.matches(h) && DomainList.realSite(h, USER_AGENT, SITE_MARKER, "/vod/detail/") }
+        }
 
     private fun autoDomain(): Boolean = prefs()?.getBoolean(PREF_AUTO_DOMAIN, true) ?: true
 

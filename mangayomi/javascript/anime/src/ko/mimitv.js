@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.9",
+    "version": "0.1.10",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/mimitv.js"
@@ -285,7 +285,41 @@ async function addrAdopt(ext, query) {
 
 // 인기·최신 첫 쪽이 오류이거나 비었는데 지금 주소가 사이트가 아니면(끊김·빈 페이지·404) 새 주소를 찾아 다시 불러옴,
 // 못 찾으면 붙여 넣기 안내 (지금 주소가 진짜 사이트면 원래 결과·오류 그대로)
+// 2026-11-13 안내 페이지 주소 따라가기: 감시 작업이 매일 안내 페이지를 읽어 저장소 주소 목록(domains.json)을 고치므로,
+// 6시간마다 목록의 주소를 봐서 지금 주소와 같은 사이트 이름이고 번호가 더 크며 진짜 사이트로 열리면 자동 주소로 저장
+// (직접 넣은 주소도 getBaseUrl 이 번호를 비교해 고침). 잘 열리는 동안에도 따라가지만, 안내에 적힌 주소만 씀
+function addrNewer(a, b) {
+    const brand = (h) => h.replace(/\d+/g, "").split(".").slice(0, -1).sort((x, y) => y.length - x.length)[0] || "";
+    const nums = (h) => (h.match(/\d+/g) || []).map(Number);
+    if (a === b || !brand(a) || brand(a) !== brand(b)) return false;
+    const x = nums(a);
+    const y = nums(b);
+    for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i] > y[i];
+    return x.length > y.length;
+}
+
+async function addrFollow(ext) {
+    const key = ADDR_PREF.replace(/_domain$/, "");
+    try {
+        if (!ext.autoOn()) return;
+        const p = new SharedPreferences();
+        const at = Number(p.getString(key + "_listed_at", "0")) || 0;
+        if (Date.now() - at < 6 * 3600000) return;
+        p.setString(key + "_listed_at", String(Date.now()));
+        const host = (u) => String(u || "").replace(/^https?:\/\//, "").replace(/[/?#].*$/, "").replace(/^www\./, "").toLowerCase();
+        const work = async () => {
+            const listed = host(await listedDomain(ext.client, key));
+            if (!listed || !ADDR_HOST.test(listed) || !addrNewer(listed, host(addrCurrent(ext)))) return;
+            if (await addrIsSite(ext, "https://" + listed)) p.setString(key + "_auto_domain", "https://" + listed);
+        };
+        await Promise.race([work(), new Promise((r) => setTimeout(r, 6000))]);
+    } catch (e) {
+        // 다음 기회에
+    }
+}
+
 async function addrGuard(ext, page, fn) {
+    if (page === 1) await addrFollow(ext);
     let r = null;
     let err = null;
     try {
