@@ -75,6 +75,11 @@ class TVroomFactory : AnimeSourceFactory {
         } catch (e: Throwable) {
             list.add(ErrorSource("애니위크 오류", e))
         }
+        try {
+            list.add(StatusBoard()) // 확장 상태판 (2026-11-13, 망가요미 statusboard.js 와 같은 내용)
+        } catch (e: Throwable) {
+            list.add(ErrorSource("확장 상태판 오류", e))
+        }
         return list
     }
 }
