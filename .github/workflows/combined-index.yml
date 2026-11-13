@@ -35,6 +35,24 @@ jobs:
         with:
           node-version: 20
 
+      - name: Quick domain check
+        # 30분마다 주소 목록의 주소를 두드려, 옛 주소가 같은 이름·더 큰 번호로 넘겨 주거나 안내 페이지에 더 큰 번호가 있으면
+        # domains.json 을 바로 고침 (2026-11-13) → 확장이 접속 안 될 때 맨 먼저 이 목록을 보므로 스스로 옮겨 감
+        # (이 작업의 푸시는 GITHUB_TOKEN 이라 애니요미 빌드는 돌지 않음 — 확장은 master raw 를 바로 읽음)
+        continue-on-error: true
+        run: |
+          git fetch -q origin master
+          git checkout -q -B quick origin/master
+          OUT=$(node mangayomi/tools/combined/quickdomains.js domains.json mangayomi/tools/monitor/config.json changelog.json 업데이트내역.md mangayomi/tools/monitor/changelog.js) || true
+          echo "$OUT"
+          if echo "$OUT" | grep -q CHANGED; then
+            git config user.name "insid0909-max"
+            git config user.email "266083559+insid0909-max@users.noreply.github.com"
+            git add domains.json changelog.json 업데이트내역.md
+            git commit -q -m "사이트 주소 자동 갱신 (30분 확인): $(echo "$OUT" | grep '^바꿈' | sed 's/^바꿈 //' | tr '\n' ' ')"
+            git push -q origin HEAD:master || echo "푸시 실패 (다음 차례에 다시)"
+          fi
+
       - name: Combine
         run: node mangayomi/tools/combined/combine.js mangayomi/anime_index.json "$RUNNER_TEMP/out"
 
