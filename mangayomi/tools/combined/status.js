@@ -86,7 +86,38 @@ function sourceOf(key, cfg) {
     return "";
 }
 
-function rows(sites, src) {
+// 해외에서 막힌 사이트는 목록을 못 열어도 서버가 답하는지(차단 403·넘겨 줌 3xx·200)로 살아 있는지 간접 확인 (2026-11-13)
+// 답이 없거나(연결 실패·주소 없음·시간 초과) 5xx·404 면 문제. 한 번 실패하면 4초 뒤 한 번 더
+async function knock(host) {
+    const once = async () => {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 12000);
+        try {
+            const r = await fetch("https://" + host + "/", { redirect: "manual", signal: ctrl.signal, headers: { "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36" } });
+            const code = r.status;
+            const loc = r.headers.get("location") || "";
+            if (code >= 300 && code < 400) {
+                const to = String(loc).replace(/^https?:\/\//, "").replace(/[/?#].*$/, "").toLowerCase();
+                return { ok: true, msg: to && to !== host ? `서버 응답 · 넘겨 줌 → ${to}` : `서버 응답 (HTTP ${code})`, moved: to && to !== host ? to : "" };
+            }
+            if (code >= 200 && code < 300) return { ok: true, msg: `사이트가 열림 (HTTP ${code})` };
+            if ([401, 403, 429, 451].includes(code)) return { ok: true, msg: `서버 응답 · 해외 접속만 막힘 (HTTP ${code})` };
+            return { ok: false, msg: `서버 오류 (HTTP ${code})` };
+        } catch (e) {
+            return { ok: false, msg: /abort/i.test(String(e && e.name)) ? "응답 없음 (시간 초과)" : `응답 없음 (${String((e && e.cause && e.cause.code) || (e && e.message) || "연결 실패").slice(0, 40)})` };
+        } finally {
+            clearTimeout(timer);
+        }
+    };
+    let r = await once();
+    if (!r.ok) {
+        await new Promise((ok) => setTimeout(ok, 4000));
+        r = await once();
+    }
+    return r;
+}
+
+async function rows(sites, src) {
     const out = [];
     const items = [];
     let bad = 0;
@@ -96,7 +127,15 @@ function rows(sites, src) {
         const listedAt = (((src.domains || {}).domains || {})[s.key] || {}).updated || "";
         const addr = host(listed || st.origin) || s.addr || "—";
         let check;
-        if (st.domain === "dead" && !s.abroad) {
+        // 해외 차단 사이트와 매일 점검 목록에 없는 확장은 서버가 답하는지로 간접 확인
+        const k = (s.abroad || (st.ok === undefined && st.domain !== "dead")) && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(addr) ? await knock(addr) : null;
+        if (k) {
+            check = k.ok ? `✅ 정상 (간접 확인) · ${k.msg}` : `❌ 문제 (간접 확인) · ${k.msg}`;
+            if (!k.ok) bad++;
+            st.ok = k.ok;
+            st.msg = k.msg;
+            st.checkedAt = new Date().toISOString();
+        } else if (st.domain === "dead" && !s.abroad) {
             check = `❌ 주소 끊김 (${kst(st.domainSince)}부터)`;
             bad++;
         } else if (st.ok === true) check = `✅ 정상 · ${kst(st.checkedAt)}`;
@@ -110,6 +149,7 @@ function rows(sites, src) {
         const ver = [versionOf(src.index, s.js) && `망가요미 ${versionOf(src.index, s.js)}`, s.kt && "애니요미"].filter(Boolean).join(" · ") || (s.js ? "망가요미" : "");
         out.push(`| ${cell(s.name)} | ${cell(addr)} | ${cell(check)} | ${cell(ver)} | ${cell(last)} |`);
         const state = check.startsWith("❌") ? "bad" : check.startsWith("✅") ? "ok" : s.abroad ? "abroad" : "none";
+        const indirect = !!k;
         items.push({
             key: s.key,
             name: s.name,
@@ -122,6 +162,7 @@ function rows(sites, src) {
             js: versionOf(src.index, s.js) || "",
             kt: !!s.kt,
             source: sourceOf(s.key, src.config),
+            indirect,
             addrSince: (st.domain === "alive" && st.domainSince) || listedAt,
             note: note ? { d: note.d, t: cell(String(note.t).replace(/^(망가요미|애니요미):\s*/, "")) } : null,
         });
@@ -160,10 +201,10 @@ function runLine(label, state) {
         getJson(W + "gh-pages/mangayomi/novel_index.json"),
         getJson(W + "main/monitor/config.json"),
     ]);
-    const anime = rows(ANIME, { status: aStatus, domains: read("domains.json"), changelog: read("changelog.json"), index: read("mangayomi/anime_index.json"), config: read("mangayomi/tools/monitor/config.json") });
-    const webtoon = rows(WEBTOON, { status: wStatus, domains: wDomains, changelog: wLog, index: [...(wIndex || []), ...(wNovel || [])], config: wConfig });
+    const anime = await rows(ANIME, { status: aStatus, domains: read("domains.json"), changelog: read("changelog.json"), index: read("mangayomi/anime_index.json"), config: read("mangayomi/tools/monitor/config.json") });
+    const webtoon = await rows(WEBTOON, { status: wStatus, domains: wDomains, changelog: wLog, index: [...(wIndex || []), ...(wNovel || [])], config: wConfig });
     const bad = anime.bad + webtoon.bad;
-    const head = "| 확장 | 지금 주소 | 점검 (해외 감시 작업) | 버전 | 마지막 업데이트 |\n|---|---|---|---|---|";
+    const head = "| 확장 | 지금 주소 | 점검 | 버전 | 마지막 업데이트 |\n|---|---|---|---|---|";
     const md = `# 확장 상태판
 
 ${bad ? `**❌ 문제 ${bad}곳** — 아래 ❌ 줄을 확인하세요.` : "**✅ 감시 작업이 확인한 확장은 모두 정상이에요.**"}
@@ -171,7 +212,7 @@ ${bad ? `**❌ 문제 ${bad}곳** — 아래 ❌ 줄을 확인하세요.` : "**�
 - 만든 시각: ${kst(new Date().toISOString())} (30분마다 확인, 내용이 바뀔 때만 새로 씀)
 ${runLine("애니", aState)}
 ${runLine("웹툰", wState)}
-- 🌐 표시는 해외(GitHub)에서 막혀 감시 작업이 못 여는 사이트예요. 휴대폰에서 안 되면 필터 맨 위 📡·🔎 줄을 찍어 보내 주세요.
+- "간접 확인"은 해외(GitHub)에서 막혀 목록은 못 여는 사이트를 30분마다 두드려 서버가 답하는지(차단 403·넘겨 줌·열림)로 본 결과예요. 답이 없거나 서버 오류면 ❌. 휴대폰에서 안 되면 필터 맨 위 📡·🔎 줄을 찍어 보내 주세요.
 
 ## 애니·드라마·스포츠
 
@@ -198,7 +239,8 @@ ${webtoon.text}
     };
     const jsonFile = outFile.replace(/[^/\\]+$/, "status.json");
     const prevJson = process.argv[5];
-    const stripJ = (o) => JSON.stringify(Object.assign({}, o, { generatedAt: "" }));
+    // 간접 확인 시각은 30분마다 바뀌므로 비교에서 뺌 (결과가 같으면 파일을 새로 쓰지 않음)
+    const stripJ = (o) => JSON.stringify(Object.assign({}, o, { generatedAt: "" }), (k, v) => (k === "checkedAt" ? undefined : v));
     let keep = false;
     try {
         keep = prevJson && fs.existsSync(prevJson) && stripJ(JSON.parse(fs.readFileSync(prevJson, "utf8"))) === stripJ(data);
