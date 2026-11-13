@@ -1,7 +1,7 @@
 // 확장 상태판 만들기 (2026-11-13, 사용자 "1번 진행")
 // 애니·웹툰 저장소의 감시 결과(monitor-state/status.json·state.json)·주소 목록(domains.json)·업데이트 내역(changelog.json)·
 // 망가요미 목록(버전)을 모아 한 장짜리 상태판(Markdown)을 만든다. 휴대폰에서 github.com 주소로 열어 봄.
-// 사용: node status.js <애니 저장소 경로> <출력 파일> [예전 상태판 파일]
+// 사용: node status.js <애니 저장소 경로> <출력 파일> [예전 상태판 파일] [예전 status.json] — 같은 폴더에 status.json 도 씀
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -66,6 +66,7 @@ function versionOf(list, file) {
 
 function rows(sites, src) {
     const out = [];
+    const items = [];
     let bad = 0;
     for (const s of sites) {
         const st = ((src.status || {}).items || {})[s.key] || {};
@@ -85,8 +86,22 @@ function rows(sites, src) {
         const last = note ? `${String(note.d).slice(5).replace("-", ".")} ${short(String(note.t).replace(/^(망가요미|애니요미):\s*/, ""), 46)}` : "";
         const ver = [versionOf(src.index, s.js) && `망가요미 ${versionOf(src.index, s.js)}`, s.kt && "애니요미"].filter(Boolean).join(" · ") || (s.js ? "망가요미" : "");
         out.push(`| ${cell(s.name)} | ${cell(addr)} | ${cell(check)} | ${cell(ver)} | ${cell(last)} |`);
+        const state = check.startsWith("❌") ? "bad" : check.startsWith("✅") ? "ok" : s.abroad ? "abroad" : "none";
+        items.push({
+            key: s.key,
+            name: s.name,
+            addr,
+            link: /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(addr) ? "https://" + addr : "",
+            state,
+            checkedAt: st.checkedAt || "",
+            msg: state === "bad" ? cell(st.msg || (st.domain === "dead" ? "주소 끊김" : "")) : cell(st.msg || ""),
+            since: st.domain === "dead" ? st.domainSince || "" : "",
+            js: versionOf(src.index, s.js) || "",
+            kt: !!s.kt,
+            note: note ? { d: note.d, t: cell(String(note.t).replace(/^(망가요미|애니요미):\s*/, "")) } : null,
+        });
     }
-    return { text: out.join("\n"), bad };
+    return { text: out.join("\n"), bad, items };
 }
 
 function runLine(label, state) {
@@ -145,6 +160,28 @@ ${webtoon.text}
 ---
 이 페이지는 자동 작업(\`.github/workflows/combined-index.yml\`, \`mangayomi/tools/combined/status.js\`)이 만듭니다. 점검은 하루 한 번 해외 서버(GitHub)에서 목록·회차를 열어 봅니다.
 `;
+    // 앱 모양 상태판(GitHub Pages status/)이 읽는 자료
+    const runOf = (st) => (st && st.lastRun && st.lastRun.at) || "";
+    const data = {
+        generatedAt: new Date().toISOString(),
+        runs: { anime: runOf(aState), webtoon: runOf(wState) },
+        groups: [
+            { id: "anime", title: "애니·드라마·스포츠", items: anime.items },
+            { id: "webtoon", title: "웹툰·소설", items: webtoon.items },
+        ],
+    };
+    const jsonFile = outFile.replace(/[^/\\]+$/, "status.json");
+    const prevJson = process.argv[5];
+    const stripJ = (o) => JSON.stringify(Object.assign({}, o, { generatedAt: "" }));
+    let keep = false;
+    try {
+        keep = prevJson && fs.existsSync(prevJson) && stripJ(JSON.parse(fs.readFileSync(prevJson, "utf8"))) === stripJ(data);
+    } catch (e) {
+        keep = false;
+    }
+    fs.mkdirSync(path.dirname(jsonFile), { recursive: true });
+    if (keep) fs.copyFileSync(prevJson, jsonFile);
+    else fs.writeFileSync(jsonFile, JSON.stringify(data, null, 1) + "\n");
     // 시각 줄만 다르면 예전 파일 그대로 (30분마다 쓸데없는 기록이 쌓이지 않게)
     const prevFile = process.argv[4];
     const strip = (t) => String(t).replace(/^- 만든 시각:.*$/m, "");

@@ -127,6 +127,11 @@ jobs:
             cp -rv functions repo/
           fi
 
+          # 확장 상태판 앱 화면 (2026-11-13): GitHub Pages /status/ — 배포가 gh-pages 를 통째로 바꾸므로 매번 같이 넣음
+          if [ -f "mangayomi/tools/combined/status.html" ]; then
+            mkdir -p repo/status && cp mangayomi/tools/combined/status.html repo/status/index.html
+          fi
+
           python3 - << 'EOF'
           import os, glob, subprocess, json
 
