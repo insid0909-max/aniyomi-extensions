@@ -43,6 +43,7 @@ object Status {
         val badItems: List<Item>,
         val generatedAt: Long,
         val staleGroups: List<String>,
+        val lastRun: Long,
     )
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("status", Context.MODE_PRIVATE)
@@ -98,11 +99,31 @@ object Status {
         val runs = d.optJSONObject("runs")
         val stale = ArrayList<String>()
         val now = System.currentTimeMillis()
+        var lastRun = 0L
         for ((k, label) in listOf("anime" to "애니", "webtoon" to "웹툰")) {
             val t = iso(runs?.optString(k))
             if (t > 0 && now - t > STALE_HOURS * 3600_000L) stale.add(label)
+            if (t > lastRun) lastRun = t
         }
-        return Summary(ok, bad, abroad, none, badItems, iso(d.optString("generatedAt")), stale)
+        return Summary(ok, bad, abroad, none, badItems, iso(d.optString("generatedAt")), stale, lastRun)
+    }
+
+    /** 감시 작업 예약 시각: 매일 한국 시간 08:41 (monitor.yml cron 41 23 * * * UTC) — 지금 다음 차례 */
+    fun nextRun(now: Long = System.currentTimeMillis()): Long {
+        val cal = java.util.Calendar.getInstance(TimeZone.getTimeZone("Asia/Seoul"))
+        cal.timeInMillis = now
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 8)
+        cal.set(java.util.Calendar.MINUTE, 41)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        if (cal.timeInMillis <= now) cal.add(java.util.Calendar.DAY_OF_MONTH, 1)
+        return cal.timeInMillis
+    }
+
+    fun hhmm(t: Long): String {
+        val f = SimpleDateFormat("HH:mm", Locale.KOREA)
+        f.timeZone = TimeZone.getTimeZone("Asia/Seoul")
+        return f.format(Date(t))
     }
 
     fun hm(t: Long): String {
@@ -180,19 +201,16 @@ object Status {
             v.setTextViewText(R.id.detail, err)
             v.setTextViewText(R.id.time, "↻ 를 눌러 다시")
         } else {
-            val head = buildString {
-                if (s.bad == 0) append("✅ 모두 정상") else append("❌ 문제 ${s.bad}")
-                append("  ·  ✅${s.ok}")
-                if (s.abroad > 0) append(" 🌐${s.abroad}")
-            }
-            v.setTextViewText(R.id.summary, head)
+            val total = s.ok + s.bad + s.abroad + s.none
+            v.setTextViewText(R.id.summary, if (s.bad == 0) "✅ 모두 정상 ($total)" else "❌ 문제 ${s.bad} / $total")
             val lines = ArrayList<String>()
-            if (s.staleGroups.isNotEmpty()) lines.add("⚠ ${s.staleGroups.joinToString("·")} 감시 작업이 하루 넘게 멈춤 — GitHub Actions 확인")
+            if (s.staleGroups.isNotEmpty()) lines.add("⚠ 감시 작업 멈춤 (${s.staleGroups.joinToString("·")}) — GitHub Actions 확인")
             for (it in s.badItems) lines.add("❌ ${it.name} · ${it.msg}")
-            if (lines.isEmpty()) lines.add("문제 있는 확장이 없어요")
+            lines.add("마지막 점검 ${hm(s.lastRun)}")
+            lines.add("다음 점검 ${hm(nextRun())}")
             v.setTextViewText(R.id.detail, lines.joinToString("\n"))
             val fetched = prefs(ctx).getLong("fetched", 0)
-            v.setTextViewText(R.id.time, "${hm(s.generatedAt)} 자료 · ${hm(fetched)} 확인" + if (err.isNotEmpty()) " · 새로 받기 실패" else "")
+            v.setTextViewText(R.id.time, (if (fetched > 0) "${hhmm(fetched)} 확인" else "") + if (err.isNotEmpty()) " · 새로 받기 실패" else "")
         }
         val open = PendingIntent.getActivity(
             ctx, 0, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
