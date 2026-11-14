@@ -158,7 +158,10 @@ class Aniya24 : AnimeHttpSource(), ConfigurableAnimeSource {
             challenges != c0 -> "보안 확인 거침"
             else -> "바로"
         }
-        prefs()?.edit()?.putString(CF_LAST_LIST, String.format(Locale.US, "%.1f초 (%s)", sec, how))?.apply()
+        val took = String.format(Locale.US, "%.1f초 (%s)", sec, how)
+        prefs()?.edit()?.putString(CF_LAST_LIST, took)?.apply {
+            if (how == "보안 확인 거침") putString(CF_LAST_CF_LIST, took)
+        }?.apply()
         return res
     }
 
@@ -169,6 +172,7 @@ class Aniya24 : AnimeHttpSource(), ConfigurableAnimeSource {
         val kept = p.getLong(CF_KEPT_MIN, -1L)
         val parts = mutableListOf(if (pass > 0) "마지막 통과 ${f.format(java.util.Date(pass))}" else "통과 기록 없음")
         if (kept >= 0) parts += "이전 통과 유지 약 ${kept}분"
+        p.getString(CF_LAST_CF_LIST, null)?.let { parts += "보안 확인 거친 목록 $it" }
         p.getString(CF_LAST_LIST, null)?.let { parts += "마지막 목록 $it" }
         return "🛡 보안 확인: " + parts.joinToString(" · ")
     }
@@ -528,6 +532,7 @@ class Aniya24 : AnimeHttpSource(), ConfigurableAnimeSource {
         private const val CF_PASS_AT = "cf_pass_at"
         private const val CF_KEPT_MIN = "cf_kept_min"
         private const val CF_LAST_LIST = "cf_last_list"
+        private const val CF_LAST_CF_LIST = "cf_last_cf_list"
         private val PAGE_NUM = Regex("""/page/(\d+)/?$""")
         private val MEDIA_ID = Regex("""media-query-id/(\d+)""")
         private val GROUP_ID = Regex("""group-query-id/(\d+)""")
