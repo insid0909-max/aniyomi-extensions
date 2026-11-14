@@ -120,6 +120,25 @@ object Status {
         return cal.timeInMillis
     }
 
+    /**
+     * 다음 점검 문구. GitHub 가 08:41 예약을 몇 시간씩 늦게 돌리는 일이 잦음(2026-11 기록: 11:57~13:47 시작)
+     * → 오늘 예약 시각이 지났는데 아직 안 돌았으면 "오늘 (지연 중)", 이미 돌았으면 "내일 08:41 예정"
+     */
+    fun nextText(lastRun: Long, now: Long = System.currentTimeMillis()): String {
+        val cal = java.util.Calendar.getInstance(TimeZone.getTimeZone("Asia/Seoul"))
+        cal.timeInMillis = now
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 8)
+        cal.set(java.util.Calendar.MINUTE, 41)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        val todaySched = cal.timeInMillis // 오늘(한국) 08:41
+        return when {
+            now < todaySched -> "다음 점검 오늘 08:41 예정"
+            lastRun < todaySched -> "다음 점검 오늘 (GitHub 지연 중)"
+            else -> "다음 점검 내일 08:41 예정"
+        }
+    }
+
     fun hhmm(t: Long): String {
         val f = SimpleDateFormat("HH:mm", Locale.KOREA)
         f.timeZone = TimeZone.getTimeZone("Asia/Seoul")
@@ -207,7 +226,7 @@ object Status {
             if (s.staleGroups.isNotEmpty()) lines.add("⚠ 감시 작업 멈춤 (${s.staleGroups.joinToString("·")}) — GitHub Actions 확인")
             for (it in s.badItems) lines.add("❌ ${it.name} · ${it.msg}")
             lines.add("마지막 점검 ${hm(s.lastRun)}")
-            lines.add("다음 점검 ${hm(nextRun())}")
+            lines.add(nextText(s.lastRun))
             v.setTextViewText(R.id.detail, lines.joinToString("\n"))
             val fetched = prefs(ctx).getLong("fetched", 0)
             v.setTextViewText(R.id.time, (if (fetched > 0) "${hhmm(fetched)} 확인" else "") + if (err.isNotEmpty()) " · 새로 받기 실패" else "")
