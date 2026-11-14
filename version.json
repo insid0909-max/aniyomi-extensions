@@ -3,5 +3,10 @@
   "versionCode": 5032,
   "versionName": "0.1.5032-test",
   "url": "https://github.com/insid0909-max/aniyomi-extensions/raw/status-app/statusboard-test.apk"
+ },
+ "main": {
+  "versionCode": 5010,
+  "versionName": "0.1.5010",
+  "url": "https://github.com/insid0909-max/aniyomi-extensions/raw/status-app/statusboard.apk"
  }
 }
