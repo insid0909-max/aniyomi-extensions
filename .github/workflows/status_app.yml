@@ -1,0 +1,80 @@
+name: 확장 상태판 앱
+
+# 확장 상태판 앱(statusapp/) 을 빌드해 status-app 가지에 APK 와 version.json 을 올림.
+# test-apk 가지 = 시험판(패키지 .test, 이름 "확장 상태판 (시험)"), master 가지 = 정식판. 애니요미 확장 APK 와는 따로.
+on:
+  push:
+    branches:
+      - test-apk
+      - master
+    paths:
+      - 'statusapp/**'
+      - '.github/workflows/status_app.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: status-app
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - uses: gradle/actions/setup-gradle@v3
+
+      - name: 빌드
+        run: |
+          if [ "$GITHUB_REF_NAME" = "master" ]; then CH=main; TEST=false; else CH=test; TEST=true; fi
+          VC=$(git rev-list --count HEAD)
+          echo "CH=$CH" >> $GITHUB_ENV
+          echo "VC=$VC" >> $GITHUB_ENV
+          KS="$GITHUB_WORKSPACE/statusapp-key.jks"
+          if [ -f test-apk/signingkey-test.jks ]; then cp test-apk/signingkey-test.jks "$KS"; else
+            git show origin/test-apk:test-apk/signingkey-test.jks > "$KS"; fi
+          export KS_PATH="$KS" KS_PASS=aniyomi123 KS_ALIAS=aniyomitest
+          ./gradlew -p statusapp assembleRelease -PstatusTest=$TEST -Pvc=$VC
+          ls -la statusapp/build/outputs/apk/release/
+
+      - name: status-app 가지에 올리기
+        run: |
+          APK=$(ls statusapp/build/outputs/apk/release/*.apk | head -1)
+          if [ "$CH" = "main" ]; then NAME=statusboard.apk; VN="0.1.$VC"; else NAME=statusboard-test.apk; VN="0.1.$VC-test"; fi
+          OUT=$RUNNER_TEMP/out
+          if git ls-remote --exit-code --heads origin status-app >/dev/null; then
+            git clone --depth 1 --branch status-app "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "$OUT"
+          else
+            mkdir -p "$OUT" && cd "$OUT" && git init -q -b status-app && git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" && cd -
+          fi
+          cp "$APK" "$OUT/$NAME"
+          URL="https://github.com/${{ github.repository }}/raw/status-app/$NAME"
+          python3 - "$OUT/version.json" "$CH" "$VC" "$VN" "$URL" <<'PY'
+          import json, os, sys
+          p, ch, vc, vn, url = sys.argv[1:]
+          d = json.load(open(p)) if os.path.exists(p) else {}
+          d[ch] = {"versionCode": int(vc), "versionName": vn, "url": url}
+          json.dump(d, open(p, "w"), ensure_ascii=False, indent=1)
+          PY
+          cat > "$OUT/README.md" <<'MD'
+          # 확장 상태판 앱
+          - 정식판: [statusboard.apk](statusboard.apk)
+          - 시험판: [statusboard-test.apk](statusboard-test.apk) (이름 "확장 상태판 (시험)", 정식판과 따로 설치됨)
+          휴대폰에서 받은 APK 를 열어 설치(처음 한 번 "출처를 알 수 없는 앱 설치 허용"). 홈 화면 길게 누르기 → 위젯 → 확장 상태판.
+          MD
+          cd "$OUT"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "확장 상태판 앱 $VN" || exit 0
+          git push origin HEAD:status-app
