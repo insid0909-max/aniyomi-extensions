@@ -18,7 +18,10 @@ import eu.kanade.tachiyomi.network.GET
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Headers
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
@@ -32,6 +35,7 @@ import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 애니야24 (www.aniya24.com, 2026-11-09, 망가요미 aniya24.js(개인 저장소 my-ext)와 같은 구조).
@@ -63,7 +67,9 @@ class Aniya24 : AnimeHttpSource(), ConfigurableAnimeSource {
 
     override val client: OkHttpClient = network.client.newBuilder()
         .apply { interceptors().add(0, FriendlyNet) }
+        .apply { interceptors().add(0, Interceptor { listTiming(it) }) }
         .addInterceptor(PageCache(Regex("^/series/[^/]+/?$")))
+        .addInterceptor { listCacheIntercept(it) }
         .addInterceptor(SiteRateLimit(HOST_REGEX, RATE_GAP_MS, skipImages = true))
         .addInterceptor { chain ->
             // 목록 끝을 넘은 쪽(…/page/N/)은 404 → 빈 화면으로 바꿔 "더 없음" 으로 처리 (오류 화면 대신)
@@ -78,7 +84,94 @@ class Aniya24 : AnimeHttpSource(), ConfigurableAnimeSource {
             }
         }
         .addInterceptor(RetryOnce(HOST_REGEX))
+        .addInterceptor { cfWatch(it) }
         .build()
+
+    // ================= 목록 5분 기억 · 보안 확인 기록 (2026-11-14, 사용자 "보안 확인 매번·목록 느림") =================
+    // 보안 확인 통과가 얼마나 유지되는지는 사이트가 정함(확장이 늘릴 수 없음) → 같은 목록은 5분 기억해 사이트에 덜 묻고,
+    // 필터 🛡 줄에 마지막 통과 시각·이전 통과 유지 시간·마지막 목록 걸린 시간을 남겨 원인을 숫자로 봄
+    private val listCache = ConcurrentHashMap<String, Triple<Long, String?, ByteArray>>()
+
+    @Volatile private var challenges = 0
+
+    private fun isListUrl(u: HttpUrl): Boolean {
+        if (!HOST_REGEX.matches(u.host)) return false
+        val p = u.encodedPath
+        return p == "/series/" || LIST_PAGE.matches(p) || p.startsWith("/series-category/") || u.queryParameter("s") != null
+    }
+
+    private fun listCacheIntercept(chain: Interceptor.Chain): Response {
+        val req = chain.request()
+        if (req.method != "GET" || !isListUrl(req.url)) return chain.proceed(req)
+        val key = req.url.toString()
+        val now = System.currentTimeMillis()
+        listCache[key]?.let { (t, type, bytes) ->
+            if (now - t < LIST_TTL_MS) {
+                return Response.Builder().request(req).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                    .header(CACHE_MARK, "1").body(bytes.toResponseBody(type?.toMediaTypeOrNull())).build()
+            }
+        }
+        val res = chain.proceed(req)
+        if (res.code != 200) return res
+        val body = res.body ?: return res
+        val type = body.contentType()
+        val bytes = body.bytes()
+        val text = String(bytes, Charsets.UTF_8)
+        if (bytes.isNotEmpty() && !text.contains("challenge-platform")) {
+            if (listCache.size > 40) listCache.clear()
+            listCache[key] = Triple(now, type?.toString(), bytes)
+        }
+        return res.newBuilder().body(bytes.toResponseBody(type)).build()
+    }
+
+    /** 사이트가 보안 확인 화면(cf-mitigated: challenge)을 주면 그때를, 그 뒤 처음 정상 응답이면 통과 시각을 기록 */
+    private fun cfWatch(chain: Interceptor.Chain): Response {
+        val req = chain.request()
+        val res = chain.proceed(req)
+        if (!HOST_REGEX.matches(req.url.host)) return res
+        val p = prefs() ?: return res
+        val now = System.currentTimeMillis()
+        val challenge = (res.code == 403 || res.code == 503) && res.header("cf-mitigated").equals("challenge", true)
+        if (challenge) {
+            challenges++
+            if (!p.getBoolean(CF_WAITING, false)) {
+                val pass = p.getLong(CF_PASS_AT, 0L)
+                p.edit().putBoolean(CF_WAITING, true)
+                    .putLong(CF_KEPT_MIN, if (pass > 0) (now - pass) / 60000 else -1L).apply()
+            }
+        } else if (res.code in 200..399 && p.getBoolean(CF_WAITING, false)) {
+            p.edit().putBoolean(CF_WAITING, false).putLong(CF_PASS_AT, now).apply()
+        }
+        return res
+    }
+
+    /** 목록 한 번 걸린 시간과 받은 방법(바로·보안 확인 거침·기억) */
+    private fun listTiming(chain: Interceptor.Chain): Response {
+        val req = chain.request()
+        if (!isListUrl(req.url)) return chain.proceed(req)
+        val t0 = System.nanoTime()
+        val c0 = challenges
+        val res = chain.proceed(req)
+        val sec = (System.nanoTime() - t0) / 1_000_000_000.0
+        val how = when {
+            res.header(CACHE_MARK) != null -> "기억"
+            challenges != c0 -> "보안 확인 거침"
+            else -> "바로"
+        }
+        prefs()?.edit()?.putString(CF_LAST_LIST, String.format(Locale.US, "%.1f초 (%s)", sec, how))?.apply()
+        return res
+    }
+
+    private fun cfLine(): String {
+        val p = prefs() ?: return "🛡 보안 확인 기록 없음"
+        val f = SimpleDateFormat("MM.dd HH:mm", Locale.KOREA).apply { timeZone = TimeZone.getTimeZone("Asia/Seoul") }
+        val pass = p.getLong(CF_PASS_AT, 0L)
+        val kept = p.getLong(CF_KEPT_MIN, -1L)
+        val parts = mutableListOf(if (pass > 0) "마지막 통과 ${f.format(java.util.Date(pass))}" else "통과 기록 없음")
+        if (kept >= 0) parts += "이전 통과 유지 약 ${kept}분"
+        p.getString(CF_LAST_LIST, null)?.let { parts += "마지막 목록 $it" }
+        return "🛡 보안 확인: " + parts.joinToString(" · ")
+    }
 
     // User-Agent 는 휴대폰 웹뷰의 실제 값(WebUa) — 앱 기본값(PC 크롬 이름)이면 웹뷰에서 푼 Cloudflare 확인이 계속 다시 걸림
     override fun headersBuilder(): Headers.Builder = super.headersBuilder()
@@ -379,6 +472,7 @@ class Aniya24 : AnimeHttpSource(), ConfigurableAnimeSource {
         return AnimeFilterList(
             listOf(
                 AnimeFilter.Header("📡 주소: ${baseUrl.substringAfter("://")}"),
+                AnimeFilter.Header(cfLine()),
                 AnimeFilter.Separator(),
                 AnimeFilter.Header("검색어가 없을 때만 적용 (작품 주소를 붙여 넣으면 바로 열기)"),
                 KindFilter(),
@@ -427,6 +521,13 @@ class Aniya24 : AnimeHttpSource(), ConfigurableAnimeSource {
         private val PASTE_REGEX = Regex("""aniya24\d*\.[a-z]{2,6}/series/([^/?#\s]+)""", RegexOption.IGNORE_CASE)
         private val SERIES_PATH = Regex("""^/series/[^/]+/?$""")
         private val PAGE_PATH = Regex("""/page/\d+/?$""")
+        private val LIST_PAGE = Regex("""^/series/page/\d+/?$""")
+        private const val LIST_TTL_MS = 5 * 60_000L
+        private const val CACHE_MARK = "X-Aniya24-Cache"
+        private const val CF_WAITING = "cf_waiting"
+        private const val CF_PASS_AT = "cf_pass_at"
+        private const val CF_KEPT_MIN = "cf_kept_min"
+        private const val CF_LAST_LIST = "cf_last_list"
         private val PAGE_NUM = Regex("""/page/(\d+)/?$""")
         private val MEDIA_ID = Regex("""media-query-id/(\d+)""")
         private val GROUP_ID = Regex("""group-query-id/(\d+)""")
