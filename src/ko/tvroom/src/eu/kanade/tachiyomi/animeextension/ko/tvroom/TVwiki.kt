@@ -369,7 +369,7 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
                 date_upload = date
             }
         }.reversed()
-        return MovieName.unify(eps)
+        return MovieName.unify(LeadGap.shift(eps))
     }
 
     private fun dayOf(text: String): Long {
