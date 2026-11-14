@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 흰 바탕 둥근 칸 — 색은 앱이 색 필터로, 투명도는 그림 투명도로 바꿈 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="@color/card" />
+    <solid android:color="#FFFFFFFF" />
     <corners android:radius="20dp" />
 </shape>

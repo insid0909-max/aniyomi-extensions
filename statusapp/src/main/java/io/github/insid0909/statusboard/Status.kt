@@ -10,6 +10,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.SystemClock
+import android.content.res.Configuration
+import android.util.TypedValue
 import android.widget.RemoteViews
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -127,11 +129,52 @@ object Status {
         if (s != null && err.isEmpty()) notifyChanges(ctx, s)
     }
 
+    // ---------- 위젯 모양 설정 (투명도·글자 크기·배경색) ----------
+    val SCALES = floatArrayOf(0.85f, 1.0f, 1.2f, 1.4f)
+    val SCALE_NAMES = arrayOf("작게", "보통", "크게", "아주 크게")
+    val BG_NAMES = arrayOf("휴대폰 따라", "밝게", "어둡게")
+
+    fun transparency(ctx: Context) = prefs(ctx).getInt("w_transparency", 0) // 0 = 불투명, 100 = 완전 투명
+    fun scaleIndex(ctx: Context) = prefs(ctx).getInt("w_scale", 1)
+    fun bgMode(ctx: Context) = prefs(ctx).getInt("w_bg", 0)
+
+    fun saveStyle(ctx: Context, transparency: Int, scale: Int, bg: Int) {
+        prefs(ctx).edit().putInt("w_transparency", transparency).putInt("w_scale", scale).putInt("w_bg", bg).apply()
+    }
+
+    /** 받아 둔 자료로 위젯만 다시 그림 (설정 바꿀 때) */
+    fun redraw(ctx: Context) {
+        val s = prefs(ctx).getString("json", null)?.let { runCatching { parse(it) }.getOrNull() }
+        updateWidgets(ctx, s)
+    }
+
+    private fun style(ctx: Context, v: RemoteViews) {
+        val dark = when (bgMode(ctx)) {
+            1 -> false
+            2 -> true
+            else -> (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        }
+        val bg = if (dark) 0xFF22252B.toInt() else 0xFFFFFFFF.toInt()
+        val text = if (dark) 0xFFECEDEF.toInt() else 0xFF1B1D22.toInt()
+        val sub = if (dark) 0xFFB0B6C0.toInt() else 0xFF5B6270.toInt()
+        v.setInt(R.id.bg, "setColorFilter", bg)
+        v.setInt(R.id.bg, "setImageAlpha", ((100 - transparency(ctx).coerceIn(0, 100)) * 255) / 100)
+        val k = SCALES.getOrElse(scaleIndex(ctx)) { 1f }
+        for ((id, size, color) in listOf(
+            Triple(R.id.title, 12f, sub), Triple(R.id.settings, 16f, sub), Triple(R.id.refresh, 18f, sub),
+            Triple(R.id.summary, 20f, text), Triple(R.id.detail, 13f, text), Triple(R.id.time, 11f, sub),
+        )) {
+            v.setTextViewTextSize(id, TypedValue.COMPLEX_UNIT_SP, size * k)
+            v.setTextColor(id, color)
+        }
+    }
+
     fun updateWidgets(ctx: Context, s: Summary?, err: String = "") {
         val mgr = AppWidgetManager.getInstance(ctx)
         val ids = mgr.getAppWidgetIds(ComponentName(ctx, StatusWidget::class.java))
         if (ids.isEmpty()) return
         val v = RemoteViews(ctx.packageName, R.layout.widget)
+        style(ctx, v)
         if (s == null) {
             v.setTextViewText(R.id.summary, "자료를 못 받았어요")
             v.setTextViewText(R.id.detail, err)
@@ -157,6 +200,13 @@ object Status {
         )
         v.setOnClickPendingIntent(R.id.root, open)
         v.setOnClickPendingIntent(R.id.refresh, refreshIntent(ctx, 1))
+        v.setOnClickPendingIntent(
+            R.id.settings,
+            PendingIntent.getActivity(
+                ctx, 4, Intent(ctx, WidgetSettings::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            ),
+        )
         mgr.updateAppWidget(ids, v)
     }
 
