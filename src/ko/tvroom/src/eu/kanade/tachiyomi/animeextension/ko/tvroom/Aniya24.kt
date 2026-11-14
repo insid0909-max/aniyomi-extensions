@@ -127,7 +127,19 @@ class Aniya24 : AnimeHttpSource(), ConfigurableAnimeSource {
     /** 사이트가 보안 확인 화면(cf-mitigated: challenge)을 주면 그때를, 그 뒤 처음 정상 응답이면 통과 시각을 기록 */
     private fun cfWatch(chain: Interceptor.Chain): Response {
         val req = chain.request()
-        val res = chain.proceed(req)
+        // 8779: 목록 한 번 안에서 사이트에 실제로 보낸 요청마다 [시작 시각 · 응답 · 걸린 시간] 기록 (20초 "(바로)" 원인 찾기)
+        val tr = TRACE.get()
+        val s0 = System.nanoTime()
+        val res = try {
+            chain.proceed(req)
+        } catch (e: Exception) {
+            tr?.let { it.second += "+${secs(it.first, s0)} 실패 ${secs(s0, System.nanoTime())}초(${e.javaClass.simpleName})" }
+            throw e
+        }
+        if (tr != null) {
+            val mark = if (res.header("cf-mitigated").equals("challenge", true)) "보안" else ""
+            tr.second += "+${secs(tr.first, s0)} ${res.code}$mark ${secs(s0, System.nanoTime())}초"
+        }
         if (!HOST_REGEX.matches(req.url.host)) return res
         val p = prefs() ?: return res
         val now = System.currentTimeMillis()
@@ -151,19 +163,28 @@ class Aniya24 : AnimeHttpSource(), ConfigurableAnimeSource {
         if (!isListUrl(req.url)) return chain.proceed(req)
         val t0 = System.nanoTime()
         val c0 = challenges
-        val res = chain.proceed(req)
+        val steps = mutableListOf<String>()
+        TRACE.set(t0 to steps)
+        val res = try {
+            chain.proceed(req)
+        } finally {
+            TRACE.remove()
+        }
         val sec = (System.nanoTime() - t0) / 1_000_000_000.0
         val how = when {
             res.header(CACHE_MARK) != null -> "기억"
             challenges != c0 -> "보안 확인 거침"
             else -> "바로"
         }
-        val took = String.format(Locale.US, "%.1f초 (%s)", sec, how)
+        val detail = if (how == "기억" || steps.isEmpty()) "" else " [" + steps.take(5).joinToString(" → ") + "]"
+        val took = String.format(Locale.US, "%.1f초 (%s)", sec, how) + detail
         prefs()?.edit()?.putString(CF_LAST_LIST, took)?.apply {
             if (how == "보안 확인 거침") putString(CF_LAST_CF_LIST, took)
         }?.apply()
         return res
     }
+
+    private fun secs(a: Long, b: Long): String = String.format(Locale.US, "%.1f", (b - a) / 1_000_000_000.0)
 
     private fun cfLine(): String {
         val p = prefs() ?: return "🛡 보안 확인 기록 없음"
@@ -171,7 +192,7 @@ class Aniya24 : AnimeHttpSource(), ConfigurableAnimeSource {
         val pass = p.getLong(CF_PASS_AT, 0L)
         val kept = p.getLong(CF_KEPT_MIN, -1L)
         val parts = mutableListOf(if (pass > 0) "마지막 통과 ${f.format(java.util.Date(pass))}" else "통과 기록 없음")
-        if (kept >= 0) parts += "이전 통과 유지 약 ${kept}분"
+        if (kept >= 0) parts += "앞 통과 약 ${kept}분 뒤 다시 확인"
         p.getString(CF_LAST_CF_LIST, null)?.let { parts += "보안 확인 거친 목록 $it" }
         p.getString(CF_LAST_LIST, null)?.let { parts += "마지막 목록 $it" }
         return "🛡 보안 확인: " + parts.joinToString(" · ")
@@ -528,6 +549,7 @@ class Aniya24 : AnimeHttpSource(), ConfigurableAnimeSource {
         private val LIST_PAGE = Regex("""^/series/page/\d+/?$""")
         private const val LIST_TTL_MS = 5 * 60_000L
         private const val CACHE_MARK = "X-Aniya24-Cache"
+        private val TRACE = ThreadLocal<Pair<Long, MutableList<String>>?>()
         private const val CF_WAITING = "cf_waiting"
         private const val CF_PASS_AT = "cf_pass_at"
         private const val CF_KEPT_MIN = "cf_kept_min"
