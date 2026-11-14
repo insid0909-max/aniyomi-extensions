@@ -9,6 +9,8 @@ on:
     paths-ignore:
       - '**.md'
       - 'mangayomi/**'
+      - 'statusapp/**'
+      - '.github/workflows/status_app.yml'
   workflow_dispatch:
 
 permissions:
