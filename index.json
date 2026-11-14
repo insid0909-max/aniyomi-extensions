@@ -364,7 +364,7 @@
   "hasCloudflare": false,
   "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-manga-extensions/gh-pages/mangayomi/mtoon.js",
   "apiUrl": "",
-  "version": "0.1.50",
+  "version": "0.1.51",
   "isManga": true,
   "itemType": 0,
   "isFullData": false,
