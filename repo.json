@@ -1,0 +1,8 @@
+{
+  "meta": {
+    "name": "TVroom Test Repository",
+    "shortName": "TVroom-test",
+    "website": "https://github.com/insid0909-max/aniyomi-extensions/tree/test-apk/test-apk",
+    "signingKeyFingerprint": "e0194454c85fd23a6e1d39894e5f29bbe315f01cb288517b36a61ac059a7abbf"
+  }
+}
