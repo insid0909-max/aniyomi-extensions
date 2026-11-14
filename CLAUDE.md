@@ -70,8 +70,8 @@
 - 포스터·그림이 사이트 주소에 있으면 SiteRateLimit(skipImages = true), 포스터 실패는 0.8초 후 재시도·주소 바뀜 신호로 보지 않음(후후티비·고고티비).
 - 망가요미 기본 통신: UA 없을 때 PC 화면을 주는 사이트가 있음 → 휴대폰·PC 화면 둘 다 읽기(고고티비). 응답에 charset 이 없으면 fixUtf8(애니마루·북코). selectFirst 대신 select().length.
 - Kotlin: 한글 주소를 머리글(Referer)에 넣을 땐 인코딩(애니울프).
-- 망가요미 Cloudflare 사이트는 사이트 요청에 고정 User-Agent 를 넣지 말 것(앱이 웹뷰 UA 를 넣어 줌) — 통과 쿠키가 웹뷰 UA 에 묶여 고정 UA 면 웹뷰 인증 뒤에도 "인증" 반복, 확인 화면이면 숨은 웹뷰로 통과(토끼소설 0.1.3 휴대폰 확인, 2026-11-13).
-- 망가요미 소스 정보 `"hasCloudflare": true` 면 앱이 보안 확인 화면을 먼저 가로채 자기 방식으로 통과를 시도하고 실패하면 "Failed to bypass Cloudflare" 로 끝냄(확장 코드까지 안 옴) → 확장이 숨은 웹뷰로 직접 처리할 때는 false. 통신사 DNS 가 주소를 막으면(Failed host lookup) 앱 통신은 안 돼도 웹뷰는 열릴 수 있음 → 숨은 웹뷰로 받기 + 개인 DNS(dns.google) 안내. 웹뷰 User-Agent(navigator.userAgent)를 저장해 목록·본문·표지 모두 같은 값으로(값이 섞이면 통과 쿠키가 왔다 갔다 → 됐다 안 됐다). 토끼소설 망가요미 0.1.9: 목록·작품은 CDN 중계 sbxh9.b-cdn.net 먼저(다른 저장소 Toki 소설 기본값) → sbxh9.com → newtoki1.org → toki36.com, 본문은 사이트 웹뷰, 필터 📝·📡 줄 — 휴대폰 확인(사용자 "잘 된다", 2026-11-14). domains.json tokinovel = sbxh9.com.
+- (추정, 미확인) 망가요미 Cloudflare 사이트에 고정 User-Agent 를 넣으면 웹뷰 통과 쿠키와 안 맞을 수 있음 — 토끼소설 0.1.3 직후 "잘된다" 했지만 곧 "됐다 안 됐다"였고 실제 원인은 주소(아래 토끼소설 줄)라 효과는 확인 안 됨.
+- 토끼소설 망가요미 "인증 실패·됐다 안 됐다"(2026-11-13~14) — **확인된 원인은 주소**: 사용자 폰에서 toki36.com 만 됐다 안 됐다(Failed host lookup = 통신사 DNS 막힘 추정), sbxh9.com·newtoki1.org 는 바로 뜸(사용자 확인) → 0.1.8 기본 sbxh9 + 안 되면 다른 주소 → "잘 된다". **확인된 것 둘**: ① 소스 정보 `"hasCloudflare": true` 면 망가요미 앱이 보안 확인을 먼저 가로채 실패 시 "Failed to bypass Cloudflare"(확장 코드까지 안 옴) — false 로 바꾸자 오류 문구가 바뀜(0.1.6) ② 📝·📡 줄(0.1.5). **추정으로 넣은 것(효과 미확인 — 교훈으로 쓰지 말 것)**: 웹뷰 User-Agent 통일·고정 UA 빼기(0.1.3·0.1.4, "통과 쿠키 왔다 갔다" 짐작), DNS 막히면 숨은 웹뷰로(0.1.7), CDN 중계 sbxh9.b-cdn.net 먼저(0.1.9, 다른 저장소 Toki 소설 기본값). 0.1.10 에서 📡 줄에 마지막 목록을 받은 곳(CDN/주소/웹뷰)을 표시해 실제로 쓰이는지 확인 중 — 안 쓰이면 빼서 단순하게. domains.json tokinovel = sbxh9.com. 교훈: 사용자 화면의 오류 문구(주소·HTTP)부터 확인하고, 짐작 수정을 여러 번 겹치지 말 것.
 - 같은 시스템 사이트(Laravel+Inertia 등)가 회차를 줄여 주면 부분 새로고침(episodesAll)으로 전체 받기(북코·코티비씨).
 - 막히면 짐작 말고 같은 사이트의 잘 되는 다른 확장 코드를 먼저 비교(애니24 dcVideos). 성능 측정 임시 표시는 끝나면 반드시 빼기.
 
