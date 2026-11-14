@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: combined-index
@@ -34,6 +35,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+
+      - name: 매일 점검이 늦어지면 대신 시작
+        # GitHub 가 08:41(한국) 예약 점검을 매일 3~5시간씩 늦게 돌림 → 09:30 까지 오늘 점검이 안 돌았으면 여기서 시작 (2026-11-14)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOW=$(TZ=Asia/Seoul date +%H%M)
+          if [ "$NOW" -lt 0930 ]; then echo "아직 09:30 전 ($NOW)"; exit 0; fi
+          SINCE=$(date -u -d "$(TZ=Asia/Seoul date +%F) 08:41 +0900" +%Y-%m-%dT%H:%M:%SZ)
+          LAST=$(gh run list -R "$GITHUB_REPOSITORY" --workflow monitor.yml -L 1 --json createdAt -q ".[0].createdAt" 2>/dev/null || true)
+          echo "오늘 예약 $SINCE · 마지막 점검 시작 ${LAST:-없음}"
+          if [ -z "$LAST" ] || [[ "$LAST" < "$SINCE" ]]; then
+            gh workflow run monitor.yml -R "$GITHUB_REPOSITORY" --ref master && echo "오늘 점검을 대신 시작함" || echo "시작 실패 (다음 차례에 다시)"
+          fi
 
       - name: Quick domain check
         # 30분마다 주소 목록의 주소를 두드려, 옛 주소가 같은 이름·더 큰 번호로 넘겨 주거나 안내 페이지에 더 큰 번호가 있으면
