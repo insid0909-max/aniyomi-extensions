@@ -71,6 +71,7 @@
 - 망가요미 기본 통신: UA 없을 때 PC 화면을 주는 사이트가 있음 → 휴대폰·PC 화면 둘 다 읽기(고고티비). 응답에 charset 이 없으면 fixUtf8(애니마루·북코). selectFirst 대신 select().length.
 - Kotlin: 한글 주소를 머리글(Referer)에 넣을 땐 인코딩(애니울프).
 - 망가요미 Cloudflare 사이트는 사이트 요청에 고정 User-Agent 를 넣지 말 것(앱이 웹뷰 UA 를 넣어 줌) — 통과 쿠키가 웹뷰 UA 에 묶여 고정 UA 면 웹뷰 인증 뒤에도 "인증" 반복, 확인 화면이면 숨은 웹뷰로 통과(토끼소설 0.1.3 휴대폰 확인, 2026-11-13).
+- 망가요미 소스 정보 `"hasCloudflare": true` 면 앱이 보안 확인 화면을 먼저 가로채 자기 방식으로 통과를 시도하고 실패하면 "Failed to bypass Cloudflare" 로 끝냄(확장 코드까지 안 옴) → 확장이 숨은 웹뷰로 직접 처리할 때는 false. 통신사 DNS 가 주소를 막으면(Failed host lookup) 앱 통신은 안 돼도 웹뷰는 열릴 수 있음 → 숨은 웹뷰로 받기 + 개인 DNS(dns.google) 안내. 웹뷰 User-Agent(navigator.userAgent)를 저장해 목록·본문·표지 모두 같은 값으로(값이 섞이면 통과 쿠키가 왔다 갔다 → 됐다 안 됐다). 토끼소설 망가요미 0.1.9: 목록·작품은 CDN 중계 sbxh9.b-cdn.net 먼저(다른 저장소 Toki 소설 기본값) → sbxh9.com → newtoki1.org → toki36.com, 본문은 사이트 웹뷰, 필터 📝·📡 줄 — 휴대폰 확인(사용자 "잘 된다", 2026-11-14). domains.json tokinovel = sbxh9.com.
 - 같은 시스템 사이트(Laravel+Inertia 등)가 회차를 줄여 주면 부분 새로고침(episodesAll)으로 전체 받기(북코·코티비씨).
 - 막히면 짐작 말고 같은 사이트의 잘 되는 다른 확장 코드를 먼저 비교(애니24 dcVideos). 성능 측정 임시 표시는 끝나면 반드시 빼기.
 
