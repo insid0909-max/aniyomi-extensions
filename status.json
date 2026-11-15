@@ -1,5 +1,5 @@
 {
- "generatedAt": "2026-11-15T03:44:44.655Z",
+ "generatedAt": "2026-11-15T03:57:34.151Z",
  "runs": {
   "anime": "2026-11-15T03:05:55.320Z",
   "webtoon": "2026-11-15T03:04:29.607Z"
@@ -34,7 +34,7 @@
      "addr": "tvchak208.com",
      "link": "https://tvchak208.com",
      "state": "ok",
-     "checkedAt": "2026-11-15T03:44:40.948Z",
+     "checkedAt": "2026-11-15T03:57:31.086Z",
      "msg": "서버 응답 · 해외 접속만 막힘 (HTTP 403)",
      "since": "",
      "js": "0.1.58",
@@ -53,7 +53,7 @@
      "addr": "du.hoohootv465.xyz",
      "link": "https://du.hoohootv465.xyz",
      "state": "ok",
-     "checkedAt": "2026-11-15T03:44:41.219Z",
+     "checkedAt": "2026-11-15T03:57:31.390Z",
      "msg": "서버 응답 · 넘겨 줌 → hoohootv1.com",
      "since": "",
      "js": "",
@@ -72,7 +72,7 @@
      "addr": "tvwiki60.net",
      "link": "https://tvwiki60.net",
      "state": "ok",
-     "checkedAt": "2026-11-15T03:44:41.518Z",
+     "checkedAt": "2026-11-15T03:57:31.612Z",
      "msg": "사이트가 열림 (HTTP 200)",
      "since": "",
      "js": "1.0.23",
@@ -110,7 +110,7 @@
      "addr": "k07.kotbc2.com",
      "link": "https://k07.kotbc2.com",
      "state": "ok",
-     "checkedAt": "2026-11-15T03:44:41.579Z",
+     "checkedAt": "2026-11-15T03:57:31.651Z",
      "msg": "서버 응답 · 해외 접속만 막힘 (HTTP 403)",
      "since": "",
      "js": "0.1.23",
@@ -129,7 +129,7 @@
      "addr": "anilife01.tv",
      "link": "https://anilife01.tv",
      "state": "ok",
-     "checkedAt": "2026-11-15T03:44:41.784Z",
+     "checkedAt": "2026-11-15T03:57:32.067Z",
      "msg": "서버 응답 · 해외 접속만 막힘 (HTTP 403)",
      "since": "",
      "js": "0.1.23",
@@ -167,7 +167,7 @@
      "addr": "aniweek.com",
      "link": "https://aniweek.com",
      "state": "ok",
-     "checkedAt": "2026-11-15T03:44:42.240Z",
+     "checkedAt": "2026-11-15T03:57:32.362Z",
      "msg": "사이트가 열림 (HTTP 200)",
      "since": "",
      "js": "0.1.2",
@@ -181,12 +181,31 @@
      }
     },
     {
+     "key": "linkani",
+     "name": "링크애니",
+     "addr": "linkani.tv",
+     "link": "https://linkani.tv",
+     "state": "ok",
+     "checkedAt": "2026-11-15T03:57:32.779Z",
+     "msg": "사이트가 열림 (HTTP 200)",
+     "since": "",
+     "js": "0.1.0",
+     "kt": false,
+     "source": "",
+     "indirect": true,
+     "addrSince": "",
+     "note": {
+      "d": "2026-11-15",
+      "t": "정식판 0.1.0 — 작품 약 1만 2천 개(애니24·애니위크에 없는 옛 애니·극장판·OVA 많음), 새 회차가 하루 빠를 때 있음, 극장판은 1. 본편"
+     }
+    },
+    {
      "key": "aniya24",
      "name": "애니야24",
      "addr": "www.aniya24.com",
      "link": "https://www.aniya24.com",
      "state": "ok",
-     "checkedAt": "2026-11-15T03:44:42.371Z",
+     "checkedAt": "2026-11-15T03:57:32.855Z",
      "msg": "서버 응답 · 해외 접속만 막힘 (HTTP 403)",
      "since": "",
      "js": "",
@@ -363,7 +382,7 @@
      "addr": "mtoon168.asia",
      "link": "https://mtoon168.asia",
      "state": "ok",
-     "checkedAt": "2026-11-15T03:44:42.591Z",
+     "checkedAt": "2026-11-15T03:57:32.910Z",
      "msg": "서버 응답 · 해외 접속만 막힘 (HTTP 403)",
      "since": "",
      "js": "0.1.53",
@@ -401,7 +420,7 @@
      "addr": "newxtoon5.com",
      "link": "https://newxtoon5.com",
      "state": "ok",
-     "checkedAt": "2026-11-15T03:44:42.830Z",
+     "checkedAt": "2026-11-15T03:57:32.989Z",
      "msg": "서버 응답 · 해외 접속만 막힘 (HTTP 403)",
      "since": "2026-11-04T03:16:50.106Z",
      "js": "0.3.80",
@@ -420,7 +439,7 @@
      "addr": "comic.naver.com",
      "link": "https://comic.naver.com",
      "state": "ok",
-     "checkedAt": "2026-11-15T03:44:44.164Z",
+     "checkedAt": "2026-11-15T03:57:33.586Z",
      "msg": "서버 응답 (HTTP 302)",
      "since": "",
      "js": "0.1.32",
@@ -458,7 +477,7 @@
      "addr": "sbxh9.com",
      "link": "https://sbxh9.com",
      "state": "ok",
-     "checkedAt": "2026-11-15T03:44:44.655Z",
+     "checkedAt": "2026-11-15T03:57:34.049Z",
      "msg": "서버 응답 · 해외 접속만 막힘 (HTTP 403)",
      "since": "",
      "js": "0.1.10",
@@ -469,6 +488,25 @@
      "note": {
       "d": "2026-11-14",
       "t": "필터 📡 줄에 마지막 목록을 받은 곳(CDN·주소·예비 주소·숨은 웹뷰)과 시각 표시"
+     }
+    },
+    {
+     "key": "mangadex",
+     "name": "망가덱스",
+     "addr": "mangadex.org",
+     "link": "https://mangadex.org",
+     "state": "ok",
+     "checkedAt": "2026-11-15T03:57:34.151Z",
+     "msg": "서버 응답 · 해외 접속만 막힘 (HTTP 403)",
+     "since": "",
+     "js": "",
+     "kt": false,
+     "source": "",
+     "indirect": true,
+     "addrSince": "",
+     "note": {
+      "d": "2026-11-15",
+      "t": "정식판 0.1.0 — 망가덱스 공개 자료로 목록·작품·회차·그림, 필터로 번역 언어·원작 언어별 묶기, 빈 화는 영어로 채우기(설정), 데이터 절약 그림"
      }
     }
    ]
