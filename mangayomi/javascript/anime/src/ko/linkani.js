@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/linkani.js"
@@ -565,7 +565,8 @@ class DefaultExtension extends MProvider {
             imageUrl: img ? this.abs(img.attr("data-original")) : og ? og[1] : "",
             link: this.getBaseUrl() + path,
             description: [story, info].filter((x) => x).join("\n\n"),
-            author: meta["제작사"] || "",
+            // 제작사는 사이트가 모든 작품에 "OLM" 을 붙여(가짜 값) 쓰지 않음
+            author: "",
             status: movie ? 1 : 5,
             genre: (meta["장르"] || "").split(",").map((x) => x.trim()).filter((x) => x),
             episodes,
