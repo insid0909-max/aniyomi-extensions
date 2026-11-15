@@ -22,13 +22,13 @@ import java.util.Locale
 import java.util.TimeZone
 
 /**
- * 확장 상태판 자료(저장소 repo 가지 status.json)를 받아 위젯·알림에 씀.
+ * 확장 상태판 자료를 받아 위젯·알림에 씀. 2026-11-15 개인 저장소(my-ext)로 옮김 — 이 판이 애니 저장소의 마지막 판(이후 업데이트는 my-ext status-app).
  * 웹 상태판·망가요미/애니요미 상태판 확장과 같은 자료.
  */
 object Status {
-    const val PAGE = "https://insid0909-max.github.io/aniyomi-extensions/status/"
-    private const val DATA = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/repo/status.json"
-    const val VERSION_URL = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/status-app/version.json"
+    const val PAGE = "https://insid0909-max.github.io/my-ext/status/"
+    private const val DATA = "https://raw.githubusercontent.com/insid0909-max/my-ext/status/status.json"
+    const val VERSION_URL = "https://raw.githubusercontent.com/insid0909-max/my-ext/status-app/version.json"
     const val ACTION_REFRESH = "io.github.insid0909.statusboard.REFRESH"
     private const val CHANNEL = "status"
     private const val STALE_HOURS = 36
