@@ -151,6 +151,7 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
 
     /** 목록·검색 화면의 작품 카드(div.vod-item) */
     private fun parseList(response: Response): AnimesPage {
+        checkOk(response, "목록")
         val doc = Jsoup.parse(response.body.string(), response.request.url.toString())
         val seen = HashSet<String>()
         val animes = doc.select(".vod-list .vod-item").mapNotNull { item ->
@@ -179,6 +180,15 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
         }
     }
 
+    /** 사이트가 오류를 주면 빈 목록 대신 이유를 보여 줌 [단계 · HTTP · 주소 모양] (망가요미판과 같은 문구) */
+    private fun checkOk(response: Response, step: String) {
+        if (response.code < 400) return
+        val code = response.code
+        val where = response.request.url.let { it.host + it.encodedPath.take(40) }
+        response.close()
+        throw Exception("링크애니 접속 실패 (HTTP $code). 주소가 바뀌었으면 설정에서 새 주소를 넣어 주세요. [$step · $where]")
+    }
+
     // ================= 작품 정보 =================
     override fun animeDetailsRequest(anime: SAnime): Request = GET(baseUrl + anime.url, h())
 
@@ -194,6 +204,7 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
     }.toMap()
 
     override fun animeDetailsParse(response: Response): SAnime {
+        checkOk(response, "작품")
         val doc = Jsoup.parse(response.body.string(), response.request.url.toString())
         val m = info(doc)
         val t = doc.selectFirst("h1.detail-info-title")?.text()?.trim().orEmpty()
@@ -205,7 +216,7 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
             thumbnail_url = doc.selectFirst(".detail-img [data-original]")?.attr("abs:data-original")?.ifEmpty { null }
                 ?: doc.selectFirst("meta[property=og:image]")?.attr("content")?.ifEmpty { null }
             genre = m["장르"]?.ifEmpty { null }
-            author = m["제작사"]?.ifEmpty { null }
+            // 제작사는 사이트가 모든 작품에 "OLM" 을 붙여(가짜 값, "관련：포켓몬스터" 와 같음) 쓰지 않음
             // 극장판은 완결, 그 밖은 사이트에 방영 상태가 없어 모름
             val movie = MOVIE_TYPE.containsMatchIn(type) || t.startsWith("[극장판") || t.startsWith("극장판")
             status = if (movie) SAnime.COMPLETED else SAnime.UNKNOWN
@@ -224,6 +235,7 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
 
     // ================= 회차 =================
     override fun episodeListParse(response: Response): List<SEpisode> {
+        checkOk(response, "회차")
         val doc = Jsoup.parse(response.body.string(), response.request.url.toString())
         val used = HashSet<Float>()
         val list = doc.select(".episode-box a.ep[href], .episode-box a[href*='/watch/']").mapNotNull { a ->
