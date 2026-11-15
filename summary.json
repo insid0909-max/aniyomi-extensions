@@ -1,16 +1,5 @@
 {
- "changedFiles": [
-  "domains.json"
- ],
- "domainChanges": [
-  {
-   "name": "후후티비",
-   "from": "https://cz.hoohootv465.xyz",
-   "to": "https://du.hoohootv465.xyz",
-   "files": [
-    "domains.json"
-   ]
-  }
- ],
+ "changedFiles": [],
+ "domainChanges": [],
  "notes": []
 }
