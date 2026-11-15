@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.8",
+    "version": "0.1.9",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/samsungtvplus.js"
@@ -55,6 +55,8 @@ const BC_LIST = BC_CHANNELS.map((c, i) => ({
     logo: `https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/thumbs/ch_${c[0].substring(3)}.png`, group: "실시간", programs: [],
     description: "방송사 홈페이지에서 무료로 제공하는 공식 실시간 방송입니다 (라이브TV 와 같은 주소). 대부분 한국에서만 재생됩니다.",
 }));
+// 대전MBC 공식 생방송 (tjmbc.co.kr/OnAir 화면의 주소, 2026-11-15 확인)
+const TJMBC_URL = "https://ns1.tjmbc.co.kr/live/myStream.sdp/playlist.m3u8";
 const BC_LABELS = { kbs: "KBS 공식", mbcmain: "MBC 공식", sbsmain: "SBS 공식" };
 const BC_MEDIA_RE = /https?:\/\/[^\s"'<>\\]+?\.m3u8[^\s"'<>\\]*/g;
 
@@ -437,6 +439,29 @@ class DefaultExtension extends MProvider {
 
     // 지상파 채널: 방송사 공식 웹 플레이어 주소에서 받음 (라이브TV 와 같은 방식)
     async broadcastVideos(uri) {
+        if (uri.startsWith("mbcmain:")) return this.mbcVideos(uri);
+        return this.broadcastMain(uri);
+    }
+
+    // MBC: 본사 주소(ottlivepresd.imbc.com)가 HTTP 500 일 때가 있음(2026-11-15) → 본사가 열리면 본사 + 대전MBC,
+    // 안 열리면 대전MBC 공식 생방송(tjmbc.co.kr/OnAir, 머리글 없이 열림, 720p)으로 바로. 애니요미와 같은 방식
+    async mbcVideos(uri) {
+        const tjH = { "User-Agent": UA };
+        let why = "";
+        try {
+            const main = await this.broadcastMain(uri);
+            const r = await this.client.get(main[0].url, main[0].headers);
+            if (r.statusCode === 200 && String(r.body || "").startsWith("#EXTM3U")) {
+                return main.concat([{ url: TJMBC_URL, originalUrl: TJMBC_URL, quality: "대전MBC 공식 720p", headers: tjH }]);
+            }
+            why = `HTTP ${r.statusCode}`;
+        } catch (e) {
+            why = String((e && e.message) || e).replace(/재생 주소를 받지 못했습니다\s*/, "").replace(/^\((.*)\)$/, "$1").substring(0, 30) || "안 열림";
+        }
+        return [{ url: TJMBC_URL, originalUrl: TJMBC_URL, quality: `대전MBC 공식 720p (본사 ${why})`, headers: tjH }];
+    }
+
+    async broadcastMain(uri) {
         const kind = uri.split(":")[0];
         const arg = uri.substring(kind.length + 1);
         const h = bcHeaders(kind);

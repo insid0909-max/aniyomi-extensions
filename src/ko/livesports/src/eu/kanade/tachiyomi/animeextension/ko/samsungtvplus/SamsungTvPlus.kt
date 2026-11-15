@@ -251,23 +251,36 @@ class SamsungTvPlus(private val fixedGroup: String? = null) : AnimeHttpSource(),
     }
 
     // ================= 재생 =================
-    /** MBC 영상 주소를 확장이 먼저 열어 봄 → 열리면 중계 먼저 + 바로 재생도 남김, 안 열리면 [HTTP · 서버 · 응답 앞부분] 오류 */
-    private fun mbcVideos(media: String, bh: Headers, label: String, direct: List<Video>): List<Video> {
-        val probe = runCatching {
-            client.newCall(Request.Builder().url(media).headers(bh).build()).execute().use { res ->
-                res.code to res.body.string().take(200)
+    /**
+     * MBC: 본사 주소(ottlivepresd.imbc.com)가 확장으로 열어도 HTTP 500 일 때가 있음(2026-11-15 사용자 화면) →
+     * 본사를 먼저 열어 보고, 열리면 본사(앱 안 중계 먼저) + 대전MBC, 안 열리면 대전MBC 공식 생방송으로 바로 재생.
+     * 대전MBC(tjmbc.co.kr/OnAir) 주소는 머리글 없이 열림(720p), 지역 방송 시간엔 본사와 다를 수 있음.
+     */
+    private fun mbcVideos(uri: String): List<Video> {
+        val why: String
+        val main = runCatching { LIVE_TV.officialMedia(uri) }
+        if (main.isSuccess) {
+            val (media, bh, label) = main.getOrThrow()
+            val probe = runCatching {
+                client.newCall(Request.Builder().url(media).headers(bh).build()).execute().use { res ->
+                    res.code to res.body.string().take(200)
+                }
             }
+            val (code, head) = probe.getOrElse { -1 to (it.javaClass.simpleName) }
+            if (code == 200 && head.startsWith("#EXTM3U")) {
+                val qualities = LiveQuality.variants(client, media, bh).map { (ht, u) -> Video(u, "$label ${ht}p", u, bh) }
+                val relay = LocalProxy.playlist(client, bh, media)
+                return listOf(Video(relay, "$label 자동 (중계)", relay)) +
+                    LiveQuality.sort(prefs(), listOf(Video(media, "$label 자동", media, bh)) + qualities) +
+                    Video(TJMBC_URL, "대전MBC 공식 720p", TJMBC_URL, headers())
+            }
+            why = if (code < 0) head else "HTTP $code"
+        } else {
+            why = main.exceptionOrNull()?.message.orEmpty().replace(Regex("재생 주소를 받지 못했습니다\\s*"), "")
+                .removeSurrounding("(", ")").take(30).ifEmpty { "안 열림" }
         }
-        val (code, head) = probe.getOrElse {
-            throw Exception("MBC 영상 주소를 열지 못했습니다 [${it.javaClass.simpleName} · ${media.toHttpUrlOrNull()?.host}]")
-        }
-        if (code != 200 || !head.startsWith("#EXTM3U")) {
-            val shape = media.substringBefore("?").removePrefix("https://").removePrefix("http://").take(60)
-            throw Exception("MBC 영상 서버 오류 [HTTP $code · $shape · ${head.replace(Regex("\\s+"), " ").take(60)}]")
-        }
-        // 확장은 열림 → 재생기만 막힌 경우를 위해 중계 주소를 맨 앞에 (안 되면 아래 바로 재생 주소)
-        val relay = LocalProxy.playlist(client, bh, media)
-        return listOf(Video(relay, "$label 자동 (중계)", relay)) + LiveQuality.sort(prefs(), direct)
+        // 본사가 안 열림 → 대전MBC 로 (이름에 본사가 안 된 이유)
+        return listOf(Video(TJMBC_URL, "대전MBC 공식 720p (본사 $why)", TJMBC_URL, headers()))
     }
 
     private fun headers(): Headers = Headers.Builder().set("User-Agent", UA).build()
@@ -277,13 +290,10 @@ class SamsungTvPlus(private val fixedGroup: String? = null) : AnimeHttpSource(),
         if (id.isEmpty()) throw Exception("잘못된 채널 주소")
         // 지상파 채널: 방송사 공식 웹 플레이어 주소에서 받음 (라이브TV 와 같은 방식)
         BROADCAST_URI[id]?.let { uri ->
+            if (uri.startsWith("mbcmain:")) return@withContext mbcVideos(uri)
             val (media, bh, label) = LIVE_TV.officialMedia(uri)
             val qualities = LiveQuality.variants(client, media, bh).map { (ht, u) -> Video(u, "$label ${ht}p", u, bh) }
-            val direct = listOf(Video(media, "$label 자동", media, bh)) + qualities
-            // MBC: 재생기가 영상 서버에서 HTTP 500 을 받음(2026-11-15 사용자 화면) → 확장이 먼저 열어 보고
-            // 열리면 앱 안 중계(LocalProxy)로 재생(재생기만 막히는 경우), 확장도 막히면 이유를 오류에 보여 줌
-            if (uri.startsWith("mbcmain:")) return@withContext mbcVideos(media, bh, label, direct)
-            return@withContext LiveQuality.sort(prefs(), direct)
+            return@withContext LiveQuality.sort(prefs(), listOf(Video(media, "$label 자동", media, bh)) + qualities)
         }
         val h = headers()
         // jmp2.uk 가 삼성 공식 영상 주소로 넘겨 줌 → 넘어간 최종 주소를 씀
@@ -328,6 +338,8 @@ class SamsungTvPlus(private val fixedGroup: String? = null) : AnimeHttpSource(),
     }
 
     companion object {
+        // 대전MBC 공식 생방송 (tjmbc.co.kr/OnAir 화면의 주소, 2026-11-15 확인)
+        private const val TJMBC_URL = "https://ns1.tjmbc.co.kr/live/myStream.sdp/playlist.m3u8"
         private const val UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
         private const val THUMB = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/thumbs/tv.png"
         private const val CHANNELS_JSON = "https://i.mjh.nz/SamsungTVPlus/.channels.json"
