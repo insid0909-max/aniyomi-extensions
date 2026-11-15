@@ -352,6 +352,28 @@
   "notes": ""
  },
  {
+  "name": "망가덱스",
+  "id": 1543270646,
+  "baseUrl": "https://mangadex.org",
+  "lang": "ko",
+  "typeSource": "single",
+  "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-manga-extensions/gh-pages/icon/eu.kanade.tachiyomi.extension.ko.newxtoon.png",
+  "dateFormat": "",
+  "dateFormatLocale": "",
+  "isNsfw": false,
+  "hasCloudflare": false,
+  "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-manga-extensions/gh-pages/mangayomi/mangadex.js",
+  "apiUrl": "https://api.mangadex.org",
+  "version": "0.1.0",
+  "isManga": true,
+  "itemType": 0,
+  "isFullData": false,
+  "appMinVerReq": "0.5.0",
+  "additionalParams": "",
+  "sourceCodeLanguage": 1,
+  "notes": ""
+ },
+ {
   "name": "머니툰 웹툰",
   "id": 870214019,
   "baseUrl": "https://mtoon168.asia",
