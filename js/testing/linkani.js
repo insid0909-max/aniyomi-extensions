@@ -8,13 +8,13 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "js/testing/linkani.js"
 }];
 
-// 2026-11-15 시험판: 11-01 에 지운 정식판(0.1.0) 코드 그대로 다시 올림 — 한국에서 접속되는지 휴대폰 확인용
+// 2026-11-15 시험판: 11-01 에 지운 정식판(0.1.0) 코드 + 다른 확장 공통 기능(애니위크 끝부분: 📝 설치 버전·필터 빈 줄·검색 띄어쓰기·영화 본편·회차 번호 겹침 막기, 주소 못 찾음 안내)
 // Aniyomi Linkani.kt(링크애니, linkani.tv "Linkkf 애니 TV")를 망가요미용으로 옮긴 소스.
 // 목록: /list/2/(전체) · /list/9/(Ani16+) [/class/{장르·요일}][/year/{연도}][/lang/{TV|Movie|OVA}][/page/N/],
 //   인기: /label/topday/[page/N/], 검색: /view/[page/N/]?wd=검색어 — 카드 div.vod-item
@@ -279,6 +279,14 @@ function ruleFilters(prefix, sizes, defaults, text) {
 // → 그런 응답이면 User-Agent 를 넣어 다시 보내고, 그 뒤로는 처음부터 넣음 (원래 망가요미는 첫 요청이 성공해 그대로)
 let APP_NO_UA = false;
 let APP_ALT = null;
+// 주소를 못 찾는 오류(host lookup 실패)는 바로 할 일이 보이는 쉬운 말로 (2026-11-03)
+function dnsFriendly(e, url) {
+    const m = String((e && e.message) || e || "");
+    if (!/host lookup|UnknownHost|No address associated|nodename nor servname|ERR_NAME_NOT_RESOLVED/i.test(m)) return e;
+    const host = (/^https?:\/\/([^/?#]+)/.exec(String(url || "")) || [null, ""])[1];
+    return new Error("사이트 주소를 찾지 못했어요. ① 잠시 뒤 다시 ② 앱을 완전히 껐다 켜기 ③ 유니콘 등 DNS 앱을 쓰면 DNS 를 Google 로 ④ 주소가 바뀌었으면 검색창에 새 주소 붙여 넣기" + (host ? ` [${host}]` : ""));
+}
+
 function appClient(raw) {
     const media = /\.(?:m3u8|mp4|ts|m4s|jpe?g|png|webp|gif|avif)(?:[?#]|$)/i;
     const fallbackUa = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
@@ -345,12 +353,10 @@ function appClient(raw) {
         return res;
     };
     return {
-        get: (url, headers) => send((c, u, h) => c.get(u, h), url, headers),
-        post: (url, headers, body) => send((c, u, h) => c.post(u, h, body), url, headers),
+        get: (url, headers) => send((c, u, h) => c.get(u, h), url, headers).catch((e) => { throw dnsFriendly(e, url); }),
+        post: (url, headers, body) => send((c, u, h) => c.post(u, h, body), url, headers).catch((e) => { throw dnsFriendly(e, url); }),
     };
 }
-
-
 
 // 망가요미 재생기는 재생용 주소(originalUrl) 모양으로 HLS 를 알아봄 → 확장자가 .m3u8 이 아닌 HLS 주소(.txt·jmp2 등)는
 // 끝에 "#download.m3u8" 를 붙여 알려 줌. # 뒤는 서버로 보내지지 않아 실제 요청은 그대로 (애니24에서 효과 확인)
@@ -461,7 +467,8 @@ class DefaultExtension extends MProvider {
         }
         // 쪽 번호 링크 중 지금 쪽 + 1 이 있으면 다음 쪽이 있음
         const cur = Number((/\/page\/(\d+)\//.exec(path) || [null, "1"])[1]);
-        const hasNextPage = new RegExp(`/page/${cur + 1}/`).test(html);
+        // 사이트는 마지막 쪽에도 다음 쪽 링크를 남김(연도 2026·극장판: 2쪽 7개인데 3쪽 링크) → 쪽이 거의 차 있을 때만 다음 쪽
+        const hasNextPage = new RegExp(`/page/${cur + 1}/`).test(html) && list.length >= 20;
         return { list, hasNextPage };
     }
 
@@ -550,13 +557,16 @@ class DefaultExtension extends MProvider {
             const name = !label || label === num || label === `${num}화` ? `${num}화` : `${num}화 ${label}`;
             episodes.push({ name, url: href, dateUpload: null });
         }
+        // 극장판·OVA 처럼 회차가 하나뿐이면 다른 확장과 같게 "본편"(망가요미는 앞에 번호 "1. ") — 상태도 완결
+        const movie = /극장판|movie|영화/i.test(type) || /^\[?극장판/.test(t);
+        if (movie && episodes.length === 1) episodes[0].name = "1. 본편";
         return {
             name: title,
             imageUrl: img ? this.abs(img.attr("data-original")) : og ? og[1] : "",
             link: this.getBaseUrl() + path,
             description: [story, info].filter((x) => x).join("\n\n"),
             author: meta["제작사"] || "",
-            status: 5,
+            status: movie ? 1 : 5,
             genre: (meta["장르"] || "").split(",").map((x) => x.trim()).filter((x) => x),
             episodes,
         };
@@ -623,6 +633,7 @@ async function notesRefresh(client) {
     } catch (e) {
         return;
     }
+    await verRefresh(client, p);
     const last = Number(p.getString("notes_at", "0")) || 0;
     if (Date.now() - last < 60 * 60000) return;
     p.setString("notes_at", String(Date.now()));
@@ -635,6 +646,53 @@ async function notesRefresh(client) {
     }
 }
 
+// ---------- 설치 버전 확인 (필터 맨 위 📝 줄) ----------
+// 망가요미는 자동 업데이트를 해도 알림이 없어 → 설치된 버전과 저장소의 최신 버전을 1시간마다 비교해 보여 줌 (2026-11-03)
+const VER_INDEX_URLS = ["https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/mangayomi/anime_index.json"];
+
+function verCmp(a, b) {
+    const x = String(a || "").split(".").map((n) => parseInt(n, 10) || 0);
+    const y = String(b || "").split(".").map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0);
+    return 0;
+}
+
+async function verRefresh(client, p) {
+    const last = Number(p.getString("ver_at", "0")) || 0;
+    if (Date.now() - last < 60 * 60000) return;
+    p.setString("ver_at", String(Date.now()));
+    const file = String(mangayomiSources[0].pkgPath || "").split("/").pop();
+    for (const u of VER_INDEX_URLS) {
+        try {
+            const r = await client.get(u, {});
+            const arr = JSON.parse(String(r.body || "[]"));
+            const hit = (Array.isArray(arr) ? arr : []).find((x) => x && String(x.sourceCodeUrl || "").endsWith("/" + file));
+            if (hit && hit.version) {
+                p.setString("ver_latest", String(hit.version));
+                return;
+            }
+        } catch (e) {
+            // 다음 기회에 다시 확인
+        }
+    }
+}
+
+function verLine(key, note) {
+    // 버전과 마지막 업데이트 내역을 한 줄로 (필터가 지저분해 보여, 사용자 2026-11-03)
+    const mine = String(mangayomiSources[0].version || "");
+    let latest = "";
+    try {
+        latest = new SharedPreferences().getString("ver_latest", "") || "";
+    } catch (e) {
+        latest = "";
+    }
+    const last = note && note.t ? ` · ${String(note.d || "").substring(5).replace("-", ".")} ${String(note.t).replace(/^망가요미:\s*/, "")}` : "";
+    let name = `📝 ${mine}${last}`;
+    if (latest && verCmp(latest, mine) > 0) name = `📝 ⚠️ OLD ${mine} → 새 버전 ${latest} 있음, 확장 화면에서 업데이트`;
+    else if (latest) name = `📝 🆕 NEW ${mine}${last}`;
+    return { type_name: "HeaderFilter", name, _status: true };
+}
+
 function notesFilters(key) {
     let list = [];
     try {
@@ -642,6 +700,156 @@ function notesFilters(key) {
     } catch (e) {
         list = [];
     }
-    return list.filter((n) => n && n.t).slice(0, 3)
-        .map((n) => ({ type_name: "HeaderFilter", name: `📝 ${String(n.d || "").substring(5).replace("-", ".")} ${n.t}`, _status: true }));
+    return [verLine(key, list.filter((n) => n && n.t)[0])];
 }
+
+// ---------- 필터 맨 끝 빈 줄 (2026-11-03) ----------
+// 망가요미 필터 창이 휴대폰 하단 버튼(|||·○·<)에 가려 맨 아래 항목이 안 눌림 → 맨 끝에 빈 줄을 두어 위로 올릴 수 있게.
+// 맨 끝에만 붙여 기존 필터 순서·저장된 탭 규칙은 그대로
+(function () {
+    const base = DefaultExtension.prototype.getFilterList;
+    DefaultExtension.prototype.getFilterList = function () {
+        const list = base.apply(this, arguments) || [];
+        return list.concat([1, 2, 3].map(() => ({ type_name: "HeaderFilter", name: "\u3000", _status: true })));
+    };
+})();
+
+// ---------- 검색 띄어쓰기 (2026-11-05) ----------
+// 사이트 검색이 띄어쓰기를 구분해 "괴력난신"·"나혼자만레벨업" 으로는 "괴력 난신"·"나 혼자만 레벨업" 이 안 나오는 곳이 있음.
+// 결과가 0개일 때만: ① 띄어쓰기를 뺀 검색어 ② 검색어 앞부분(절반) ③ 두 글자씩(앞에서부터) 으로 최대 6번 다시 찾아,
+// 띄어쓰기·기호를 빼고 비교했을 때 검색어가 들어 있는 작품만 보여 줌. 결과가 있으면 원래 그대로
+(function () {
+    const base = DefaultExtension.prototype.search;
+    DefaultExtension.prototype.search = async function (query, page, filters) {
+        const r = await base.apply(this, arguments);
+        const q = String(query || "").trim();
+        if (!q || Number(page) > 1 || /^(?:https?:\/\/|[\w-]+(?:\.[\w-]+)+(?:[/?#]|$))/i.test(q) || (r && r.list && r.list.length)) return r;
+        const squash = (s) => String(s || "").normalize("NFC").replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+        const want = squash(q);
+        if (want.length < 2) return r;
+        const joined = q.replace(/\s+/g, "");
+        const tries = [];
+        const add = (t) => { if (t && t.length >= 2 && t !== q && tries.indexOf(t) < 0) tries.push(t); };
+        // 사이트 검색은 쉼표·쌍점·물결·괄호·한자 같은 기호가 있으면 못 찾음("밑도 끝도 없이, 너다" 0개, 2026-11-06 검색 검사)
+        // → 기호를 뺀 검색어, 앞쪽 단어만으로 먼저 찾아 봄
+        const plain = q.replace(/[^\p{L}\p{N}\s]+/gu, " ").replace(/[\u3400-\u9fff]+/g, " ").replace(/\s+/g, " ").trim();
+        const words = plain.split(" ").filter((w) => w);
+        add(plain);
+        if (words.length > 2) add(words.slice(0, words.length - 1).join(" "));
+        if (words.length > 1) add(words.slice(0, Math.ceil(words.length / 2)).join(" "));
+        add(joined);
+        if (joined.length > 2) add(joined.substring(0, Math.max(2, Math.ceil(joined.length / 2))));
+        for (let i = 0; i + 2 <= joined.length; i++) add(joined.substring(i, i + 2));
+        for (const t of tries.slice(0, 8)) {
+            try {
+                const r2 = await base.call(this, t, 1, filters);
+                const hit = ((r2 && r2.list) || []).filter((x) => squash(x && x.name).includes(want));
+                if (hit.length) return { list: hit, hasNextPage: false };
+            } catch (e) {
+                // 다음 방법으로
+            }
+        }
+        return r;
+    };
+})();
+
+// ---------- 영화 회차 이름 통일 (2026-11-06, 사용자 "통일시켜") ----------
+// 확장마다 영화 회차가 "바로보기"·"한글자막"·"1회 · 바로보기"·"애니감상"·"1. 극장판 X" 처럼 달라서 → "본편" 으로.
+// 회차가 하나뿐이고 회차 번호(N화·N회·EN)가 없을 때만 (자막·더빙 같은 구분은 괄호로), 상태를 모르면 완결
+(function () {
+    const base = DefaultExtension.prototype.getDetail;
+    const core = (n) => String(n || "").replace(/^\s*\d+\s*(?:회)?\s*[.·]\s*/, "").replace(/\s*\(\d{2}\.\d{2}\)\s*$/, "").trim();
+    const hasNo = (n) => /\d+\s*(?:화|회)|(?:^|\s)E\d+/i.test(core(n));
+    const movieName = (n) => {
+        const v = (core(n).match(/한글\s*자막|영어\s*자막|자막|더빙|무삭제|감독판|확장판|극장판/g) || [])
+            .map((x) => x.replace(/\s+/g, "")).filter((x) => x !== "극장판");
+        return v.length ? `본편 (${[...new Set(v)].join(" · ")})` : "본편";
+    };
+    DefaultExtension.prototype.getDetail = async function (url) {
+        const d = await base.apply(this, arguments);
+        const eps = (d && d.episodes) || [];
+        const variant = /바로\s*보기|본편|자막|더빙|애니감상/;
+        const movie = eps.length === 1 ? !hasNo(eps[0].name)
+            : eps.length > 1 && eps.every((e) => !hasNo(e.name) && variant.test(core(e.name)));
+        if (!movie) return d;
+        // 망가요미는 이름 맨 앞 숫자로 회차 번호를 매김 → 숫자가 없으면 "번호를 매길 수 없음" 경고가 떠서 "1. 본편" (사용자, 2026-11-06)
+        eps.forEach((e, i) => { e.name = `${i + 1}. ${movieName(e.name)}`; });
+        if (d.status === 5 || d.status === undefined) d.status = 1;
+        return d;
+    };
+})();
+
+// ---------- 회차 번호 겹침 막기 (2026-11-07 회차 점검) ----------
+// 망가요미는 회차 이름에서 숫자를 읽어 번호를 매기고(lib/utils/chapter_recognition.dart: 작품 제목을 지운 뒤 첫 숫자,
+// "season/s/t N"·"ep N" 따로), 번호가 같은 회차는 하나만 남김 → "프롤로그 · 남은 98화"(98)와 "98화"가 겹치거나
+// "키스 대신 7초 34화"가 모두 7 이 되어 회차가 사라짐. 같은 방식으로 미리 읽어 보고, 겹치거나 번호가 없는 작품만
+// 오래된 회차부터 겹치지 않는 번호를 이름 앞에 붙임("35. …", 겹치면 "39.01. …"). 문제없는 작품은 그대로
+(function () {
+    const base = DefaultExtension.prototype.getDetail;
+    const unwanted = /\b(?:v|ver|vol|version|volume|season|staffel|saison|temporada|s|t)[^a-z]?[0-9]+/g;
+    const seasonKw = /\b(?:staffel|season|saison|temporada|s|t)\s*([0-9]+)/;
+    const epKw = /\b(?:folge|episode|episodio|ep\.?)\s*([0-9]+(?:\.[0-9]+)?)/;
+    const chNot = /(?<=ch\.) *([0-9]+)(\.[0-9]+)?(\.?[a-z]+)?/;
+    const bare = /([0-9]+)(\.[0-9]+)?(\.?[a-z]+)?/;
+    const dec = (d, a) => {
+        if (d) return parseFloat(d);
+        if (a) {
+            if (a.includes("extra")) return 0.99;
+            if (a.includes("omake")) return 0.98;
+            if (a.includes("special")) return 0.97;
+            const t = a.replace(".", "");
+            if (t.length === 1) { const k = t.charCodeAt(0) - 96; return k >= 10 ? 0 : k / 10; }
+        }
+        return 0;
+    };
+    const read = (title, ch) => {
+        let n = String(ch || "").toLowerCase();
+        if (title) n = n.split(String(title).toLowerCase()).join("");
+        n = n.trim().replace(/,/g, ".").replace(/-/g, ".").replace(/\s(?=extra|special|omake)/g, "");
+        const sm = seasonKw.exec(n);
+        const season = sm ? sm[1] : "0";
+        const em = epKw.exec(n);
+        if (em) return { season, ep: parseFloat(em[1]) };
+        const s2 = n.replace(unwanted, "");
+        const m = chNot.exec(s2) || bare.exec(s2);
+        return { season, ep: m ? parseFloat(m[1]) + dec(m[2], m[3]) : null };
+    };
+    const ok = (list, title) => {
+        const seen = {};
+        for (const x of list) {
+            const r = read(title, x.name);
+            if (r.ep === null || !(r.ep > 0)) return false;
+            const k = `${r.season}::${r.ep}::${x.scanlator || ""}`;
+            if (seen[k]) return false;
+            seen[k] = true;
+        }
+        return true;
+    };
+    // 붙일 번호 짐작: "34화"·"5회" 를 먼저, 없으면 앱 방식. 확장이 붙인 " · 남은 N화"·" · 마지막"·끝 날짜 "(11.05)" 는 빼고 읽음
+    const guessNo = (title, name) => {
+        const core = String(name || "").replace(/\s*·\s*(?:남은\s*\d+\s*화|마지막)\s*$/, "").replace(/\s*\(\d{2}(?:\.\d{2}){1,2}\)\s*$/, "");
+        const m = /(\d+(?:[.-]\d+)?)\s*(?:화|회|話)/.exec(core);
+        if (m) return parseFloat(m[1].replace("-", "."));
+        return read(title, core).ep;
+    };
+    DefaultExtension.prototype.getDetail = async function (url) {
+        const d = await base.apply(this, arguments);
+        const list = d && (d.episodes || d.chapters);
+        if (!list || !list.length) return d;
+        const title = String(d.name || "");
+        // 앱이 기억한 제목이 조금 달라 지워지지 않는 경우까지 보려고 제목을 지운 것·안 지운 것 둘 다 확인
+        if (ok(list, title) && ok(list, "")) return d;
+        let last = 0;
+        const fmt = (v) => String(Math.round(v * 100) / 100);
+        for (let i = list.length - 1; i >= 0; i--) { // 목록은 최신이 위 → 오래된 것부터
+            const x = list[i];
+            const plain = String(x.name || "").replace(/^\s*\d+(?:\.\d+)?\.\s+/, "");
+            const guess = guessNo(title, plain);
+            const v = guess !== null && guess > last ? guess : Math.round((last + 0.01) * 100) / 100;
+            last = v;
+            const lead = /^\s*(\d+(?:\.\d+)?)/.exec(plain);
+            x.name = lead && parseFloat(lead[1]) === v && !/^\s*\d+(?:\.\d+)?\s*[-.,]\s*\d/.test(plain) ? plain : `${fmt(v)}. ${plain}`;
+        }
+        return d;
+    };
+})();
