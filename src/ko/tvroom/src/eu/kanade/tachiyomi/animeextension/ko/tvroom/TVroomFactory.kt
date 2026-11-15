@@ -50,11 +50,7 @@ class TVroomFactory : AnimeSourceFactory {
         } catch (e: Throwable) {
             list.add(ErrorSource("애니24 오류", e))
         }
-        try {
-            list.add(Aniwolf()) // 애니울프
-        } catch (e: Throwable) {
-            list.add(ErrorSource("애니울프 오류", e))
-        }
+        // 애니울프(Aniwolf.kt)는 2026-11-15 목록에서 뺌 — 애니위크와 같은 자료(작품 100% 같음), 파일은 남김
         try {
             list.add(Aniya24()) // 애니야24
         } catch (e: Throwable) {
@@ -74,11 +70,6 @@ class TVroomFactory : AnimeSourceFactory {
             list.add(Aniweek()) // 애니위크 (2026-11-10, 망가요미판과 같은 규칙)
         } catch (e: Throwable) {
             list.add(ErrorSource("애니위크 오류", e))
-        }
-        try {
-            list.add(StatusBoard()) // 확장 상태판 (2026-11-13, 망가요미 statusboard.js 와 같은 내용)
-        } catch (e: Throwable) {
-            list.add(ErrorSource("확장 상태판 오류", e))
         }
         return list
     }
