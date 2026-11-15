@@ -50,11 +50,7 @@ class TVroomFactory : AnimeSourceFactory {
         } catch (e: Throwable) {
             list.add(ErrorSource("애니24 오류", e))
         }
-        try {
-            list.add(Aniwolf()) // 애니울프
-        } catch (e: Throwable) {
-            list.add(ErrorSource("애니울프 오류", e))
-        }
+        // 애니울프(Aniwolf.kt)는 2026-11-15 목록에서 뺌 — 애니위크와 같은 자료(작품 100% 같음), 파일은 남김
         try {
             list.add(Aniya24()) // 애니야24
         } catch (e: Throwable) {
