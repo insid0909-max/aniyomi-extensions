@@ -71,6 +71,11 @@ class TVroomFactory : AnimeSourceFactory {
         } catch (e: Throwable) {
             list.add(ErrorSource("애니위크 오류", e))
         }
+        try {
+            list.add(Linkani()) // 링크애니 (2026-11-15 다시 만듦, 망가요미판 0.1.0 과 같은 규칙)
+        } catch (e: Throwable) {
+            list.add(ErrorSource("링크애니 오류", e))
+        }
         return list
     }
 }
