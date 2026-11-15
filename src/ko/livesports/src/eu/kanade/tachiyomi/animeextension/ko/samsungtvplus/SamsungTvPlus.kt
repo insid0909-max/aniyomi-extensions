@@ -251,6 +251,25 @@ class SamsungTvPlus(private val fixedGroup: String? = null) : AnimeHttpSource(),
     }
 
     // ================= 재생 =================
+    /** MBC 영상 주소를 확장이 먼저 열어 봄 → 열리면 중계 먼저 + 바로 재생도 남김, 안 열리면 [HTTP · 서버 · 응답 앞부분] 오류 */
+    private fun mbcVideos(media: String, bh: Headers, label: String, direct: List<Video>): List<Video> {
+        val probe = runCatching {
+            client.newCall(Request.Builder().url(media).headers(bh).build()).execute().use { res ->
+                res.code to res.body.string().take(200)
+            }
+        }
+        val (code, head) = probe.getOrElse {
+            throw Exception("MBC 영상 주소를 열지 못했습니다 [${it.javaClass.simpleName} · ${media.toHttpUrlOrNull()?.host}]")
+        }
+        if (code != 200 || !head.startsWith("#EXTM3U")) {
+            val shape = media.substringBefore("?").removePrefix("https://").removePrefix("http://").take(60)
+            throw Exception("MBC 영상 서버 오류 [HTTP $code · $shape · ${head.replace(Regex("\\s+"), " ").take(60)}]")
+        }
+        // 확장은 열림 → 재생기만 막힌 경우를 위해 중계 주소를 맨 앞에 (안 되면 아래 바로 재생 주소)
+        val relay = LocalProxy.playlist(client, bh, media)
+        return listOf(Video(relay, "$label 자동 (중계)", relay)) + LiveQuality.sort(prefs(), direct)
+    }
+
     private fun headers(): Headers = Headers.Builder().set("User-Agent", UA).build()
 
     override suspend fun getVideoList(episode: SEpisode): List<Video> = withContext(Dispatchers.IO) {
@@ -260,7 +279,11 @@ class SamsungTvPlus(private val fixedGroup: String? = null) : AnimeHttpSource(),
         BROADCAST_URI[id]?.let { uri ->
             val (media, bh, label) = LIVE_TV.officialMedia(uri)
             val qualities = LiveQuality.variants(client, media, bh).map { (ht, u) -> Video(u, "$label ${ht}p", u, bh) }
-            return@withContext LiveQuality.sort(prefs(), listOf(Video(media, "$label 자동", media, bh)) + qualities)
+            val direct = listOf(Video(media, "$label 자동", media, bh)) + qualities
+            // MBC: 재생기가 영상 서버에서 HTTP 500 을 받음(2026-11-15 사용자 화면) → 확장이 먼저 열어 보고
+            // 열리면 앱 안 중계(LocalProxy)로 재생(재생기만 막히는 경우), 확장도 막히면 이유를 오류에 보여 줌
+            if (uri.startsWith("mbcmain:")) return@withContext mbcVideos(media, bh, label, direct)
+            return@withContext LiveQuality.sort(prefs(), direct)
         }
         val h = headers()
         // jmp2.uk 가 삼성 공식 영상 주소로 넘겨 줌 → 넘어간 최종 주소를 씀
