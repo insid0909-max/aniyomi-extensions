@@ -17,7 +17,6 @@ const ANIME = [
     { key: "kotbc", name: "코티비씨", js: "kotbc.js", abroad: true },
     { key: "anilife", name: "애니라이프", js: "anilife.js", kt: true, abroad: true },
     { key: "ohli24", name: "애니24", js: "ohli24.js", kt: true, addr: "www.ohli24.net" },
-    { key: "aniwolf", name: "애니울프", js: "aniwolf.js", kt: true, addr: "aniwolf.com" },
     { key: "aniweek", name: "애니위크", js: "aniweek.js", kt: true },
     { key: "aniya24", name: "애니야24", kt: true, abroad: true, addr: "www.aniya24.com" },
     { key: "livesports1", name: "실시간스포츠1", js: "livesports1.js", kt: true },
