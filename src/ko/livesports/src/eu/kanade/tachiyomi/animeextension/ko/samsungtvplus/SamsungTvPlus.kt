@@ -23,6 +23,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * 삼성 TV 플러스 (삼성이 광고를 넣어 무료로 제공하는 공식 실시간 채널, 한국 채널).
@@ -272,15 +274,46 @@ class SamsungTvPlus(private val fixedGroup: String? = null) : AnimeHttpSource(),
                 val relay = LocalProxy.playlist(client, bh, media)
                 return listOf(Video(relay, "$label 자동 (중계)", relay)) +
                     LiveQuality.sort(prefs(), listOf(Video(media, "$label 자동", media, bh)) + qualities) +
-                    Video(TJMBC_URL, "대전MBC 공식 720p", TJMBC_URL, headers())
+                    REGIONAL_MBC.map { (name, url) -> Video(url, name, url, headers()) }
             }
             why = if (code < 0) head else "HTTP $code"
         } else {
             why = main.exceptionOrNull()?.message.orEmpty().replace(Regex("재생 주소를 받지 못했습니다\\s*"), "")
                 .removeSurrounding("(", ")").take(30).ifEmpty { "안 열림" }
         }
-        // 본사가 안 열림 → 대전MBC 로 (이름에 본사가 안 된 이유)
-        return listOf(Video(TJMBC_URL, "대전MBC 공식 720p (본사 $why)", TJMBC_URL, headers()))
+        // 본사가 안 열림 → 지역 MBC(경남·대전)를 동시에 열어 보고 먼저 열리는 쪽을 맨 앞에 (이름에 본사가 안 된 이유)
+        return regionalMbc(why)
+    }
+
+    /** 지역 MBC 공식 생방송: 재생 목록 + 첫 하위 목록까지 받는 시간을 동시에 재서 빠른 순(못 연 곳은 뒤에 "확인 안 됨") */
+    private fun regionalMbc(why: String): List<Video> {
+        val pool = Executors.newFixedThreadPool(REGIONAL_MBC.size)
+        val timed = try {
+            REGIONAL_MBC.map { (name, url) -> pool.submit<Long?> { openMs(url) } to (name to url) }
+                .map { (f, nu) -> nu to runCatching { f.get(8, TimeUnit.SECONDS) }.getOrNull() }
+        } finally {
+            pool.shutdownNow()
+        }
+        val ok = timed.filter { it.second != null }.sortedBy { it.second }.map { it.first }
+        val bad = timed.filter { it.second == null }.map { it.first }
+        return ok.mapIndexed { i, (name, url) -> Video(url, if (i == 0) "$name (본사 $why)" else name, url, headers()) } +
+            bad.map { (name, url) -> Video(url, "$name (확인 안 됨)", url, headers()) }
+    }
+
+    private fun openMs(url: String): Long? {
+        val t0 = System.currentTimeMillis()
+        val body = client.newCall(Request.Builder().url(url).headers(headers()).build()).execute().use { res ->
+            if (res.code != 200) return null
+            res.body.string()
+        }
+        if (!body.startsWith("#EXTM3U")) return null
+        val sub = body.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() && !it.startsWith("#") }
+        if (sub != null && sub.contains(".m3u8")) {
+            val subUrl = url.toHttpUrlOrNull()?.resolve(sub)?.toString() ?: return null
+            val okSub = client.newCall(Request.Builder().url(subUrl).headers(headers()).build()).execute().use { it.code == 200 }
+            if (!okSub) return null
+        }
+        return System.currentTimeMillis() - t0
     }
 
     private fun headers(): Headers = Headers.Builder().set("User-Agent", UA).build()
@@ -338,8 +371,12 @@ class SamsungTvPlus(private val fixedGroup: String? = null) : AnimeHttpSource(),
     }
 
     companion object {
-        // 대전MBC 공식 생방송 (tjmbc.co.kr/OnAir 화면의 주소, 2026-11-15 확인)
-        private const val TJMBC_URL = "https://ns1.tjmbc.co.kr/live/myStream.sdp/playlist.m3u8"
+        // 지역 MBC 공식 생방송 (본사가 안 될 때 예비): MBC경남 mbceg.co.kr/onair/tv 화면의 주소(2026-11-16, 해외에선 안 열림),
+        // 대전MBC tjmbc.co.kr/OnAir 화면의 주소(2026-11-15, 720p, 머리글 없이 열림)
+        private val REGIONAL_MBC = listOf(
+            "MBC경남 공식" to "https://vod.mbceg.co.kr:8443/tvlive/livestream2/playlist.m3u8",
+            "대전MBC 공식 720p" to "https://ns1.tjmbc.co.kr/live/myStream.sdp/playlist.m3u8",
+        )
         private const val UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
         private const val THUMB = "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/thumbs/tv.png"
         private const val CHANNELS_JSON = "https://i.mjh.nz/SamsungTVPlus/.channels.json"
