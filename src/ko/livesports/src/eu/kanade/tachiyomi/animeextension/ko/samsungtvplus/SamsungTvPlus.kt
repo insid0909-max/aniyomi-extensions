@@ -410,8 +410,18 @@ class SamsungTvPlus(private val fixedGroup: String? = null) : AnimeHttpSource(),
             "bc-kbs2" to "kbs:12",
             "bc-mbc" to "mbcmain:",
             "bc-sbs" to "sbsmain:S01",
+            // 2026-11-16 추가 (이슈갓 목록에서 찾은 방송사 공식 온에어 화면의 주소)
+            "bc-tvchosun" to "tvchosun:",
+            "bc-mbn" to "mbn:",
         )
-        private val BROADCAST_NAMES = mapOf("bc-kbs1" to "KBS1", "bc-kbs2" to "KBS2", "bc-mbc" to "MBC", "bc-sbs" to "SBS")
+        private val BROADCAST_NAMES = mapOf(
+            "bc-kbs1" to "KBS1",
+            "bc-kbs2" to "KBS2",
+            "bc-mbc" to "MBC",
+            "bc-sbs" to "SBS",
+            "bc-tvchosun" to "TV조선",
+            "bc-mbn" to "MBN",
+        )
         private val BROADCAST: List<Ch> = BROADCAST_URI.keys.mapIndexed { i, id ->
             Ch(
                 id = id,
