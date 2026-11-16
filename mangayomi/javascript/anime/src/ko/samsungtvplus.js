@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.10",
+    "version": "0.1.11",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/samsungtvplus.js"
@@ -49,6 +49,9 @@ const BC_CHANNELS = [
     ["bc-kbs2", "KBS2", "kbs:12"],
     ["bc-mbc", "MBC", "mbcmain:"],
     ["bc-sbs", "SBS", "sbsmain:S01"],
+    // 2026-11-16 추가 (이슈갓 목록에서 찾은 방송사 공식 온에어 화면의 주소)
+    ["bc-tvchosun", "TV조선", "tvchosun:"],
+    ["bc-mbn", "MBN", "mbn:"],
 ];
 const BC_LIST = BC_CHANNELS.map((c, i) => ({
     id: c[0], name: c[1], uri: c[2], chno: -10 + i,
@@ -61,7 +64,9 @@ const REGIONAL_MBC = [
     ["MBC경남 공식", "https://vod.mbceg.co.kr:8443/tvlive/livestream2/playlist.m3u8"],
     ["대전MBC 공식 720p", "https://ns1.tjmbc.co.kr/live/myStream.sdp/playlist.m3u8"],
 ];
-const BC_LABELS = { kbs: "KBS 공식", mbcmain: "MBC 공식", sbsmain: "SBS 공식" };
+const BC_LABELS = { kbs: "KBS 공식", mbcmain: "MBC 공식", sbsmain: "SBS 공식", tvchosun: "TV조선 공식", mbn: "MBN 공식" };
+// TV조선 공식 온에어(broadcast.tvchosun.com/onair/on.cstv) 화면이 쓰는 주소 (머리글 없이도 열림)
+const TVCHOSUN_URL = "https://onaircdn.tvchosun.com/origin1/_definst_/tvchosun_s3/playlist.m3u8";
 const BC_MEDIA_RE = /https?:\/\/[^\s"'<>\\]+?\.m3u8[^\s"'<>\\]*/g;
 
 // 방송사 공식 웹 플레이어가 쓰는 주소 (livetv.js 와 같음)
@@ -71,6 +76,8 @@ function bcApiUrl(kind, arg) {
         case "sbsmain": return `https://apis.sbs.co.kr/play-api/1.0/onair/channel/${arg}` +
             "?v_type=2&platform=pcweb&protocol=hls&ssl=Y&rscuse=&jwt-token=&sbsmain=";
         case "kbs": return `https://cfpwwwapi.kbs.co.kr/api/v1/landing/live/channel_code/${arg}`;
+        // MBN 공식 온에어(m.mbn.co.kr/onair) 화면이 쓰는 인증 주소 → 하루짜리 서명 붙은 영상 주소를 글자로 줌
+        case "mbn": return "https://www.mbn.co.kr/player/mbnStreamAuth_new_live.mbn?vod_url=https://hls-live.mbn.co.kr/mbn-on-air/1000k/playlist.m3u8";
         default: return "";
     }
 }
@@ -85,6 +92,10 @@ function bcHeaders(kind) {
         h["Origin"] = "https://www.sbs.co.kr";
     } else if (kind === "kbs") {
         h["Referer"] = "https://onair.kbs.co.kr/";
+    } else if (kind === "tvchosun") {
+        h["Referer"] = "https://broadcast.tvchosun.com/onair/on.cstv";
+    } else if (kind === "mbn") {
+        h["Referer"] = "https://m.mbn.co.kr/";
     }
     return h;
 }
@@ -494,9 +505,15 @@ class DefaultExtension extends MProvider {
         const kind = uri.split(":")[0];
         const arg = uri.substring(kind.length + 1);
         const h = bcHeaders(kind);
-        const res = await this.client.get(bcApiUrl(kind, arg), h);
-        const body = String(res.body || "");
-        const media = bcFindMedia(body);
+        let media = "";
+        let body = "";
+        if (kind === "tvchosun") {
+            media = TVCHOSUN_URL;
+        } else {
+            const res = await this.client.get(bcApiUrl(kind, arg), h);
+            body = String(res.body || "");
+            media = bcFindMedia(body);
+        }
         if (!media) throw new Error(bcReason(body));
         const label = BC_LABELS[kind] || "라이브";
         let variants = [];
