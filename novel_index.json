@@ -1,1 +1,24 @@
-[]
+[
+  {
+    "name": "[시험] 마루마루 소설",
+    "id": 1543279653,
+    "baseUrl": "https://marumaru111.com",
+    "lang": "ko",
+    "typeSource": "single",
+    "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-manga-extensions/gh-pages/icon/eu.kanade.tachiyomi.extension.ko.newxtoon.png",
+    "dateFormat": "",
+    "dateFormatLocale": "",
+    "isNsfw": true,
+    "hasCloudflare": false,
+    "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/test/js/testing/marumaru_novel.js",
+    "apiUrl": "",
+    "version": "0.0.1",
+    "isManga": false,
+    "itemType": 2,
+    "isFullData": false,
+    "appMinVerReq": "0.5.0",
+    "additionalParams": "",
+    "sourceCodeLanguage": 1,
+    "notes": ""
+  }
+]
