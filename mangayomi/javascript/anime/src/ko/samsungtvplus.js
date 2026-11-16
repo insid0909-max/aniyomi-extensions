@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.9",
+    "version": "0.1.10",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/samsungtvplus.js"
@@ -55,8 +55,12 @@ const BC_LIST = BC_CHANNELS.map((c, i) => ({
     logo: `https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/thumbs/ch_${c[0].substring(3)}.png`, group: "실시간", programs: [],
     description: "방송사 홈페이지에서 무료로 제공하는 공식 실시간 방송입니다 (라이브TV 와 같은 주소). 대부분 한국에서만 재생됩니다.",
 }));
-// 대전MBC 공식 생방송 (tjmbc.co.kr/OnAir 화면의 주소, 2026-11-15 확인)
-const TJMBC_URL = "https://ns1.tjmbc.co.kr/live/myStream.sdp/playlist.m3u8";
+// 지역 MBC 공식 생방송 (본사가 안 될 때 예비): MBC경남 mbceg.co.kr/onair/tv 화면의 주소(2026-11-16, 해외에선 안 열림),
+// 대전MBC tjmbc.co.kr/OnAir 화면의 주소(2026-11-15, 720p, 머리글 없이 열림). 애니요미와 같은 순서·방식
+const REGIONAL_MBC = [
+    ["MBC경남 공식", "https://vod.mbceg.co.kr:8443/tvlive/livestream2/playlist.m3u8"],
+    ["대전MBC 공식 720p", "https://ns1.tjmbc.co.kr/live/myStream.sdp/playlist.m3u8"],
+];
 const BC_LABELS = { kbs: "KBS 공식", mbcmain: "MBC 공식", sbsmain: "SBS 공식" };
 const BC_MEDIA_RE = /https?:\/\/[^\s"'<>\\]+?\.m3u8[^\s"'<>\\]*/g;
 
@@ -452,13 +456,38 @@ class DefaultExtension extends MProvider {
             const main = await this.broadcastMain(uri);
             const r = await this.client.get(main[0].url, main[0].headers);
             if (r.statusCode === 200 && String(r.body || "").startsWith("#EXTM3U")) {
-                return main.concat([{ url: TJMBC_URL, originalUrl: TJMBC_URL, quality: "대전MBC 공식 720p", headers: tjH }]);
+                return main.concat(REGIONAL_MBC.map(([q, u]) => ({ url: u, originalUrl: u, quality: q, headers: tjH })));
             }
             why = `HTTP ${r.statusCode}`;
         } catch (e) {
             why = String((e && e.message) || e).replace(/재생 주소를 받지 못했습니다\s*/, "").replace(/^\((.*)\)$/, "$1").substring(0, 30) || "안 열림";
         }
-        return [{ url: TJMBC_URL, originalUrl: TJMBC_URL, quality: `대전MBC 공식 720p (본사 ${why})`, headers: tjH }];
+        // 본사가 안 열림 → 지역 MBC(경남·대전)를 동시에 열어 보고 먼저 열리는 쪽을 맨 앞에 (못 연 곳은 뒤에 "확인 안 됨")
+        const timed = await Promise.all(REGIONAL_MBC.map(async ([q, u]) => ({ q, u, ms: await this.openMs(u, tjH) })));
+        const ok = timed.filter((x) => x.ms !== null).sort((a, b) => a.ms - b.ms);
+        const bad = timed.filter((x) => x.ms === null);
+        return ok.map((x, i) => ({ url: x.u, originalUrl: x.u, quality: i === 0 ? `${x.q} (본사 ${why})` : x.q, headers: tjH }))
+            .concat(bad.map((x) => ({ url: x.u, originalUrl: x.u, quality: `${x.q} (확인 안 됨)`, headers: tjH })));
+    }
+
+    // 재생 목록 + 첫 하위 목록까지 받는 시간(ms), 8초 넘거나 실패면 null (망가요미엔 clearTimeout 이 없어 Promise.race 표시 값)
+    async openMs(url, h) {
+        const t0 = Date.now();
+        const LATE = {};
+        const work = (async () => {
+            const r = await this.client.get(url, h);
+            const body = String(r.body || "");
+            if (r.statusCode !== 200 || !body.startsWith("#EXTM3U")) return null;
+            const sub = body.split("\n").map((x) => x.trim()).find((x) => x && !x.startsWith("#"));
+            if (sub && sub.includes(".m3u8")) {
+                const su = /^https?:/.test(sub) ? sub : url.replace(/[^/]*(?:\?.*)?$/, "") + sub;
+                const r2 = await this.client.get(su, h);
+                if (r2.statusCode !== 200) return null;
+            }
+            return Date.now() - t0;
+        })().catch(() => null);
+        const v = await Promise.race([work, new Promise((res) => setTimeout(() => res(LATE), 8000))]);
+        return v === LATE ? null : v;
     }
 
     async broadcastMain(uri) {
