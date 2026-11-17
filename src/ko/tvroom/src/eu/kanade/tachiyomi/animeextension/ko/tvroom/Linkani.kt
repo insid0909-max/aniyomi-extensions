@@ -275,22 +275,27 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
         val main = str(player, "actual_url").ifEmpty { str(player, "url") }
         if (!main.startsWith("http")) throw Exception("영상 주소를 찾지 못했습니다")
         val sub = str(player, "subtitle_url")
-        val subs = if (sub.startsWith("http")) listOf(Track(sub, "한국어")) else emptyList()
         val vh = Headers.Builder()
             .set("User-Agent", USER_AGENT)
             .set("Referer", "$baseUrl/")
             .set("Origin", baseUrl)
             .build()
+        val subs = if (sub.startsWith("http") && subOk(sub, vh)) listOf(Track(sub, "한국어")) else emptyList()
         val label = HlsQuality.withRes(LABEL, main).let { if (subs.isEmpty()) it else "$it 자막" }
         val list = HlsQuality.expand(client, main, label, vh).map { Video(it.url, it.quality, it.videoUrl, vh, subs) }
-        // [임시 진단] "(중계·진단)" 을 맨 앞(기본)으로 — 원래 주소가 기본이면 첫 재생이 가끔 멈추고 중계로 바꾸면 재생됨(사용자, 2026-11-17).
-        // 조각 요청·거부(403) 기록은 필터 🩺 줄에 (원인 찾으면 뺄 것)
-        // 자막(.vtt)도 중계로 받아 요청·응답 시간을 기록 (조각 2개 받고 재생기가 멈춤 — 자막 기다림 의심, 2026-11-17)
-        val relay = runCatching { LocalProxy.playlistWithSub(client, vh, main, sub.takeIf { it.startsWith("http") }, diag = true) }.getOrNull()
-        listOfNotNull(
-            relay?.let { (v, s) -> Video(v, "$label (중계·진단)", v, vh, s?.let { listOf(Track(it, "한국어")) } ?: subs) },
-        ) + HlsQuality.sort(prefs(), list)
+        HlsQuality.sort(prefs(), list)
     }
+
+    /**
+     * 사이트가 자막 주소를 주지만 파일이 없는(404 "error") 회차가 있음 — 애니요미 재생기는 그 자막에서 멈춰 계속 로딩만 됨
+     * (2026-11-17 중계 기록으로 확인). 앞부분만 받아 WEBVTT 인지 보고, 없거나 자막이 아니거나 연결 오류면 뺌. 5초 시간 초과는 판단 못 해 그대로 둠
+     */
+    private fun subOk(url: String, vh: Headers): Boolean = runCatching {
+        client.newBuilder().callTimeout(5, java.util.concurrent.TimeUnit.SECONDS).build()
+            .newCall(Request.Builder().url(url).headers(vh).header("Range", "bytes=0-63").build()).execute().use { res ->
+                res.isSuccessful && res.body.string().trimStart('\uFEFF', ' ', '\r', '\n').startsWith("WEBVTT")
+            }
+    }.getOrElse { it !is java.io.IOException || it is java.io.InterruptedIOException }
 
     private fun str(o: JSONObject, k: String): String = if (o.isNull(k)) "" else o.optString(k).trim()
 
@@ -345,7 +350,7 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
         return AnimeFilterList(
             listOf(
                 AnimeFilter.Header("📡 주소: ${baseUrl.substringAfter("://")}"),
-            ) + LocalProxy.diagLines().map { AnimeFilter.Header(it) } + listOf(
+            ) + listOf(
                 AnimeFilter.Separator(),
                 AnimeFilter.Header("검색어가 없을 때만 적용 (작품 주소를 붙여 넣으면 바로 열기)"),
                 ListFilter(),
