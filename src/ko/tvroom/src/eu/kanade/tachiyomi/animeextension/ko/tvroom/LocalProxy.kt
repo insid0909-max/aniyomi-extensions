@@ -26,7 +26,7 @@ internal object LocalProxy {
     private val DIAG_SUM = IntArray(4) // 0 조각 수, 1 첫 시도 403, 2 다시 받아 성공, 3 끝내 실패
 
     /** 진단 기록 (요약 1줄 + 최근 기록), 없으면 빈 목록 */
-    fun diagLines(max: Int = 12): List<String> {
+    fun diagLines(max: Int = 20): List<String> {
         if (DIAG.isEmpty()) return emptyList()
         val head = "🩺 중계 기록(앱 켠 뒤 모두): 조각 ${DIAG_SUM[0]}개 · 첫 시도 거부 ${DIAG_SUM[1]} · 다시 받아 성공 ${DIAG_SUM[2]} · 끝내 실패 ${DIAG_SUM[3]}"
         return listOf(head) + DIAG.toList().takeLast(max).map { "🩺 $it" }
@@ -72,6 +72,12 @@ internal object LocalProxy {
     /** 원래 재생 목록 주소 → 재생기에 줄 중계 주소 (diag = 요청 기록 남기기) */
     fun playlist(client: OkHttpClient, headers: Headers, url: String, diag: Boolean = false): String = proxied(newSession(client, headers, diag), url, true)
 
+    /** [임시 진단] 재생 목록 + 자막(.vtt)도 같은 중계로 — 자막 요청도 기록 (2026-11-17 링크애니: 조각 2개 받고 멈춤) */
+    fun playlistWithSub(client: OkHttpClient, headers: Headers, url: String, sub: String?, diag: Boolean = false): Pair<String, String?> {
+        val sid = newSession(client, headers, diag)
+        return proxied(sid, url, true) to sub?.let { proxied(sid, it) }
+    }
+
     /** 웹뷰 안에서 이미 받은 재생 목록 글자 → 재생기에 줄 중계 주소 (안의 조각은 중계로) */
     fun fromText(client: OkHttpClient, headers: Headers, text: String, baseUrl: String): String {
         val sid = newSession(client, headers)
@@ -91,7 +97,7 @@ internal object LocalProxy {
     private fun proxied(sid: String, url: String, list: Boolean = false): String {
         val last = url.toHttpUrlOrNull()?.pathSegments?.lastOrNull().orEmpty()
         // 재생 목록인데 이름이 .m3u8 이 아니면(티비위키 c.html) "index.m3u8" 로
-        val name = if (last.endsWith(".m3u8")) last else if (list) "index.m3u8" else "s.ts"
+        val name = if (last.endsWith(".m3u8") || last.endsWith(".vtt")) last else if (list) "index.m3u8" else "s.ts"
         return "http://127.0.0.1:${port()}/m/$sid/${enc(url)}/$name"
     }
 
@@ -139,6 +145,7 @@ internal object LocalProxy {
                     ?: return@use reply(out, 400, "text/plain", ByteArray(0), head, "bad-path")
                 // 중계 주소 끝 이름이 .m3u8 이면(재생 목록으로 만든 주소) 원래 주소가 .m3u8 이 아니어도 재생 목록
                 val listLike = url.substringBefore('?').endsWith(".m3u8") || parts.lastOrNull().orEmpty().endsWith(".m3u8")
+                val subLike = parts.lastOrNull().orEmpty().endsWith(".vtt")
 
                 // 재생 목록에는 Range 를 넘기지 않음. 조각은 Range 로 400·416 이면 Range 없이 한 번 더 (2026-11-09 MissAV "400")
                 fun call(withRange: Boolean) = sess.client.newCall(
@@ -161,7 +168,10 @@ internal object LocalProxy {
                     Thread.sleep(400L * tries)
                     res = call(true)
                 }
-                if (sess.diag) {
+                if (sess.diag && subLike) {
+                    val len = res.header("Content-Length") ?: "?"
+                    diagAdd("자막 ${url.toHttpUrlOrNull()?.host.orEmpty().substringBefore('.')} $firstCode→${res.code} ${System.currentTimeMillis() - t0}ms ${len}B" + (range?.let { " r" } ?: ""))
+                } else if (sess.diag) {
                     val host = url.toHttpUrlOrNull()?.host.orEmpty().substringBefore('.')
                     val name = url.toHttpUrlOrNull()?.pathSegments?.lastOrNull().orEmpty().take(14)
                     val ms = System.currentTimeMillis() - t0
@@ -190,7 +200,13 @@ internal object LocalProxy {
                         }
                         val sb = StringBuilder("HTTP/1.1 ${rs.code} $why\r\n")
                         // 그림·글자로 꾸민 조각은 영상(MPEG-TS) 형식으로 알려 줌 (내용은 그대로)
-                        val outType = if (type.isEmpty() || type.startsWith("image/") || type.startsWith("text/")) "video/mp2t" else type
+                        val outType = if (subLike) {
+                            "text/vtt"
+                        } else if (type.isEmpty() || type.startsWith("image/") || type.startsWith("text/")) {
+                            "video/mp2t"
+                        } else {
+                            type
+                        }
                         sb.append("Content-Type: ").append(outType).append("\r\n")
                         rs.header("Content-Length")?.let { sb.append("Content-Length: ").append(it).append("\r\n") }
                         rs.header("Content-Range")?.let { sb.append("Content-Range: ").append(it).append("\r\n") }
