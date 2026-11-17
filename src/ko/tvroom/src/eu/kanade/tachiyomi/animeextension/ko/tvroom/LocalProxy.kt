@@ -28,7 +28,7 @@ internal object LocalProxy {
     /** 진단 기록 (요약 1줄 + 최근 기록), 없으면 빈 목록 */
     fun diagLines(max: Int = 12): List<String> {
         if (DIAG.isEmpty()) return emptyList()
-        val head = "🩺 중계 기록: 조각 ${DIAG_SUM[0]}개 · 첫 시도 거부 ${DIAG_SUM[1]} · 다시 받아 성공 ${DIAG_SUM[2]} · 끝내 실패 ${DIAG_SUM[3]}"
+        val head = "🩺 중계 기록(앱 켠 뒤 모두): 조각 ${DIAG_SUM[0]}개 · 첫 시도 거부 ${DIAG_SUM[1]} · 다시 받아 성공 ${DIAG_SUM[2]} · 끝내 실패 ${DIAG_SUM[3]}"
         return listOf(head) + DIAG.toList().takeLast(max).map { "🩺 $it" }
     }
 
@@ -64,11 +64,8 @@ internal object LocalProxy {
         SESSIONS.entries.removeIf { now - it.value.at > KEEP_MS }
         val sid = now.toString(36) + (SESSIONS.size + 1)
         SESSIONS[sid] = Session(client, headers, now, diag)
-        if (diag) {
-            DIAG.clear()
-            DIAG_SUM.fill(0)
-            diagAdd("중계 준비 (재생기가 아직 요청 안 함)")
-        }
+        // 앞 기록은 지우지 않음(회차를 다시 열면 멈춘 기록이 사라졌음) — 구분 줄만
+        if (diag) diagAdd("── 회차 열기: 중계 준비 (재생기가 아직 요청 안 함)")
         return sid
     }
 
