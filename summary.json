@@ -5,8 +5,8 @@
  "domainChanges": [
   {
    "name": "후후티비",
-   "from": "https://ep.hoohootv465.xyz",
-   "to": "https://eq.hoohootv465.xyz",
+   "from": "https://eq.hoohootv465.xyz",
+   "to": "https://fm.hoohootv465.xyz",
    "files": [
     "domains.json"
    ]
