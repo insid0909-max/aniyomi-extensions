@@ -285,8 +285,11 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
         val list = HlsQuality.expand(client, main, label, vh).map { Video(it.url, it.quality, it.videoUrl, vh, subs) }
         // [임시 진단] "(중계·진단)" 을 맨 앞(기본)으로 — 원래 주소가 기본이면 첫 재생이 가끔 멈추고 중계로 바꾸면 재생됨(사용자, 2026-11-17).
         // 조각 요청·거부(403) 기록은 필터 🩺 줄에 (원인 찾으면 뺄 것)
-        val relay = runCatching { LocalProxy.playlist(client, vh, main, diag = true) }.getOrNull()
-        listOfNotNull(relay?.let { Video(it, "$label (중계·진단)", it, vh, subs) }) + HlsQuality.sort(prefs(), list)
+        // 자막(.vtt)도 중계로 받아 요청·응답 시간을 기록 (조각 2개 받고 재생기가 멈춤 — 자막 기다림 의심, 2026-11-17)
+        val relay = runCatching { LocalProxy.playlistWithSub(client, vh, main, sub.takeIf { it.startsWith("http") }, diag = true) }.getOrNull()
+        listOfNotNull(
+            relay?.let { (v, s) -> Video(v, "$label (중계·진단)", v, vh, s?.let { listOf(Track(it, "한국어")) } ?: subs) },
+        ) + HlsQuality.sort(prefs(), list)
     }
 
     private fun str(o: JSONObject, k: String): String = if (o.isNull(k)) "" else o.optString(k).trim()
