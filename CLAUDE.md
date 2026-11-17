@@ -88,6 +88,7 @@
 
 ### 영상
 - .m3u8 로 안 끝나는 HLS 는 originalUrl 끝에 "#download.m3u8"(hlsHint), 화질 라벨·정렬·대체 서버.
+- **애니요미 재생기는 외부 자막(Track) 주소가 404 면 조각 2개 받고 멈춰 계속 로딩만 됨**(2026-11-17 링크애니 — 사이트가 자막 주소를 주지만 파일이 없는 회차, 망가요미는 그냥 넘어감, 중계 🩺 기록으로 찾음) → 재생 전 자막 앞부분(Range 0-63, 5초)을 받아 WEBVTT 가 아니면 빼기(Linkani.subOk, TVroom 8790). 자막 주소를 주는 새 소스도 같이.
 - cdndania·firePlayer 계열은 애니24 dcVideos 그대로(new Client({persistentConnection:false,noProxy:true}) POST getVideo → securedLink).
 - 재생 API 가 앱에서 403 이면 웹뷰로 화면 열어 그 요청·m3u8 받기(애니라이프·미미티비).
 - 순정 망가요미 0.9.9+ 에 `createHlsProxyUrl(주소, 머리글)`(앱 안 127.0.0.1 중계, 2026-10-08 추가): 재생 목록·조각·열쇠 요청 모두에 같은 머리글을 붙여 그대로 전달(내용은 안 바꿈). 재생기가 조각·열쇠 요청에서 Referer·Origin 을 빠뜨려 403 일 때만 쓰고(없으면 지금 방식), 잘 되는 소스엔 넣지 않음(2026-11-08 점검: 해당 소스 없음). Glitch 의 X-Hls-Key(열쇠 바꿔 넣기)는 순정에 없음 — 티비룸·티비위키가 순정에서 안 되는 이유.
