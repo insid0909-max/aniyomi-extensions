@@ -131,6 +131,15 @@ internal object LocalProxy {
                     res.close()
                     res = call(false)
                 }
+                // 영상 서버가 조각을 가끔씩 거부(403 "Video request blocked")하면 잠깐 쉬고 다시 (2026-11-17 링크애니 noblepulse539·getvfa,
+                // 애니요미 재생기는 거부된 조각을 다시 받지 않아 계속 로딩만 됨). 재생 목록은 그대로
+                var tries = 0
+                while (res.code == 403 && !listLike && tries < 5) {
+                    res.close()
+                    tries++
+                    Thread.sleep(400L * tries)
+                    res = call(true)
+                }
                 res.use { rs ->
                     val type = rs.header("Content-Type").orEmpty()
                     // 이름·형식 표시가 재생 목록이 아니어도 글자가 #EXTM3U 로 시작하면 재생 목록 (티비위키 c.html 은 text/html 로 올 수 있음)
