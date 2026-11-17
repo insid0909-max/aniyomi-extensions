@@ -283,9 +283,8 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
             .build()
         val label = HlsQuality.withRes(LABEL, main).let { if (subs.isEmpty()) it else "$it 자막" }
         val list = HlsQuality.expand(client, main, label, vh).map { Video(it.url, it.quality, it.videoUrl, vh, subs) }
-        // 영상 서버(noblepulse539·getvfa)가 조각을 가끔씩 거부(403)해 애니요미 재생기가 멈춤 → 앱 안 중계로 거부된 조각을 다시 받아 넘김 (맨 앞)
-        val relay = runCatching { LocalProxy.playlist(client, vh, main) }.getOrNull()
-        listOfNotNull(relay?.let { Video(it, "$label (중계)", it, vh, subs) }) + HlsQuality.sort(prefs(), list)
+        // 2026-11-17: 앱 안 중계(LocalProxy)도 넣어 봤지만 휴대폰에서 계속 로딩만 되고 원래 주소는 바로 재생돼 뺌
+        HlsQuality.sort(prefs(), list)
     }
 
     private fun str(o: JSONObject, k: String): String = if (o.isNull(k)) "" else o.optString(k).trim()
