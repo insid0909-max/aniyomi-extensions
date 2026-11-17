@@ -19,7 +19,24 @@ import kotlin.concurrent.thread
  * 재생 목록(m3u8)은 안의 주소만 이 중계 주소로 바꾸고, 조각·열쇠는 내용을 바꾸지 않고 그대로 전달 (순정 망가요미 createHlsProxyUrl 과 같은 방식)
  */
 internal object LocalProxy {
-    private class Session(val client: OkHttpClient, val headers: Headers, val at: Long)
+    private class Session(val client: OkHttpClient, val headers: Headers, val at: Long, val diag: Boolean = false)
+
+    // [임시 진단] diag 세션의 요청 기록 (2026-11-17 링크애니 조각 403 원인 찾기 — 원인 찾으면 뺄 것)
+    private val DIAG = java.util.concurrent.ConcurrentLinkedDeque<String>()
+    private val DIAG_SUM = IntArray(4) // 0 조각 수, 1 첫 시도 403, 2 다시 받아 성공, 3 끝내 실패
+
+    /** 진단 기록 (요약 1줄 + 최근 기록), 없으면 빈 목록 */
+    fun diagLines(max: Int = 12): List<String> {
+        if (DIAG.isEmpty()) return emptyList()
+        val head = "🩺 중계 기록: 조각 ${DIAG_SUM[0]}개 · 첫 시도 거부 ${DIAG_SUM[1]} · 다시 받아 성공 ${DIAG_SUM[2]} · 끝내 실패 ${DIAG_SUM[3]}"
+        return listOf(head) + DIAG.toList().takeLast(max).map { "🩺 $it" }
+    }
+
+    private fun diagAdd(line: String) {
+        val t = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.KOREA).format(java.util.Date())
+        DIAG.addLast("$t $line")
+        while (DIAG.size > 60) DIAG.pollFirst()
+    }
 
     private val SESSIONS = ConcurrentHashMap<String, Session>()
     private val TEXTS = ConcurrentHashMap<String, Pair<String, String>>()
@@ -42,16 +59,21 @@ internal object LocalProxy {
         return s.localPort
     }
 
-    private fun newSession(client: OkHttpClient, headers: Headers): String {
+    private fun newSession(client: OkHttpClient, headers: Headers, diag: Boolean = false): String {
         val now = System.currentTimeMillis()
         SESSIONS.entries.removeIf { now - it.value.at > KEEP_MS }
         val sid = now.toString(36) + (SESSIONS.size + 1)
-        SESSIONS[sid] = Session(client, headers, now)
+        SESSIONS[sid] = Session(client, headers, now, diag)
+        if (diag) {
+            DIAG.clear()
+            DIAG_SUM.fill(0)
+            diagAdd("중계 준비 (재생기가 아직 요청 안 함)")
+        }
         return sid
     }
 
-    /** 원래 재생 목록 주소 → 재생기에 줄 중계 주소 */
-    fun playlist(client: OkHttpClient, headers: Headers, url: String): String = proxied(newSession(client, headers), url, true)
+    /** 원래 재생 목록 주소 → 재생기에 줄 중계 주소 (diag = 요청 기록 남기기) */
+    fun playlist(client: OkHttpClient, headers: Headers, url: String, diag: Boolean = false): String = proxied(newSession(client, headers, diag), url, true)
 
     /** 웹뷰 안에서 이미 받은 재생 목록 글자 → 재생기에 줄 중계 주소 (안의 조각은 중계로) */
     fun fromText(client: OkHttpClient, headers: Headers, text: String, baseUrl: String): String {
@@ -126,7 +148,9 @@ internal object LocalProxy {
                     Request.Builder().url(url).headers(sess.headers)
                         .apply { if (withRange && range != null && !listLike) header("Range", range!!) }.build(),
                 ).execute()
+                val t0 = System.currentTimeMillis()
                 var res = call(true)
+                val firstCode = res.code
                 if ((res.code == 400 || res.code == 416) && range != null && !listLike) {
                     res.close()
                     res = call(false)
@@ -139,6 +163,18 @@ internal object LocalProxy {
                     tries++
                     Thread.sleep(400L * tries)
                     res = call(true)
+                }
+                if (sess.diag) {
+                    val host = url.toHttpUrlOrNull()?.host.orEmpty().substringBefore('.')
+                    val name = url.toHttpUrlOrNull()?.pathSegments?.lastOrNull().orEmpty().take(14)
+                    val ms = System.currentTimeMillis() - t0
+                    if (!listLike) {
+                        DIAG_SUM[0]++
+                        if (firstCode == 403) DIAG_SUM[1]++
+                        if (firstCode == 403 && res.isSuccessful) DIAG_SUM[2]++
+                        if (!res.isSuccessful) DIAG_SUM[3]++
+                    }
+                    diagAdd((if (listLike) "목록 " else "조각 ") + "$host $name $firstCode" + (if (tries > 0) "→${res.code} 다시$tries" else "") + " ${ms}ms" + (range?.let { " r" } ?: ""))
                 }
                 res.use { rs ->
                     val type = rs.header("Content-Type").orEmpty()

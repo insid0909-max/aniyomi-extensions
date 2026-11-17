@@ -283,8 +283,9 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
             .build()
         val label = HlsQuality.withRes(LABEL, main).let { if (subs.isEmpty()) it else "$it 자막" }
         val list = HlsQuality.expand(client, main, label, vh).map { Video(it.url, it.quality, it.videoUrl, vh, subs) }
-        // 2026-11-17: 앱 안 중계(LocalProxy)도 넣어 봤지만 휴대폰에서 계속 로딩만 되고 원래 주소는 바로 재생돼 뺌
-        HlsQuality.sort(prefs(), list)
+        // [임시 진단] 원래 주소 아래에 "(중계·진단)" — 조각 요청·거부(403) 기록을 필터 🩺 줄에 (2026-11-17, 원인 찾으면 뺄 것)
+        val relay = runCatching { LocalProxy.playlist(client, vh, main, diag = true) }.getOrNull()
+        HlsQuality.sort(prefs(), list) + listOfNotNull(relay?.let { Video(it, "$label (중계·진단)", it, vh, subs) })
     }
 
     private fun str(o: JSONObject, k: String): String = if (o.isNull(k)) "" else o.optString(k).trim()
@@ -340,6 +341,7 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
         return AnimeFilterList(
             listOf(
                 AnimeFilter.Header("📡 주소: ${baseUrl.substringAfter("://")}"),
+            ) + LocalProxy.diagLines().map { AnimeFilter.Header(it) } + listOf(
                 AnimeFilter.Separator(),
                 AnimeFilter.Header("검색어가 없을 때만 적용 (작품 주소를 붙여 넣으면 바로 열기)"),
                 ListFilter(),
