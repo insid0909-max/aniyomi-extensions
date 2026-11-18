@@ -289,14 +289,15 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             // 텔레그래프 안내 글에 적힌 주소는 바로 확인 (2026-11-03 ah.hoohootv464: 웹뷰 다녀와서 재시도해도 1분 제한에 걸려 못 찾음)
             if (now - lastDiscover < 60_000) {
                 val quick = probeClient
-                val guide = runCatching {
+                val guideBody = runCatching {
                     val r = Request.Builder().url(GUIDE_URL).header("User-Agent", USER_AGENT).build()
                     quick.newCall(r).execute().use { res -> res.peekBody(500_000).string() }
-                }.getOrNull().orEmpty() + "\n" + hint.orEmpty() + "\n" + DomainList.host("hoohootv").orEmpty()
+                }.getOrNull().orEmpty()
+                val guide = guideBody + "\n" + hint.orEmpty() + "\n" + DomainList.host("hoohootv").orEmpty()
                 val fromGuide = ANNOUNCED_REGEX.findAll(guide).map { it.value.lowercase() }
                     .filter { SUBDOMAIN_REGEX.matches(it) && it != currentHost }.distinct().toList()
                 return probeHosts((fromGuide + cookieHosts(currentHost, sameNumber = true)).distinct(), currentHost)
-                    ?: trustAnnounced(fromGuide, currentHost)
+                    ?: trustAnnounced(trustedHosts(guideBody), currentHost, newerOnly = false)
             }
             lastDiscover = now
         }
@@ -309,12 +310,13 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         // 주소 안내 사이트에 적힌 후후티비 주소들 (번호 큰 것 먼저)
         // 안내 사이트 첫 화면은 이제 소개 글뿐이고, /home 이 "최신 주소 안내" 글로 넘겨 줌 (한국에서만) → 둘 다 + 옛 주소가 넘겨 준 글
         // + 사이트가 알려 주는 텔레그래프 "후후티비 최신 주소 안내" 글 (어디서나 열리고 바뀐 날 갱신됨, 2026-10-28 al.hoohootv463)
+        var guideBody = ""
         val announced = (
             listOf(PORTAL_URL + "home", PORTAL_URL, GUIDE_URL).joinToString("\n") { u ->
                 runCatching {
                     val r = Request.Builder().url(u).header("User-Agent", USER_AGENT).build()
                     plain.newCall(r).execute().use { res -> res.peekBody(500_000).string() }
-                }.getOrNull().orEmpty()
+                }.getOrNull().orEmpty().also { if (u == GUIDE_URL) guideBody = it }
             } + "\n" + hint.orEmpty() + "\n" + DomainList.host("hoohootv").orEmpty() // 저장소 주소 목록 파일(domains.json)
             ).let { body ->
             ANNOUNCED_REGEX.findAll(body).map { it.value.lowercase() }
@@ -330,9 +332,10 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         // 웹뷰로 새 주소에 들어갔다 왔으면 그 주소도 같이 확인 (목록이 안 열려서 웹뷰로 새 주소를 찾아 들어간 경우)
         val fromWebView = cookieHosts(currentHost, sameNumber = !newerOnly).filter { it !in fromPortal }
         probeHosts(fromPortal + fromWebView, currentHost)?.let { return it }
-        // 안내 글·주소 목록에 적힌 주소는 확인이 실패해도 그대로 씀 (2026-11-18 al.hoohootv483: 안내 글에서 제대로 읽고도
-        // 확장 쪽 확인만 "연결 실패"라 버렸음 — 웹뷰로는 열림). 가벼운 확인 때는 번호가 더 큰 주소만
-        trustAnnounced(fromPortal.filter { !newerOnly || numOf(it) > n }, currentHost)?.let { return it }
+        // 텔레그래프 안내 글·주소 목록(domains.json)에 적힌 주소는 확인이 실패해도 그대로 씀 (2026-11-18 al.hoohootv483: 안내 글에서
+        // 제대로 읽고도 확장 쪽 확인만 "연결 실패"라 버렸음 — 웹뷰로는 열림). 지금보다 번호가 같거나 큰 것만, 가벼운 확인 때는 더 큰 것만.
+        // 옛 주소가 넘겨 준 글·hoohootv1.com 화면의 주소는 확인한 뒤에만 씀
+        trustAnnounced(trustedHosts(guideBody), currentHost, newerOnly)?.let { return it }
         // 2) 못 찾으면 짐작: 숫자 +1 ~ +3 에서 같은 두 글자 → 모든 둘째 글자 (가까운 글자부터), 같은 숫자의 다음 글자들.
         //    1시간마다 하는 가벼운 확인에서는 같은 두 글자의 다음 번호만
         val newer = (1..3).map { d -> "$first$second.hoohootv${n + d}.$tld" } +
@@ -342,10 +345,17 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         return probeHosts(guesses.distinct().filter { it != currentHost && it !in fromPortal }, currentHost)
     }
 
-    /** 안내 글·주소 목록에 적힌 주소 중 번호가 가장 큰 것 (확인 없이) — 주소 확인 기록에 "안내 글 주소로 바꿈" */
-    private fun trustAnnounced(announced: List<String>, currentHost: String): String? {
-        val pick = announced.filter { it != currentHost && SUBDOMAIN_REGEX.matches(it) }
-            .maxByOrNull { SUBDOMAIN_REGEX.matchEntire(it)?.groupValues?.get(3)?.toIntOrNull() ?: 0 } ?: return null
+    /** 믿어도 되는 곳(텔레그래프 안내 글 + 주소 목록 domains.json)에 적힌 후후티비 주소 */
+    private fun trustedHosts(guideBody: String): List<String> =
+        ANNOUNCED_REGEX.findAll(guideBody + "\n" + DomainList.host("hoohootv").orEmpty()).map { it.value.lowercase() }
+            .filter { SUBDOMAIN_REGEX.matches(it) }.distinct().toList()
+
+    /** 믿는 주소 중 지금보다 번호가 같거나(가벼운 확인 때는 더) 큰 것, 번호가 가장 큰 것 (확인 없이) */
+    private fun trustAnnounced(trusted: List<String>, currentHost: String, newerOnly: Boolean): String? {
+        fun numOf(h: String) = SUBDOMAIN_REGEX.matchEntire(h)?.groupValues?.get(3)?.toIntOrNull() ?: 0
+        val cur = numOf(currentHost)
+        val pick = trusted.filter { it != currentHost && SUBDOMAIN_REGEX.matches(it) && (numOf(it) > cur || (!newerOnly && numOf(it) == cur)) }
+            .maxByOrNull { numOf(it) } ?: return null
         runCatching {
             val p = prefs()
             val old = p?.getString(PREF_PROBE_NOTE, "").orEmpty()
