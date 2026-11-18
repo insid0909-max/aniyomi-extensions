@@ -270,6 +270,16 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         }.start()
     }
 
+    // 주소 확인용 통신: 앱 기본 통신(쿠키·DNS 설정 공유)에 시간 제한만 따로 (2026-11-18 al.hoohootv483: 웹뷰는 열리는데
+    // 따로 만든 단순 통신(연결 4초)으로는 "연결 실패" — 앱 설정·기다리는 시간 차이)
+    private val probeClient: OkHttpClient by lazy {
+        network.client.newBuilder()
+            .connectTimeout(6, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .callTimeout(12, TimeUnit.SECONDS)
+            .build()
+    }
+
     @Volatile private var lastDiscover = 0L
 
     private fun discoverDomain(currentHost: String, newerOnly: Boolean = false, hint: String? = null): String? = synchronized(DISCOVER_LOCK) {
@@ -278,11 +288,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             // 1분 안에 이미 찾아봤으면 번호 짐작은 다시 하지 않음. 단 웹뷰로 새 주소에 들어갔다 왔으면 그 주소와,
             // 텔레그래프 안내 글에 적힌 주소는 바로 확인 (2026-11-03 ah.hoohootv464: 웹뷰 다녀와서 재시도해도 1분 제한에 걸려 못 찾음)
             if (now - lastDiscover < 60_000) {
-                val quick = OkHttpClient.Builder()
-                    .connectTimeout(4, TimeUnit.SECONDS)
-                    .readTimeout(6, TimeUnit.SECONDS)
-                    .callTimeout(8, TimeUnit.SECONDS)
-                    .build()
+                val quick = probeClient
                 val guide = runCatching {
                     val r = Request.Builder().url(GUIDE_URL).header("User-Agent", USER_AGENT).build()
                     quick.newCall(r).execute().use { res -> res.peekBody(500_000).string() }
@@ -298,11 +304,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         val n = num.toIntOrNull() ?: return null
         val abc = "abcdefghijklmnopqrstuvwxyz"
         val start = abc.indexOf(second[0])
-        val plain = OkHttpClient.Builder()
-            .connectTimeout(4, TimeUnit.SECONDS)
-            .readTimeout(6, TimeUnit.SECONDS)
-            .callTimeout(8, TimeUnit.SECONDS)
-            .build()
+        val plain = probeClient
         // 주소 안내 사이트에 적힌 후후티비 주소들 (번호 큰 것 먼저)
         // 안내 사이트 첫 화면은 이제 소개 글뿐이고, /home 이 "최신 주소 안내" 글로 넘겨 줌 (한국에서만) → 둘 다 + 옛 주소가 넘겨 준 글
         // + 사이트가 알려 주는 텔레그래프 "후후티비 최신 주소 안내" 글 (어디서나 열리고 바뀐 날 갱신됨, 2026-10-28 al.hoohootv463)
@@ -339,11 +341,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
     /** 후보 주소의 /home 을 동시에 열어 진짜 후후티비인 주소 중 번호가 가장 큰 것 */
     private fun probeHosts(candidates: List<String>, currentHost: String): String? {
         if (candidates.isEmpty()) return null
-        val plain = OkHttpClient.Builder()
-            .connectTimeout(4, TimeUnit.SECONDS)
-            .readTimeout(6, TimeUnit.SECONDS)
-            .callTimeout(8, TimeUnit.SECONDS)
-            .build()
+        val plain = probeClient
         val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
         val notes = java.util.concurrent.ConcurrentHashMap<String, String>()
         return try {
@@ -365,7 +363,14 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                             }
                             if (ok) fh else null
                         }
-                    }.onFailure { notes[host] = if (it is java.net.UnknownHostException) "주소 없음" else "연결 실패" }.getOrNull()
+                    }.onFailure {
+                        notes[host] = when (it) {
+                            is java.net.UnknownHostException -> "주소 없음"
+                            is java.net.SocketTimeoutException, is java.io.InterruptedIOException -> "연결 실패(시간 초과)"
+                            is javax.net.ssl.SSLException -> "연결 실패(SSL)"
+                            else -> "연결 실패(${it.javaClass.simpleName.take(20)})"
+                        }
+                    }.getOrNull()
                 }
             }
             val found = futures.mapNotNull { runCatching { it.get() }.getOrNull() }.filter { it != currentHost }
