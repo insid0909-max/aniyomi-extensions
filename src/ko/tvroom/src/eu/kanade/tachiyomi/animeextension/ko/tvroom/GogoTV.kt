@@ -160,7 +160,8 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
             ?.let { return it }
         val pool = Executors.newFixedThreadPool(12)
         try {
-            val futures = ((cur - 5).coerceAtLeast(1)..(cur + 30))
+            // 번호 짐작은 지금보다 큰 번호만 (잠깐 끊겼을 때 아직 열려 있는 옛 주소로 되돌아가지 않게, 2026-11-18)
+            val futures = ((cur + 1)..(cur + 30))
                 .map { "gogotv$it.xyz" }
                 .map { host ->
                     pool.submit<String?> {

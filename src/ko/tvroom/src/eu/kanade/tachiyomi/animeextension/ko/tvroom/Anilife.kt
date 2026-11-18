@@ -143,7 +143,7 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         val n = m.groupValues[1].toIntOrNull() ?: return null
         val width = m.groupValues[1].length
         fun host(v: Int) = "anilife${v.toString().padStart(width, '0')}.tv"
-        // 다음 번호 우선, 그다음 이전 번호
+        // 번호 짐작은 지금보다 큰 번호만 (잠깐 끊겼을 때 아직 열려 있는 옛 주소로 되돌아가지 않게, 2026-11-18)
         val plain = OkHttpClient.Builder()
             .connectTimeout(4, TimeUnit.SECONDS)
             .readTimeout(6, TimeUnit.SECONDS)
@@ -158,7 +158,7 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         }.getOrNull()
         // 저장소 주소 목록 파일(domains.json)에 적힌 주소가 맨 먼저
         val listed = DomainList.host("anilife")?.takeIf { HOST_REGEX.matches(it) }
-        val candidates = (listOfNotNull(listed, signal) + (1..8).map { host(n + it) } + (1..2).mapNotNull { (n - it).takeIf { v -> v > 0 }?.let(::host) })
+        val candidates = (listOfNotNull(listed, signal) + (1..8).map { host(n + it) })
             .distinct().filter { it != currentHost }
         val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
         try {

@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.24",
+    "version": "0.1.25",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/anilife.js"
@@ -623,7 +623,8 @@ class DefaultExtension extends MProvider {
             const sig = String((((JSON.parse(String(r.body || "{}")).domains || {}).anilife) || {}).baseUrl || "").replace(/\/+$/, "");
             if (DOMAIN_RE.test(sig) && sig !== current && !cands.includes(sig)) cands.push(sig);
         } catch (e) {}
-        for (let i = Math.max(1, cur - 2); i <= cur + 8; i++) if (host(i) !== current && !cands.includes(host(i))) cands.push(host(i));
+        // 번호 짐작은 지금보다 큰 번호만 (옛 주소로 되돌아가지 않게, 2026-11-18)
+        for (let i = cur + 1; i <= cur + 8; i++) if (host(i) !== current && !cands.includes(host(i))) cands.push(host(i));
         const hits = await Promise.all(cands.map(async (c) => {
             try {
                 const r = await this.client.get(c + "/", { "User-Agent": UA });
