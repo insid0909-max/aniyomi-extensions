@@ -710,7 +710,14 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
     // ================= 공용 =================
     private fun pathOf(href: String): String = PATH_REGEX.find(href)?.groupValues?.get(1) ?: href
 
-    private fun Response.asDoc(): Document = Jsoup.parse(body.string(), request.url.toString())
+    private fun Response.asDoc(): Document {
+        // 사이트가 403(보안 확인 등)을 주면 빈 목록 대신 이유를 보여 줌 (2026-11-18)
+        if (code == 403 && HOST_REGEX.matches(request.url.host)) {
+            close()
+            throw Exception("접속이 막혔어요 (HTTP 403 · ${request.url.host}). 웹뷰로 한 번 열어 보안 확인을 마친 뒤 다시 시도해 주세요.")
+        }
+        return Jsoup.parse(body.string(), request.url.toString())
+    }
 
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
