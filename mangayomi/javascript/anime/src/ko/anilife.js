@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.23",
+    "version": "0.1.24",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/anilife.js"
@@ -566,7 +566,7 @@ class DefaultExtension extends MProvider {
         return { "User-Agent": UA, "Referer": `${base || this.getBaseUrl()}${refPath || "/"}`, "Accept": "application/json" };
     }
 
-    /** 사이트 API(JSON) 요청. 접속이 안 되거나 막히면(오류/403/5xx) anilife 번호 주소를 찾아 바꾼 뒤 다시 요청 */
+    /** 사이트 API(JSON) 요청. 접속이 안 되거나 막히면(오류/451/5xx) anilife 번호 주소를 찾아 바꾼 뒤 다시 요청 */
     async api(path, refPath) {
         const base = this.getBaseUrl();
         let res = null;
@@ -580,7 +580,8 @@ class DefaultExtension extends MProvider {
                 if (attempt === 0) await new Promise((r) => setTimeout(r, 700));
             }
         }
-        const dead = !res || res.statusCode === 403 || res.statusCode === 451 || res.statusCode >= 500;
+        // 403 은 보안 확인이라 주소 바뀜 아님 (2026-11-18)
+        const dead = !res || res.statusCode === 451 || res.statusCode >= 500;
         // 재생 주소 API 는 앱에서 부르면 원래 403 (사이트 화면 안에서만 허용) → 주소 찾기를 돌리지 않음 (재생 시작이 늦어짐)
         if (dead && this.autoOn() && !path.startsWith("/api/playback/")) {
             const found = await this.discover(base);

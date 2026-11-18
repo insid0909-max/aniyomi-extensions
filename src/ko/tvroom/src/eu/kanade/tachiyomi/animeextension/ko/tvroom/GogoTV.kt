@@ -104,7 +104,8 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
     // ================= 도메인 자동 찾기 =================
     private fun isDead(res: Response): Boolean {
         if (!HOST_REGEX.matches(res.request.url.host)) return true
-        return res.code == 403 || res.code == 451 || res.code >= 500
+        // 403 은 보안 확인(Cloudflare 등)이라 주소 바뀜이 아님 (2026-11-18, 찾기만 돌고 늦어짐)
+        return res.code == 451 || res.code >= 500
     }
 
     private fun domainIntercept(chain: okhttp3.Interceptor.Chain): Response {

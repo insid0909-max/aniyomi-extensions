@@ -123,7 +123,8 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
             val found = discoverDomain(baseHost) ?: throw e
             return retryOn(found)
         }
-        val dead = !HOST_REGEX.matches(res.request.url.host) || res.code == 403 || res.code == 451 || res.code >= 500
+        // 403 은 보안 확인이라 주소 바뀜 아님 (2026-11-18)
+        val dead = !HOST_REGEX.matches(res.request.url.host) || res.code == 451 || res.code >= 500
         if (req.method == "GET" && dead) {
             val found = discoverDomain(baseHost) ?: return res
             res.close()
