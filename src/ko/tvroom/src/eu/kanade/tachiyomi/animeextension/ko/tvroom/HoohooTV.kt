@@ -297,7 +297,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                 val fromGuide = ANNOUNCED_REGEX.findAll(guide).map { it.value.lowercase() }
                     .filter { SUBDOMAIN_REGEX.matches(it) && it != currentHost }.distinct().toList()
                 return probeHosts((fromGuide + cookieHosts(currentHost, sameNumber = true)).distinct(), currentHost)
-                    ?: trustAnnounced(trustedHosts(guideBody), currentHost, newerOnly = false)
+                    ?: trustAnnounced(trustedHosts(guideBody), currentHost)
             }
             lastDiscover = now
         }
@@ -333,9 +333,10 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         val fromWebView = cookieHosts(currentHost, sameNumber = !newerOnly).filter { it !in fromPortal }
         probeHosts(fromPortal + fromWebView, currentHost)?.let { return it }
         // 텔레그래프 안내 글·주소 목록(domains.json)에 적힌 주소는 확인이 실패해도 그대로 씀 (2026-11-18 al.hoohootv483: 안내 글에서
-        // 제대로 읽고도 확장 쪽 확인만 "연결 실패"라 버렸음 — 웹뷰로는 열림). 지금보다 번호가 같거나 큰 것만, 가벼운 확인 때는 더 큰 것만.
-        // 옛 주소가 넘겨 준 글·hoohootv1.com 화면의 주소는 확인한 뒤에만 씀
-        trustAnnounced(trustedHosts(guideBody), currentHost, newerOnly)?.let { return it }
+        // 제대로 읽고도 확장 쪽 확인만 "연결 실패"라 버렸음 — 웹뷰로는 열림). 지금보다 번호가 같거나 큰 것만.
+        // 옛 주소가 넘겨 준 글·hoohootv1.com 화면의 주소는 확인한 뒤에만 씀. 지금 주소가 끊겼을 때만 — 1시간마다 하는 가벼운 확인은
+        // 확인이 통과한 주소로만 옮김 (2026-11-18 예전 fs.465 는 잘 되는데 새 483 은 휴대폰 앱에서 "연결 실패" → 잘 되던 주소를 버리게 됨)
+        if (!newerOnly) trustAnnounced(trustedHosts(guideBody), currentHost)?.let { return it }
         // 2) 못 찾으면 짐작: 숫자 +1 ~ +3 에서 같은 두 글자 → 모든 둘째 글자 (가까운 글자부터), 같은 숫자의 다음 글자들.
         //    1시간마다 하는 가벼운 확인에서는 같은 두 글자의 다음 번호만
         val newer = (1..3).map { d -> "$first$second.hoohootv${n + d}.$tld" } +
@@ -350,11 +351,11 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         ANNOUNCED_REGEX.findAll(guideBody + "\n" + DomainList.host("hoohootv").orEmpty()).map { it.value.lowercase() }
             .filter { SUBDOMAIN_REGEX.matches(it) }.distinct().toList()
 
-    /** 믿는 주소 중 지금보다 번호가 같거나(가벼운 확인 때는 더) 큰 것, 번호가 가장 큰 것 (확인 없이) */
-    private fun trustAnnounced(trusted: List<String>, currentHost: String, newerOnly: Boolean): String? {
+    /** 지금 주소가 끊겼을 때만: 믿는 주소 중 지금보다 번호가 같거나 큰 것, 번호가 가장 큰 것 (확인 없이) */
+    private fun trustAnnounced(trusted: List<String>, currentHost: String): String? {
         fun numOf(h: String) = SUBDOMAIN_REGEX.matchEntire(h)?.groupValues?.get(3)?.toIntOrNull() ?: 0
         val cur = numOf(currentHost)
-        val pick = trusted.filter { it != currentHost && SUBDOMAIN_REGEX.matches(it) && (numOf(it) > cur || (!newerOnly && numOf(it) == cur)) }
+        val pick = trusted.filter { it != currentHost && SUBDOMAIN_REGEX.matches(it) && numOf(it) >= cur }
             .maxByOrNull { numOf(it) } ?: return null
         runCatching {
             val p = prefs()
