@@ -296,6 +296,7 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                 val fromGuide = ANNOUNCED_REGEX.findAll(guide).map { it.value.lowercase() }
                     .filter { SUBDOMAIN_REGEX.matches(it) && it != currentHost }.distinct().toList()
                 return probeHosts((fromGuide + cookieHosts(currentHost, sameNumber = true)).distinct(), currentHost)
+                    ?: trustAnnounced(fromGuide, currentHost)
             }
             lastDiscover = now
         }
@@ -329,6 +330,9 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         // 웹뷰로 새 주소에 들어갔다 왔으면 그 주소도 같이 확인 (목록이 안 열려서 웹뷰로 새 주소를 찾아 들어간 경우)
         val fromWebView = cookieHosts(currentHost, sameNumber = !newerOnly).filter { it !in fromPortal }
         probeHosts(fromPortal + fromWebView, currentHost)?.let { return it }
+        // 안내 글·주소 목록에 적힌 주소는 확인이 실패해도 그대로 씀 (2026-11-18 al.hoohootv483: 안내 글에서 제대로 읽고도
+        // 확장 쪽 확인만 "연결 실패"라 버렸음 — 웹뷰로는 열림). 가벼운 확인 때는 번호가 더 큰 주소만
+        trustAnnounced(fromPortal.filter { !newerOnly || numOf(it) > n }, currentHost)?.let { return it }
         // 2) 못 찾으면 짐작: 숫자 +1 ~ +3 에서 같은 두 글자 → 모든 둘째 글자 (가까운 글자부터), 같은 숫자의 다음 글자들.
         //    1시간마다 하는 가벼운 확인에서는 같은 두 글자의 다음 번호만
         val newer = (1..3).map { d -> "$first$second.hoohootv${n + d}.$tld" } +
@@ -336,6 +340,18 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         val same = (1 until 26).map { "$first${abc[(start + it) % 26]}.hoohootv$n.$tld" }
         val guesses = if (newerOnly) newer.take(3) else same + newer
         return probeHosts(guesses.distinct().filter { it != currentHost && it !in fromPortal }, currentHost)
+    }
+
+    /** 안내 글·주소 목록에 적힌 주소 중 번호가 가장 큰 것 (확인 없이) — 주소 확인 기록에 "안내 글 주소로 바꿈" */
+    private fun trustAnnounced(announced: List<String>, currentHost: String): String? {
+        val pick = announced.filter { it != currentHost && SUBDOMAIN_REGEX.matches(it) }
+            .maxByOrNull { SUBDOMAIN_REGEX.matchEntire(it)?.groupValues?.get(3)?.toIntOrNull() ?: 0 } ?: return null
+        runCatching {
+            val p = prefs()
+            val old = p?.getString(PREF_PROBE_NOTE, "").orEmpty()
+            p?.edit()?.putString(PREF_PROBE_NOTE, "$old · 안내 글 주소 $pick 로 바꿈 (확인 실패해도)")?.apply()
+        }
+        return pick
     }
 
     /** 후보 주소의 /home 을 동시에 열어 진짜 후후티비인 주소 중 번호가 가장 큰 것 */
