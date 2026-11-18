@@ -111,6 +111,9 @@ class Aniweek : AnimeHttpSource(), ConfigurableAnimeSource {
             res.close()
             return retryOn(found)
         }
+        // 사이트가 스스로 새 주소로 넘겨 준 경우(200 일 때만) 그 주소를 저장 (2026-11-18)
+        val finalHost = res.request.url.host
+        if (res.code == 200 && finalHost != baseHost && HOST_REGEX.matches(finalHost)) adopt("https://$finalHost")
         return res
     }
 

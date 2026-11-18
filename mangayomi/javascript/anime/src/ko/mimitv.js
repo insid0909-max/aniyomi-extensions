@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.11",
+    "version": "0.1.12",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/mimitv.js"
@@ -487,7 +487,8 @@ class DefaultExtension extends MProvider {
         }
         const cur = num(current) || num(DEFAULT_BASE_URL);
         const cands = [];
-        for (let i = Math.max(1, cur - 3); i <= cur + 20; i++) {
+        // 번호 짐작은 지금보다 큰 번호만 (옛 주소로 되돌아가지 않게, 2026-11-18)
+        for (let i = cur + 1; i <= cur + 20; i++) {
             const c = `https://mimitv${i}.com`;
             if (c !== current) cands.push(c);
         }
