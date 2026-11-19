@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.25",
+    "version": "0.1.26",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/anilife.js"
@@ -951,6 +951,7 @@ class DefaultExtension extends MProvider {
         const host = this.getBaseUrl().replace(/^https?:\/\//, "");
         return [
             { type_name: "HeaderFilter", name: `📡 주소: ${host} · 자동 찾기 ${this.autoOn() ? "켜짐" : "꺼짐"}` + addrNoteText() },
+            { type_name: "HeaderFilter", name: "🔗 링크애니와 같은 자료(쌍둥이) — 작품·순서·영상이 같음, 한쪽이 막히면 다른 쪽에서 같은 작품을 찾으면 됨" },
             ...notesFilters("anilife"),
             { type_name: "SeparatorFilter" },
             { type_name: "HeaderFilter", name: "검색어와 함께 쓸 수 있음 (작품 주소를 붙여 넣으면 바로 열기)" },
