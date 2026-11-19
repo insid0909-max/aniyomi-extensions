@@ -644,6 +644,7 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
             listOf(
                 AnimeFilter.Header("📡 주소: $host · 자동 찾기 ${if (autoDomain()) "켜짐" else "꺼짐"}"),
                 *listOfNotNull(DomainList.note("anilife")?.let { AnimeFilter.Header("🔎 주소 목록 확인: $it") }).toTypedArray(),
+                AnimeFilter.Header("🔗 링크애니와 같은 자료(쌍둥이) — 작품·순서·영상이 같음, 한쪽이 막히면 다른 쪽에서 같은 작품을 찾으면 됨"),
                 AnimeFilter.Separator(),
                 AnimeFilter.Header("검색어와 함께 쓸 수 있음 (작품 주소를 붙여 넣으면 바로 열기)"),
                 ScopeFilter(),

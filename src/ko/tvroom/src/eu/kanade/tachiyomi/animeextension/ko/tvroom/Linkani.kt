@@ -350,6 +350,7 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
         return AnimeFilterList(
             listOf(
                 AnimeFilter.Header("📡 주소: ${baseUrl.substringAfter("://")}"),
+                AnimeFilter.Header("🔗 애니라이프와 같은 자료(쌍둥이) — 작품·순서·영상이 같음, 한쪽이 막히면 다른 쪽에서 같은 작품을 찾으면 됨"),
             ) + listOf(
                 AnimeFilter.Separator(),
                 AnimeFilter.Header("검색어가 없을 때만 적용 (작품 주소를 붙여 넣으면 바로 열기)"),
