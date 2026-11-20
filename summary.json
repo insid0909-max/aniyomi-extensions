@@ -5,8 +5,16 @@
  "domainChanges": [
   {
    "name": "후후티비",
-   "from": "https://am.hoohootv483.xyz",
-   "to": "https://bi.hoohootv483.xyz",
+   "from": "https://bi.hoohootv483.xyz",
+   "to": "https://cb.hoohootv483.xyz",
+   "files": [
+    "domains.json"
+   ]
+  },
+  {
+   "name": "티비위키",
+   "from": "https://tvwiki63.net",
+   "to": "https://tvwiki64.net",
    "files": [
     "domains.json"
    ]
