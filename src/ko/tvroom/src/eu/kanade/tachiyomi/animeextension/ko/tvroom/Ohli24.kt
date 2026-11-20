@@ -314,9 +314,23 @@ class Ohli24 : AnimeHttpSource(), ConfigurableAnimeSource {
             if (!res.isSuccessful) throw Exception("회차 화면을 열지 못했습니다 (HTTP ${res.code})")
             Jsoup.parse(res.body.string(), res.request.url.toString())
         }
-        val players = doc.select("iframe#video[src], .play-box iframe[src]").map { it.attr("abs:src") }
-            .filter { it.startsWith("http") }.distinct()
-        if (players.isEmpty()) throw Exception("이 회차에는 재생 화면이 없습니다")
+        // 2026-11-20 사이트가 플레이어 주소를 iframe data-src 에 두고, 화면이 열리면 /player-ticket/{회차 번호} 로 새 표(?t=)를 받아 src 에 넣음
+        // → 사이트와 같은 순서: 표 받기 → data-src → src (같은 플레이어는 하나만)
+        val frames = doc.select("iframe#video, .play-box iframe")
+        val cands = mutableListOf<String>()
+        var ticketNote = ""
+        Regex("""^/(\d+)/""").find(episode.url)?.groupValues?.get(1)?.let { epNo ->
+            runCatching {
+                val th = h().newBuilder().set("Accept", "application/json").set("Referer", pageUrl.toHttpUrl().toString()).build()
+                client.newCall(GET("$baseUrl/player-ticket/$epNo", th)).execute().use { r ->
+                    val u = if (r.code == 200) runCatching { JSONObject(r.body.string()).optString("url") }.getOrNull().orEmpty() else ""
+                    if (u.startsWith("https://")) cands.add(u) else ticketNote = "표 HTTP ${r.code}"
+                }
+            }.onFailure { ticketNote = "표 실패" }
+        }
+        frames.forEach { f -> cands.add(f.attr("abs:data-src")); cands.add(f.attr("abs:src")) }
+        val players = cands.filter { it.startsWith("http") }.distinctBy { it.substringBefore('?').substringBefore('#') }
+        if (players.isEmpty()) throw Exception("이 회차에는 재생 화면이 없습니다 [플레이어 칸 ${frames.size}${if (ticketNote.isNotEmpty()) " · $ticketNote" else ""}]")
         val errors = mutableListOf<String>()
         val out = mutableListOf<Video>()
         players.forEachIndexed { i, player ->
