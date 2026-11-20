@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.25",
+    "version": "0.1.26",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli24.js"
@@ -575,8 +575,31 @@ class DefaultExtension extends MProvider {
         const pageUrl = this.getBaseUrl() + path;
         const html = await this.get(path);
         const doc = new Document(html);
-        const players = [...new Set(doc.select("iframe#video, .play-box iframe").map((f) => f.attr("src")).filter((s) => /^https?:\/\//.test(s)))];
-        if (!players.length) throw new Error("이 회차에는 재생 화면이 없습니다");
+        // 2026-11-20 사이트가 플레이어 주소를 iframe data-src 에 두고, 화면이 열리면 /player-ticket/{회차 번호} 로 새 표(?t=)를 받아 src 에 넣음
+        // → 사이트와 같은 순서: 표 받기 → data-src → src (같은 플레이어는 하나만)
+        const frames = doc.select("iframe#video, .play-box iframe");
+        const cands = [];
+        let ticketNote = "";
+        const epNo = (/^\/(\d+)\//.exec(path) || [])[1];
+        if (epNo) {
+            try {
+                const r = await this.client.get(`${this.getBaseUrl()}/player-ticket/${epNo}`, Object.assign({}, this.getHeaders(), { "Accept": "application/json", "Referer": pageUrl }));
+                const d = r.statusCode === 200 ? JSON.parse(String(r.body || "{}")) : null;
+                if (d && typeof d.url === "string" && /^https:\/\//.test(d.url)) cands.push(d.url);
+                else ticketNote = `표 HTTP ${r.statusCode}`;
+            } catch (e) {
+                ticketNote = "표 실패";
+            }
+        }
+        for (const f of frames) cands.push(f.attr("data-src"), f.attr("src"));
+        const seen = new Set();
+        const players = cands.filter((s) => /^https?:\/\//.test(s || "")).filter((s) => {
+            const k = s.split(/[?#]/)[0];
+            if (seen.has(k)) return false;
+            seen.add(k);
+            return true;
+        });
+        if (!players.length) throw new Error(`이 회차에는 재생 화면이 없습니다 [플레이어 칸 ${frames.length}${ticketNote ? " · " + ticketNote : ""}]`);
         let list = [];
         const fails = [];
         this.diag = [];
