@@ -151,6 +151,7 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
 
     /** 목록·검색 화면의 작품 카드(div.vod-item) */
     private fun parseList(response: Response): AnimesPage {
+        checkOk(response, "목록")
         val doc = Jsoup.parse(response.body.string(), response.request.url.toString())
         val seen = HashSet<String>()
         val animes = doc.select(".vod-list .vod-item").mapNotNull { item ->
@@ -179,6 +180,15 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
         }
     }
 
+    /** 사이트가 오류를 주면 빈 목록 대신 이유를 보여 줌 [단계 · HTTP · 주소 모양] (망가요미판과 같은 문구) */
+    private fun checkOk(response: Response, step: String) {
+        if (response.code < 400) return
+        val code = response.code
+        val where = response.request.url.let { it.host + it.encodedPath.take(40) }
+        response.close()
+        throw Exception("링크애니 접속 실패 (HTTP $code). 주소가 바뀌었으면 설정에서 새 주소를 넣어 주세요. [$step · $where]")
+    }
+
     // ================= 작품 정보 =================
     override fun animeDetailsRequest(anime: SAnime): Request = GET(baseUrl + anime.url, h())
 
@@ -194,6 +204,7 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
     }.toMap()
 
     override fun animeDetailsParse(response: Response): SAnime {
+        checkOk(response, "작품")
         val doc = Jsoup.parse(response.body.string(), response.request.url.toString())
         val m = info(doc)
         val t = doc.selectFirst("h1.detail-info-title")?.text()?.trim().orEmpty()
@@ -205,7 +216,7 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
             thumbnail_url = doc.selectFirst(".detail-img [data-original]")?.attr("abs:data-original")?.ifEmpty { null }
                 ?: doc.selectFirst("meta[property=og:image]")?.attr("content")?.ifEmpty { null }
             genre = m["장르"]?.ifEmpty { null }
-            author = m["제작사"]?.ifEmpty { null }
+            // 제작사는 사이트가 모든 작품에 "OLM" 을 붙여(가짜 값, "관련：포켓몬스터" 와 같음) 쓰지 않음
             // 극장판은 완결, 그 밖은 사이트에 방영 상태가 없어 모름
             val movie = MOVIE_TYPE.containsMatchIn(type) || t.startsWith("[극장판") || t.startsWith("극장판")
             status = if (movie) SAnime.COMPLETED else SAnime.UNKNOWN
@@ -224,6 +235,7 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
 
     // ================= 회차 =================
     override fun episodeListParse(response: Response): List<SEpisode> {
+        checkOk(response, "회차")
         val doc = Jsoup.parse(response.body.string(), response.request.url.toString())
         val used = HashSet<Float>()
         val list = doc.select(".episode-box a.ep[href], .episode-box a[href*='/watch/']").mapNotNull { a ->
@@ -263,16 +275,27 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
         val main = str(player, "actual_url").ifEmpty { str(player, "url") }
         if (!main.startsWith("http")) throw Exception("영상 주소를 찾지 못했습니다")
         val sub = str(player, "subtitle_url")
-        val subs = if (sub.startsWith("http")) listOf(Track(sub, "한국어")) else emptyList()
         val vh = Headers.Builder()
             .set("User-Agent", USER_AGENT)
             .set("Referer", "$baseUrl/")
             .set("Origin", baseUrl)
             .build()
+        val subs = if (sub.startsWith("http") && subOk(sub, vh)) listOf(Track(sub, "한국어")) else emptyList()
         val label = HlsQuality.withRes(LABEL, main).let { if (subs.isEmpty()) it else "$it 자막" }
         val list = HlsQuality.expand(client, main, label, vh).map { Video(it.url, it.quality, it.videoUrl, vh, subs) }
         HlsQuality.sort(prefs(), list)
     }
+
+    /**
+     * 사이트가 자막 주소를 주지만 파일이 없는(404 "error") 회차가 있음 — 애니요미 재생기는 그 자막에서 멈춰 계속 로딩만 됨
+     * (2026-11-17 중계 기록으로 확인). 앞부분만 받아 WEBVTT 인지 보고, 없거나 자막이 아니거나 연결 오류면 뺌. 5초 시간 초과는 판단 못 해 그대로 둠
+     */
+    private fun subOk(url: String, vh: Headers): Boolean = runCatching {
+        client.newBuilder().callTimeout(5, java.util.concurrent.TimeUnit.SECONDS).build()
+            .newCall(Request.Builder().url(url).headers(vh).header("Range", "bytes=0-63").build()).execute().use { res ->
+                res.isSuccessful && res.body.string().trimStart('\uFEFF', ' ', '\r', '\n').startsWith("WEBVTT")
+            }
+    }.getOrElse { it !is java.io.IOException || it is java.io.InterruptedIOException }
 
     private fun str(o: JSONObject, k: String): String = if (o.isNull(k)) "" else o.optString(k).trim()
 
@@ -327,6 +350,8 @@ class Linkani : AnimeHttpSource(), ConfigurableAnimeSource {
         return AnimeFilterList(
             listOf(
                 AnimeFilter.Header("📡 주소: ${baseUrl.substringAfter("://")}"),
+                AnimeFilter.Header("🔗 애니라이프와 같은 자료(쌍둥이) — 작품·순서·영상이 같음, 한쪽이 막히면 다른 쪽에서 같은 작품을 찾으면 됨"),
+            ) + listOf(
                 AnimeFilter.Separator(),
                 AnimeFilter.Header("검색어가 없을 때만 적용 (작품 주소를 붙여 넣으면 바로 열기)"),
                 ListFilter(),

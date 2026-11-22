@@ -1,14 +1,14 @@
 const mangayomiSources = [{
     "name": "미미티비",
     "lang": "ko",
-    "baseUrl": "https://mimitv13.com",
+    "baseUrl": "https://mimitv16.com",
     "apiUrl": "",
     "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
     "typeSource": "single",
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.11",
+    "version": "0.1.14",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/mimitv.js"
@@ -20,7 +20,7 @@ const mangayomiSources = [{
 // 회차는 작품 화면 글자 안 manualSeasons = [{"e":[{"link_1","host_1":"제1화",...}]}] (작품마다 최신이 위이거나 1화가 위), 회차 날짜는 사이트에 없음
 // 재생: 플레이어(xiaoca.top/one/onet.php?url=…)의 url= 주소는 가짜(404). 진짜 주소는 플레이어가 스스로 풀어 요청 →
 // 숨은 웹뷰로 플레이어를 그대로 열고 플레이어가 요청한 /hls/….m3u8 주소를 돌려받음 (암호를 확장이 직접 풀지 않음). 영상은 Referer=플레이어 주소 필요
-const DEFAULT_BASE_URL = "https://mimitv13.com";
+const DEFAULT_BASE_URL = "https://mimitv16.com";
 const DOMAIN_RE = /^https:\/\/(?:www\.)?mimitv\d+\.com$/;
 const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
     "Chrome/124.0.0.0 Mobile Safari/537.36";
@@ -487,7 +487,8 @@ class DefaultExtension extends MProvider {
         }
         const cur = num(current) || num(DEFAULT_BASE_URL);
         const cands = [];
-        for (let i = Math.max(1, cur - 3); i <= cur + 20; i++) {
+        // 번호 짐작은 지금보다 큰 번호만 (옛 주소로 되돌아가지 않게, 2026-11-18)
+        for (let i = cur + 1; i <= cur + 20; i++) {
             const c = `https://mimitv${i}.com`;
             if (c !== current) cands.push(c);
         }
@@ -891,10 +892,10 @@ class DefaultExtension extends MProvider {
             key: "mimitv_domain",
             editTextPreference: {
                 title: "미미티비 주소 직접 지정 (선택)",
-                summary: "비워 두면 자동으로 찾은 주소나 기본 주소(https://mimitv13.com)를 사용합니다.",
+                summary: "비워 두면 자동으로 찾은 주소나 기본 주소(https://mimitv16.com)를 사용합니다.",
                 value: "",
                 dialogTitle: "미미티비 주소",
-                dialogMessage: "mimitv숫자.com 형식의 주소 (예: https://mimitv13.com)",
+                dialogMessage: "mimitv숫자.com 형식의 주소 (예: https://mimitv16.com)",
             },
         }, {
             key: "mimitv_auto_on",

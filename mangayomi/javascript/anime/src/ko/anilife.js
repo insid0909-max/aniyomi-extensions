@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.23",
+    "version": "0.1.26",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/anilife.js"
@@ -566,7 +566,7 @@ class DefaultExtension extends MProvider {
         return { "User-Agent": UA, "Referer": `${base || this.getBaseUrl()}${refPath || "/"}`, "Accept": "application/json" };
     }
 
-    /** 사이트 API(JSON) 요청. 접속이 안 되거나 막히면(오류/403/5xx) anilife 번호 주소를 찾아 바꾼 뒤 다시 요청 */
+    /** 사이트 API(JSON) 요청. 접속이 안 되거나 막히면(오류/451/5xx) anilife 번호 주소를 찾아 바꾼 뒤 다시 요청 */
     async api(path, refPath) {
         const base = this.getBaseUrl();
         let res = null;
@@ -580,7 +580,8 @@ class DefaultExtension extends MProvider {
                 if (attempt === 0) await new Promise((r) => setTimeout(r, 700));
             }
         }
-        const dead = !res || res.statusCode === 403 || res.statusCode === 451 || res.statusCode >= 500;
+        // 403 은 보안 확인이라 주소 바뀜 아님 (2026-11-18)
+        const dead = !res || res.statusCode === 451 || res.statusCode >= 500;
         // 재생 주소 API 는 앱에서 부르면 원래 403 (사이트 화면 안에서만 허용) → 주소 찾기를 돌리지 않음 (재생 시작이 늦어짐)
         if (dead && this.autoOn() && !path.startsWith("/api/playback/")) {
             const found = await this.discover(base);
@@ -622,7 +623,8 @@ class DefaultExtension extends MProvider {
             const sig = String((((JSON.parse(String(r.body || "{}")).domains || {}).anilife) || {}).baseUrl || "").replace(/\/+$/, "");
             if (DOMAIN_RE.test(sig) && sig !== current && !cands.includes(sig)) cands.push(sig);
         } catch (e) {}
-        for (let i = Math.max(1, cur - 2); i <= cur + 8; i++) if (host(i) !== current && !cands.includes(host(i))) cands.push(host(i));
+        // 번호 짐작은 지금보다 큰 번호만 (옛 주소로 되돌아가지 않게, 2026-11-18)
+        for (let i = cur + 1; i <= cur + 8; i++) if (host(i) !== current && !cands.includes(host(i))) cands.push(host(i));
         const hits = await Promise.all(cands.map(async (c) => {
             try {
                 const r = await this.client.get(c + "/", { "User-Agent": UA });
@@ -949,6 +951,7 @@ class DefaultExtension extends MProvider {
         const host = this.getBaseUrl().replace(/^https?:\/\//, "");
         return [
             { type_name: "HeaderFilter", name: `📡 주소: ${host} · 자동 찾기 ${this.autoOn() ? "켜짐" : "꺼짐"}` + addrNoteText() },
+            { type_name: "HeaderFilter", name: "🔗 링크애니와 같은 자료(쌍둥이) — 작품·순서·영상이 같음, 한쪽이 막히면 다른 쪽에서 같은 작품을 찾으면 됨" },
             ...notesFilters("anilife"),
             { type_name: "SeparatorFilter" },
             { type_name: "HeaderFilter", name: "검색어와 함께 쓸 수 있음 (작품 주소를 붙여 넣으면 바로 열기)" },

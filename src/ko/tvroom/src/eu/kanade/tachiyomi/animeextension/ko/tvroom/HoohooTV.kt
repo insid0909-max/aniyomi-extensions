@@ -270,6 +270,16 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         }.start()
     }
 
+    // 주소 확인용 통신: 앱 기본 통신(쿠키·DNS 설정 공유)에 시간 제한만 따로 (2026-11-18 al.hoohootv483: 웹뷰는 열리는데
+    // 따로 만든 단순 통신(연결 4초)으로는 "연결 실패" — 앱 설정·기다리는 시간 차이)
+    private val probeClient: OkHttpClient by lazy {
+        network.client.newBuilder()
+            .connectTimeout(6, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .callTimeout(12, TimeUnit.SECONDS)
+            .build()
+    }
+
     @Volatile private var lastDiscover = 0L
 
     private fun discoverDomain(currentHost: String, newerOnly: Boolean = false, hint: String? = null): String? = synchronized(DISCOVER_LOCK) {
@@ -278,18 +288,16 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
             // 1분 안에 이미 찾아봤으면 번호 짐작은 다시 하지 않음. 단 웹뷰로 새 주소에 들어갔다 왔으면 그 주소와,
             // 텔레그래프 안내 글에 적힌 주소는 바로 확인 (2026-11-03 ah.hoohootv464: 웹뷰 다녀와서 재시도해도 1분 제한에 걸려 못 찾음)
             if (now - lastDiscover < 60_000) {
-                val quick = OkHttpClient.Builder()
-                    .connectTimeout(4, TimeUnit.SECONDS)
-                    .readTimeout(6, TimeUnit.SECONDS)
-                    .callTimeout(8, TimeUnit.SECONDS)
-                    .build()
-                val guide = runCatching {
+                val quick = probeClient
+                val guideBody = runCatching {
                     val r = Request.Builder().url(GUIDE_URL).header("User-Agent", USER_AGENT).build()
                     quick.newCall(r).execute().use { res -> res.peekBody(500_000).string() }
-                }.getOrNull().orEmpty() + "\n" + hint.orEmpty() + "\n" + DomainList.host("hoohootv").orEmpty()
+                }.getOrNull().orEmpty()
+                val guide = guideBody + "\n" + hint.orEmpty() + "\n" + DomainList.host("hoohootv").orEmpty()
                 val fromGuide = ANNOUNCED_REGEX.findAll(guide).map { it.value.lowercase() }
                     .filter { SUBDOMAIN_REGEX.matches(it) && it != currentHost }.distinct().toList()
                 return probeHosts((fromGuide + cookieHosts(currentHost, sameNumber = true)).distinct(), currentHost)
+                    ?: trustAnnounced(trustedHosts(guideBody), currentHost)
             }
             lastDiscover = now
         }
@@ -298,20 +306,17 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         val n = num.toIntOrNull() ?: return null
         val abc = "abcdefghijklmnopqrstuvwxyz"
         val start = abc.indexOf(second[0])
-        val plain = OkHttpClient.Builder()
-            .connectTimeout(4, TimeUnit.SECONDS)
-            .readTimeout(6, TimeUnit.SECONDS)
-            .callTimeout(8, TimeUnit.SECONDS)
-            .build()
+        val plain = probeClient
         // 주소 안내 사이트에 적힌 후후티비 주소들 (번호 큰 것 먼저)
         // 안내 사이트 첫 화면은 이제 소개 글뿐이고, /home 이 "최신 주소 안내" 글로 넘겨 줌 (한국에서만) → 둘 다 + 옛 주소가 넘겨 준 글
         // + 사이트가 알려 주는 텔레그래프 "후후티비 최신 주소 안내" 글 (어디서나 열리고 바뀐 날 갱신됨, 2026-10-28 al.hoohootv463)
+        var guideBody = ""
         val announced = (
             listOf(PORTAL_URL + "home", PORTAL_URL, GUIDE_URL).joinToString("\n") { u ->
                 runCatching {
                     val r = Request.Builder().url(u).header("User-Agent", USER_AGENT).build()
                     plain.newCall(r).execute().use { res -> res.peekBody(500_000).string() }
-                }.getOrNull().orEmpty()
+                }.getOrNull().orEmpty().also { if (u == GUIDE_URL) guideBody = it }
             } + "\n" + hint.orEmpty() + "\n" + DomainList.host("hoohootv").orEmpty() // 저장소 주소 목록 파일(domains.json)
             ).let { body ->
             ANNOUNCED_REGEX.findAll(body).map { it.value.lowercase() }
@@ -327,6 +332,11 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         // 웹뷰로 새 주소에 들어갔다 왔으면 그 주소도 같이 확인 (목록이 안 열려서 웹뷰로 새 주소를 찾아 들어간 경우)
         val fromWebView = cookieHosts(currentHost, sameNumber = !newerOnly).filter { it !in fromPortal }
         probeHosts(fromPortal + fromWebView, currentHost)?.let { return it }
+        // 텔레그래프 안내 글·주소 목록(domains.json)에 적힌 주소는 확인이 실패해도 그대로 씀 (2026-11-18 al.hoohootv483: 안내 글에서
+        // 제대로 읽고도 확장 쪽 확인만 "연결 실패"라 버렸음 — 웹뷰로는 열림). 지금보다 번호가 같거나 큰 것만.
+        // 옛 주소가 넘겨 준 글·hoohootv1.com 화면의 주소는 확인한 뒤에만 씀. 지금 주소가 끊겼을 때만 — 1시간마다 하는 가벼운 확인은
+        // 확인이 통과한 주소로만 옮김 (2026-11-18 예전 fs.465 는 잘 되는데 새 483 은 휴대폰 앱에서 "연결 실패" → 잘 되던 주소를 버리게 됨)
+        if (!newerOnly) trustAnnounced(trustedHosts(guideBody), currentHost)?.let { return it }
         // 2) 못 찾으면 짐작: 숫자 +1 ~ +3 에서 같은 두 글자 → 모든 둘째 글자 (가까운 글자부터), 같은 숫자의 다음 글자들.
         //    1시간마다 하는 가벼운 확인에서는 같은 두 글자의 다음 번호만
         val newer = (1..3).map { d -> "$first$second.hoohootv${n + d}.$tld" } +
@@ -336,14 +346,29 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
         return probeHosts(guesses.distinct().filter { it != currentHost && it !in fromPortal }, currentHost)
     }
 
+    /** 믿어도 되는 곳(텔레그래프 안내 글 + 주소 목록 domains.json)에 적힌 후후티비 주소 */
+    private fun trustedHosts(guideBody: String): List<String> =
+        ANNOUNCED_REGEX.findAll(guideBody + "\n" + DomainList.host("hoohootv").orEmpty()).map { it.value.lowercase() }
+            .filter { SUBDOMAIN_REGEX.matches(it) }.distinct().toList()
+
+    /** 지금 주소가 끊겼을 때만: 믿는 주소 중 지금보다 번호가 같거나 큰 것, 번호가 가장 큰 것 (확인 없이) */
+    private fun trustAnnounced(trusted: List<String>, currentHost: String): String? {
+        fun numOf(h: String) = SUBDOMAIN_REGEX.matchEntire(h)?.groupValues?.get(3)?.toIntOrNull() ?: 0
+        val cur = numOf(currentHost)
+        val pick = trusted.filter { it != currentHost && SUBDOMAIN_REGEX.matches(it) && numOf(it) >= cur }
+            .maxByOrNull { numOf(it) } ?: return null
+        runCatching {
+            val p = prefs()
+            val old = p?.getString(PREF_PROBE_NOTE, "").orEmpty()
+            p?.edit()?.putString(PREF_PROBE_NOTE, "$old · 안내 글 주소 $pick 로 바꿈 (확인 실패해도)")?.apply()
+        }
+        return pick
+    }
+
     /** 후보 주소의 /home 을 동시에 열어 진짜 후후티비인 주소 중 번호가 가장 큰 것 */
     private fun probeHosts(candidates: List<String>, currentHost: String): String? {
         if (candidates.isEmpty()) return null
-        val plain = OkHttpClient.Builder()
-            .connectTimeout(4, TimeUnit.SECONDS)
-            .readTimeout(6, TimeUnit.SECONDS)
-            .callTimeout(8, TimeUnit.SECONDS)
-            .build()
+        val plain = probeClient
         val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
         val notes = java.util.concurrent.ConcurrentHashMap<String, String>()
         return try {
@@ -365,7 +390,14 @@ class HoohooTV(private val kind: Int = KIND_ALL) : AnimeHttpSource(), Configurab
                             }
                             if (ok) fh else null
                         }
-                    }.onFailure { notes[host] = if (it is java.net.UnknownHostException) "주소 없음" else "연결 실패" }.getOrNull()
+                    }.onFailure {
+                        notes[host] = when (it) {
+                            is java.net.UnknownHostException -> "주소 없음"
+                            is java.net.SocketTimeoutException, is java.io.InterruptedIOException -> "연결 실패(시간 초과)"
+                            is javax.net.ssl.SSLException -> "연결 실패(SSL)"
+                            else -> "연결 실패(${it.javaClass.simpleName.take(20)})"
+                        }
+                    }.getOrNull()
                 }
             }
             val found = futures.mapNotNull { runCatching { it.get() }.getOrNull() }.filter { it != currentHost }

@@ -123,7 +123,8 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
             val found = discoverDomain(baseHost) ?: throw e
             return retryOn(found)
         }
-        val dead = !HOST_REGEX.matches(res.request.url.host) || res.code == 403 || res.code == 451 || res.code >= 500
+        // 403 은 보안 확인이라 주소 바뀜 아님 (2026-11-18)
+        val dead = !HOST_REGEX.matches(res.request.url.host) || res.code == 451 || res.code >= 500
         if (req.method == "GET" && dead) {
             val found = discoverDomain(baseHost) ?: return res
             res.close()
@@ -142,7 +143,7 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         val n = m.groupValues[1].toIntOrNull() ?: return null
         val width = m.groupValues[1].length
         fun host(v: Int) = "anilife${v.toString().padStart(width, '0')}.tv"
-        // 다음 번호 우선, 그다음 이전 번호
+        // 번호 짐작은 지금보다 큰 번호만 (잠깐 끊겼을 때 아직 열려 있는 옛 주소로 되돌아가지 않게, 2026-11-18)
         val plain = OkHttpClient.Builder()
             .connectTimeout(4, TimeUnit.SECONDS)
             .readTimeout(6, TimeUnit.SECONDS)
@@ -157,7 +158,7 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
         }.getOrNull()
         // 저장소 주소 목록 파일(domains.json)에 적힌 주소가 맨 먼저
         val listed = DomainList.host("anilife")?.takeIf { HOST_REGEX.matches(it) }
-        val candidates = (listOfNotNull(listed, signal) + (1..8).map { host(n + it) } + (1..2).mapNotNull { (n - it).takeIf { v -> v > 0 }?.let(::host) })
+        val candidates = (listOfNotNull(listed, signal) + (1..8).map { host(n + it) })
             .distinct().filter { it != currentHost }
         val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
         try {
@@ -643,6 +644,7 @@ class Anilife : AnimeHttpSource(), ConfigurableAnimeSource {
             listOf(
                 AnimeFilter.Header("📡 주소: $host · 자동 찾기 ${if (autoDomain()) "켜짐" else "꺼짐"}"),
                 *listOfNotNull(DomainList.note("anilife")?.let { AnimeFilter.Header("🔎 주소 목록 확인: $it") }).toTypedArray(),
+                AnimeFilter.Header("🔗 링크애니와 같은 자료(쌍둥이) — 작품·순서·영상이 같음, 한쪽이 막히면 다른 쪽에서 같은 작품을 찾으면 됨"),
                 AnimeFilter.Separator(),
                 AnimeFilter.Header("검색어와 함께 쓸 수 있음 (작품 주소를 붙여 넣으면 바로 열기)"),
                 ScopeFilter(),

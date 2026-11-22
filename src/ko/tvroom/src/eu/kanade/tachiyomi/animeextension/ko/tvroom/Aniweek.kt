@@ -71,7 +71,10 @@ class Aniweek : AnimeHttpSource(), ConfigurableAnimeSource {
 
     // 직접 넣은 주소 > 자동으로 찾은 주소 > 기본 주소
     override val baseUrl: String
-        get() = DomainGuard.pick(prefs(), PREF_DOMAIN_KEY, DEFAULT_BASE_URL, autoDomain(), { DOMAIN_REGEX.matches(it) }, newerDefault = false)
+        get() = DomainGuard.pick(prefs(), PREF_DOMAIN_KEY, DEFAULT_BASE_URL, autoDomain(), { DOMAIN_REGEX.matches(it) }, newerDefault = false).also { cur ->
+            // 6시간마다 저장소 주소 목록에 같은 이름·더 큰 번호 주소(예 aniweek2)가 있고 진짜 사이트면 그 주소로 (뒤에서, 2026-11-18)
+            DomainList.followLater("aniweek", prefs(), PREF_DOMAIN_KEY, cur, autoDomain()) { h -> HOST_REGEX.matches(h) && realHost(h) != null }
+        }
 
     override val client: OkHttpClient = network.client.newBuilder()
         .apply { interceptors().add(0, FriendlyNet) }
@@ -108,6 +111,9 @@ class Aniweek : AnimeHttpSource(), ConfigurableAnimeSource {
             res.close()
             return retryOn(found)
         }
+        // 사이트가 스스로 새 주소로 넘겨 준 경우(200 일 때만) 그 주소를 저장 (2026-11-18)
+        val finalHost = res.request.url.host
+        if (res.code == 200 && finalHost != baseHost && HOST_REGEX.matches(finalHost)) adopt("https://$finalHost")
         return res
     }
 

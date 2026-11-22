@@ -104,7 +104,8 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
     // ================= 도메인 자동 찾기 =================
     private fun isDead(res: Response): Boolean {
         if (!HOST_REGEX.matches(res.request.url.host)) return true
-        return res.code == 403 || res.code == 451 || res.code >= 500
+        // 403 은 보안 확인(Cloudflare 등)이라 주소 바뀜이 아님 (2026-11-18, 찾기만 돌고 늦어짐)
+        return res.code == 451 || res.code >= 500
     }
 
     private fun domainIntercept(chain: okhttp3.Interceptor.Chain): Response {
@@ -159,7 +160,8 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
             ?.let { return it }
         val pool = Executors.newFixedThreadPool(12)
         try {
-            val futures = ((cur - 5).coerceAtLeast(1)..(cur + 30))
+            // 번호 짐작은 지금보다 큰 번호만 (잠깐 끊겼을 때 아직 열려 있는 옛 주소로 되돌아가지 않게, 2026-11-18)
+            val futures = ((cur + 1)..(cur + 30))
                 .map { "gogotv$it.xyz" }
                 .map { host ->
                     pool.submit<String?> {
@@ -709,7 +711,14 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
     // ================= 공용 =================
     private fun pathOf(href: String): String = PATH_REGEX.find(href)?.groupValues?.get(1) ?: href
 
-    private fun Response.asDoc(): Document = Jsoup.parse(body.string(), request.url.toString())
+    private fun Response.asDoc(): Document {
+        // 사이트가 403(보안 확인 등)을 주면 빈 목록 대신 이유를 보여 줌 (2026-11-18)
+        if (code == 403 && HOST_REGEX.matches(request.url.host)) {
+            close()
+            throw Exception("접속이 막혔어요 (HTTP 403 · ${request.url.host}). 웹뷰로 한 번 열어 보안 확인을 마친 뒤 다시 시도해 주세요.")
+        }
+        return Jsoup.parse(body.string(), request.url.toString())
+    }
 
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"

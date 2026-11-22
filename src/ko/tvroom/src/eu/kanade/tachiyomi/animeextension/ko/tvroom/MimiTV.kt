@@ -159,7 +159,8 @@ class MimiTV : AnimeHttpSource(), ConfigurableAnimeSource {
             if (h != currentHost) realHost(h)?.let { return it }
         }
         val n = NUM_REGEX.find(currentHost)?.groupValues?.get(1)?.toIntOrNull() ?: DomainGuard.hostNumber(DEFAULT_BASE_URL)
-        val candidates = ((1..8).map { "mimitv${n + it}.com" } + (1..3).mapNotNull { (n - it).takeIf { v -> v > 0 }?.let { v -> "mimitv$v.com" } })
+        // 번호 짐작은 지금보다 큰 번호만 (잠깐 끊겼을 때 아직 열려 있는 옛 주소로 되돌아가지 않게, 2026-11-18)
+        val candidates = (1..8).map { "mimitv${n + it}.com" }
             .filter { it != currentHost }
         val pool = java.util.concurrent.Executors.newFixedThreadPool(8)
         try {

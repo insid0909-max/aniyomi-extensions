@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.8",
+    "version": "0.1.11",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/samsungtvplus.js"
@@ -49,13 +49,24 @@ const BC_CHANNELS = [
     ["bc-kbs2", "KBS2", "kbs:12"],
     ["bc-mbc", "MBC", "mbcmain:"],
     ["bc-sbs", "SBS", "sbsmain:S01"],
+    // 2026-11-16 추가 (이슈갓 목록에서 찾은 방송사 공식 온에어 화면의 주소)
+    ["bc-tvchosun", "TV조선", "tvchosun:"],
+    ["bc-mbn", "MBN", "mbn:"],
 ];
 const BC_LIST = BC_CHANNELS.map((c, i) => ({
     id: c[0], name: c[1], uri: c[2], chno: -10 + i,
     logo: `https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/thumbs/ch_${c[0].substring(3)}.png`, group: "실시간", programs: [],
     description: "방송사 홈페이지에서 무료로 제공하는 공식 실시간 방송입니다 (라이브TV 와 같은 주소). 대부분 한국에서만 재생됩니다.",
 }));
-const BC_LABELS = { kbs: "KBS 공식", mbcmain: "MBC 공식", sbsmain: "SBS 공식" };
+// 지역 MBC 공식 생방송 (본사가 안 될 때 예비): MBC경남 mbceg.co.kr/onair/tv 화면의 주소(2026-11-16, 해외에선 안 열림),
+// 대전MBC tjmbc.co.kr/OnAir 화면의 주소(2026-11-15, 720p, 머리글 없이 열림). 애니요미와 같은 순서·방식
+const REGIONAL_MBC = [
+    ["MBC경남 공식", "https://vod.mbceg.co.kr:8443/tvlive/livestream2/playlist.m3u8"],
+    ["대전MBC 공식 720p", "https://ns1.tjmbc.co.kr/live/myStream.sdp/playlist.m3u8"],
+];
+const BC_LABELS = { kbs: "KBS 공식", mbcmain: "MBC 공식", sbsmain: "SBS 공식", tvchosun: "TV조선 공식", mbn: "MBN 공식" };
+// TV조선 공식 온에어(broadcast.tvchosun.com/onair/on.cstv) 화면이 쓰는 주소 (머리글 없이도 열림)
+const TVCHOSUN_URL = "https://onaircdn.tvchosun.com/origin1/_definst_/tvchosun_s3/playlist.m3u8";
 const BC_MEDIA_RE = /https?:\/\/[^\s"'<>\\]+?\.m3u8[^\s"'<>\\]*/g;
 
 // 방송사 공식 웹 플레이어가 쓰는 주소 (livetv.js 와 같음)
@@ -65,6 +76,8 @@ function bcApiUrl(kind, arg) {
         case "sbsmain": return `https://apis.sbs.co.kr/play-api/1.0/onair/channel/${arg}` +
             "?v_type=2&platform=pcweb&protocol=hls&ssl=Y&rscuse=&jwt-token=&sbsmain=";
         case "kbs": return `https://cfpwwwapi.kbs.co.kr/api/v1/landing/live/channel_code/${arg}`;
+        // MBN 공식 온에어(m.mbn.co.kr/onair) 화면이 쓰는 인증 주소 → 하루짜리 서명 붙은 영상 주소를 글자로 줌
+        case "mbn": return "https://www.mbn.co.kr/player/mbnStreamAuth_new_live.mbn?vod_url=https://hls-live.mbn.co.kr/mbn-on-air/1000k/playlist.m3u8";
         default: return "";
     }
 }
@@ -79,6 +92,10 @@ function bcHeaders(kind) {
         h["Origin"] = "https://www.sbs.co.kr";
     } else if (kind === "kbs") {
         h["Referer"] = "https://onair.kbs.co.kr/";
+    } else if (kind === "tvchosun") {
+        h["Referer"] = "https://broadcast.tvchosun.com/onair/on.cstv";
+    } else if (kind === "mbn") {
+        h["Referer"] = "https://m.mbn.co.kr/";
     }
     return h;
 }
@@ -437,12 +454,66 @@ class DefaultExtension extends MProvider {
 
     // 지상파 채널: 방송사 공식 웹 플레이어 주소에서 받음 (라이브TV 와 같은 방식)
     async broadcastVideos(uri) {
+        if (uri.startsWith("mbcmain:")) return this.mbcVideos(uri);
+        return this.broadcastMain(uri);
+    }
+
+    // MBC: 본사 주소(ottlivepresd.imbc.com)가 HTTP 500 일 때가 있음(2026-11-15) → 본사가 열리면 본사 + 대전MBC,
+    // 안 열리면 대전MBC 공식 생방송(tjmbc.co.kr/OnAir, 머리글 없이 열림, 720p)으로 바로. 애니요미와 같은 방식
+    async mbcVideos(uri) {
+        const tjH = { "User-Agent": UA };
+        let why = "";
+        try {
+            const main = await this.broadcastMain(uri);
+            const r = await this.client.get(main[0].url, main[0].headers);
+            if (r.statusCode === 200 && String(r.body || "").startsWith("#EXTM3U")) {
+                return main.concat(REGIONAL_MBC.map(([q, u]) => ({ url: u, originalUrl: u, quality: q, headers: tjH })));
+            }
+            why = `HTTP ${r.statusCode}`;
+        } catch (e) {
+            why = String((e && e.message) || e).replace(/재생 주소를 받지 못했습니다\s*/, "").replace(/^\((.*)\)$/, "$1").substring(0, 30) || "안 열림";
+        }
+        // 본사가 안 열림 → 지역 MBC(경남·대전)를 동시에 열어 보고 먼저 열리는 쪽을 맨 앞에 (못 연 곳은 뒤에 "확인 안 됨")
+        const timed = await Promise.all(REGIONAL_MBC.map(async ([q, u]) => ({ q, u, ms: await this.openMs(u, tjH) })));
+        const ok = timed.filter((x) => x.ms !== null).sort((a, b) => a.ms - b.ms);
+        const bad = timed.filter((x) => x.ms === null);
+        return ok.map((x, i) => ({ url: x.u, originalUrl: x.u, quality: i === 0 ? `${x.q} (본사 ${why})` : x.q, headers: tjH }))
+            .concat(bad.map((x) => ({ url: x.u, originalUrl: x.u, quality: `${x.q} (확인 안 됨)`, headers: tjH })));
+    }
+
+    // 재생 목록 + 첫 하위 목록까지 받는 시간(ms), 8초 넘거나 실패면 null (망가요미엔 clearTimeout 이 없어 Promise.race 표시 값)
+    async openMs(url, h) {
+        const t0 = Date.now();
+        const LATE = {};
+        const work = (async () => {
+            const r = await this.client.get(url, h);
+            const body = String(r.body || "");
+            if (r.statusCode !== 200 || !body.startsWith("#EXTM3U")) return null;
+            const sub = body.split("\n").map((x) => x.trim()).find((x) => x && !x.startsWith("#"));
+            if (sub && sub.includes(".m3u8")) {
+                const su = /^https?:/.test(sub) ? sub : url.replace(/[^/]*(?:\?.*)?$/, "") + sub;
+                const r2 = await this.client.get(su, h);
+                if (r2.statusCode !== 200) return null;
+            }
+            return Date.now() - t0;
+        })().catch(() => null);
+        const v = await Promise.race([work, new Promise((res) => setTimeout(() => res(LATE), 8000))]);
+        return v === LATE ? null : v;
+    }
+
+    async broadcastMain(uri) {
         const kind = uri.split(":")[0];
         const arg = uri.substring(kind.length + 1);
         const h = bcHeaders(kind);
-        const res = await this.client.get(bcApiUrl(kind, arg), h);
-        const body = String(res.body || "");
-        const media = bcFindMedia(body);
+        let media = "";
+        let body = "";
+        if (kind === "tvchosun") {
+            media = TVCHOSUN_URL;
+        } else {
+            const res = await this.client.get(bcApiUrl(kind, arg), h);
+            body = String(res.body || "");
+            media = bcFindMedia(body);
+        }
         if (!media) throw new Error(bcReason(body));
         const label = BC_LABELS[kind] || "라이브";
         let variants = [];

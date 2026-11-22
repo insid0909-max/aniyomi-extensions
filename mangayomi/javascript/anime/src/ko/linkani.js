@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.0",
+    "version": "0.1.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/linkani.js"
@@ -565,7 +565,8 @@ class DefaultExtension extends MProvider {
             imageUrl: img ? this.abs(img.attr("data-original")) : og ? og[1] : "",
             link: this.getBaseUrl() + path,
             description: [story, info].filter((x) => x).join("\n\n"),
-            author: meta["제작사"] || "",
+            // 제작사는 사이트가 모든 작품에 "OLM" 을 붙여(가짜 값) 쓰지 않음
+            author: "",
             status: movie ? 1 : 5,
             genre: (meta["장르"] || "").split(",").map((x) => x.trim()).filter((x) => x),
             episodes,
@@ -598,6 +599,7 @@ class DefaultExtension extends MProvider {
         const host = this.getBaseUrl().replace(/^https?:\/\//, "");
         return [
             { type_name: "HeaderFilter", name: `📡 주소: ${host}` },
+            { type_name: "HeaderFilter", name: "🔗 애니라이프와 같은 자료(쌍둥이) — 작품·순서·영상이 같음, 한쪽이 막히면 다른 쪽에서 같은 작품을 찾으면 됨" },
             ...notesFilters("linkani"),
             { type_name: "SeparatorFilter" },
             { type_name: "HeaderFilter", name: "검색어가 없을 때만 적용 (작품 주소를 붙여 넣으면 바로 열기)" },

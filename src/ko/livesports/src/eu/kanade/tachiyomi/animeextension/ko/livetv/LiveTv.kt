@@ -111,6 +111,9 @@ class LiveTv : AnimeHttpSource(), ConfigurableAnimeSource {
         val h = headersFor(kind)
         val media = if (kind == "direct") {
             arg
+        } else if (kind == "tvchosun") {
+            // TV조선 공식 온에어(broadcast.tvchosun.com/onair/on.cstv) 화면이 쓰는 주소 (2026-11-16 확인, 머리글 없이도 열림)
+            "https://onaircdn.tvchosun.com/origin1/_definst_/tvchosun_s3/playlist.m3u8"
         } else {
             val api = apiUrl(kind, arg) ?: throw Exception("알 수 없는 채널: $uri")
             val body = client.newCall(Request.Builder().url(api).headers(h).build()).execute().use { it.body.string() }
@@ -131,6 +134,8 @@ class LiveTv : AnimeHttpSource(), ConfigurableAnimeSource {
                 "?v_type=2&platform=pcweb&protocol=hls&ssl=Y&rscuse=&jwt-token=&sbsmain="
         "kbs" -> "https://cfpwwwapi.kbs.co.kr/api/v1/landing/live/channel_code/$arg"
         "cpbc" -> "https://apis.cpbc.co.kr/play-api/2.0/onair/channel/tv?jwt-token=&ssl=Y"
+        // MBN 공식 온에어(m.mbn.co.kr/onair) 화면이 쓰는 인증 주소 → 하루짜리 서명 붙은 영상 주소를 글자로 줌 (2026-11-16 확인)
+        "mbn" -> "https://www.mbn.co.kr/player/mbnStreamAuth_new_live.mbn?vod_url=https://hls-live.mbn.co.kr/mbn-on-air/1000k/playlist.m3u8"
         else -> null
     }
 
@@ -141,6 +146,8 @@ class LiveTv : AnimeHttpSource(), ConfigurableAnimeSource {
             "sbsv", "sbsmain" -> b.set("Referer", "https://www.sbs.co.kr/live/").set("Origin", "https://www.sbs.co.kr")
             "kbs" -> b.set("Referer", "https://onair.kbs.co.kr/")
             "cpbc" -> b.set("Referer", "https://www.cpbc.co.kr/")
+            "tvchosun" -> b.set("Referer", "https://broadcast.tvchosun.com/onair/on.cstv")
+            "mbn" -> b.set("Referer", "https://m.mbn.co.kr/")
         }
         return b.build()
     }
@@ -205,6 +212,8 @@ class LiveTv : AnimeHttpSource(), ConfigurableAnimeSource {
             "sbsmain" to "SBS 공식",
             "kbs" to "KBS 공식",
             "cpbc" to "CPBC 공식",
+            "tvchosun" to "TV조선 공식",
+            "mbn" to "MBN 공식",
             "direct" to "방송사 직접",
         )
 

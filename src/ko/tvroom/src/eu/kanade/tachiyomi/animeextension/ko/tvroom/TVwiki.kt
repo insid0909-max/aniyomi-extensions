@@ -500,9 +500,15 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
                 val tail = if (src.length > 24) "…" else ""
                 throw Exception("다른 재생 방식이라 아직 지원 안 함 [mode ${c.optString("mode").take(20).ifEmpty { "-" }} · src ${src.take(24)}$tail (${src.length}자)]")
             }
+            // "p" 와 같은 모양(/v/{경로}/{번호}/c.html?…)이면 같은 방식: sid 를 붙여 중계로 (2026-11-20 위키드 경로 "f" 403)
+            if (u.startsWith("$origin/v/$pathType/$contentId/c.html?") && !u.contains('#')) {
+                val sid = if (SID.containsMatchIn(u)) "" else "&sid=" + java.lang.Long.toString(System.currentTimeMillis(), 36) + (1..12).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
+                val proxied = LocalProxy.playlist(client, a, u + sid)
+                return Video(proxied, "$label 자동 (HLS)", proxied, null, subs)
+            }
             if (MP4.containsMatchIn(u)) return Video(u, "$label 원본 (mp4)", u, a, subs)
             // 재생기에 넘기기 전에 앞부분만 열어 봄 (2026-11-10 리처: 넘겼더니 무한 로딩)
-            val shape = u.substringAfter("://").substringBefore('?').substringBefore('#').take(48)
+            val shape = u.substringAfter("://").substringBefore('?').substringBefore('#').replace(contentId, "{번호}").take(60)
             val mode = c.optString("mode").take(20).ifEmpty { "-" }
             val probe = runCatching {
                 client.newCall(GET(u, a.newBuilder().set("Range", "bytes=0-4095").build())).execute().use { r ->
