@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvtok.js"
@@ -17,7 +17,7 @@ const mangayomiSources = [{
 // 2026-11-22 시험판 0.0.1 — 미미티비가 새 사이트 "티비톡"(tvtok11.com)으로 바뀜(평생 주소 미미티비주소.com → tvtok11.com,
 // 사이트 프로그램 안 저장 이름이 mimitv_* 그대로 = 같은 운영). 미미티비 확장과 달리 모두 JSON 자료이고 영상 주소를 바로 줌(웹뷰·암호 없음).
 // 목록: /api/browse/{분류}?genre=&sort=(빈|popular|rating)&page=N&size=42 → {total, items[{id,type,title,thumb,year}]}
-//   인기 TOP10: /api/home 의 top10, 검색: /api/search?q= → {items}
+//   전체: /api/browse/top10 (첫 화면 /api/home 의 top10 은 10개뿐이지만 목록 주소로는 전체 25,093개·정렬 모두 됨, 0.0.2), 검색: /api/search?q= → {items}
 // 작품: /api/watch/{분류}/{번호} → {title, thumb, genre, updated, episodes[{id,n,title,date,playable}](차례가 작품마다 다름 → 번호로 방향을 봐 최신이 위로), related}
 // 영상: /api/playlist/{회차 id}/index.m3u8 (조각 res.tvwow1.com/….ts)
 // 장르 거르기는 사이트 화면엔 있지만 자료(api)가 0개를 줘서(hasGenre false) 넣지 않음.
@@ -30,7 +30,7 @@ const KEY = "tvtok";
 const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
     "Chrome/124.0.0.0 Mobile Safari/537.36";
 const LISTS = [
-    ["인기 TOP10", "top10"], ["드라마", "drama"], ["해외드라마", "world"], ["추억드라마", "old_drama"],
+    ["전체", "top10"], ["드라마", "drama"], ["해외드라마", "world"], ["추억드라마", "old_drama"],
     ["예능", "ent"], ["추억예능", "old_ent"], ["해외예능/다큐", "ott_ent"], ["시사/다큐", "sisa"],
     ["해외영화", "movie"], ["한국영화", "kor_movie"],
 ];
@@ -42,12 +42,11 @@ const FILTER_DEFS = [
     ["정렬", "sort", SORTS.map((x) => x[0])],
 ];
 const RULE_SIZES = FILTER_DEFS.map((d) => d[2].length);
-const DEFAULT_POPULAR = [TOP10, 0];
-const DEFAULT_LATEST = [1, 0];
+const DEFAULT_POPULAR = [TOP10, 1];
+const DEFAULT_LATEST = [TOP10, 0];
 const MOVIE_TYPES = ["movie", "kor_movie"];
 
 function ruleText(i) {
-    if (i[0] === TOP10) return LISTS[TOP10][0];
     return `${LISTS[i[0]][0]} · ${SORTS[i[1]][0]}`;
 }
 
@@ -477,11 +476,6 @@ class DefaultExtension extends MProvider {
 
     // ================= 목록 =================
     async listPage(idx, page) {
-        if (idx[0] === TOP10) {
-            if (page > 1) return { list: [], hasNextPage: false };
-            const d = await this.api("/api/home");
-            return { list: (d.top10 || []).map((x) => this.card(x)), hasNextPage: false };
-        }
         const q = `genre=&sort=${SORTS[idx[1]][1]}&page=${page}&size=${PAGE_SIZE}`;
         const d = await this.api(`/api/browse/${LISTS[idx[0]][1]}?${q}`);
         const list = (d.items || []).map((x) => this.card(x)).filter((x) => x.name);
@@ -614,7 +608,7 @@ class DefaultExtension extends MProvider {
         ].concat(FILTER_DEFS.map(([name, param, values]) => ({
             type_name: "SelectFilter", name, param, state: 0,
             values: values.map((v, j) => ({ type_name: "SelectOption", name: v, value: String(j) })),
-        })), [{ type_name: "HeaderFilter", name: "인기 TOP10 은 정렬 없이 10개만 보여 줌" }],
+        })),
         ruleFilters(KEY, RULE_SIZES, [ruleText(DEFAULT_POPULAR), ruleText(DEFAULT_LATEST)], ruleText));
     }
 
