@@ -76,6 +76,11 @@ class TVroomFactory : AnimeSourceFactory {
         } catch (e: Throwable) {
             list.add(ErrorSource("링크애니 오류", e))
         }
+        try {
+            list.add(TvTok()) // 티비톡 (2026-11-22, 미미티비 새 이름, 망가요미판 0.1.0 과 같은 규칙)
+        } catch (e: Throwable) {
+            list.add(ErrorSource("티비톡 오류", e))
+        }
         return list
     }
 }
