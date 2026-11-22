@@ -3,7 +3,7 @@
   "note": "소스별 지금 주소. 확장이 스스로 새 주소를 못 찾을 때 이 주소를 먼저 확인함(진짜 사이트일 때만 씀). 바뀌면 baseUrl 만 고치면 됨(확장 업데이트 불필요).",
   "domains": {
     "hoohootv": {
-      "baseUrl": "https://dv.hoohootv483.xyz",
+      "baseUrl": "https://dy.hoohootv483.xyz",
       "updated": "2026-11-22"
     },
     "tvchak": {
@@ -30,10 +30,6 @@
       "baseUrl": "https://www.tongtv.net",
       "updated": "2026-11-03"
     },
-    "mimitv": {
-      "baseUrl": "https://mimitv16.com",
-      "updated": "2026-11-18"
-    },
     "tvwiki": {
       "baseUrl": "https://tvwiki65.net",
       "updated": "2026-11-20"
@@ -41,6 +37,10 @@
     "aniweek": {
       "baseUrl": "https://aniweek.com",
       "updated": "2026-11-10"
+    },
+    "tvtok": {
+      "baseUrl": "https://tvtok11.com",
+      "updated": "2026-11-22"
     }
   }
 }
