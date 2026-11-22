@@ -1,21 +1,14 @@
 {
  "changedFiles": [
-  "mangayomi/anime_index.json",
-  "domains.json",
-  "mangayomi/javascript/anime/src/ko/mimitv.js",
-  "changelog.json",
-  "업데이트내역.md"
+  "domains.json"
  ],
  "domainChanges": [
   {
-   "name": "미미티비",
-   "from": "https://mimitv15.com",
-   "to": "https://mimitv16.com",
+   "name": "후후티비",
+   "from": "https://da.hoohootv483.xyz",
+   "to": "https://dv.hoohootv483.xyz",
    "files": [
-    "domains.json",
-    "mangayomi/javascript/anime/src/ko/mimitv.js",
-    "changelog.json",
-    "업데이트내역.md"
+    "domains.json"
    ]
   }
  ],
