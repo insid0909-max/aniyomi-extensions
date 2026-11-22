@@ -3,14 +3,14 @@ const mangayomiSources = [{
     "id": 1543279653,
     "name": "[시험] 마루마루 소설",
     "lang": "ko",
-    "baseUrl": "https://marumaru111.com",
+    "baseUrl": "https://marumaru112.com",
     "apiUrl": "",
     "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-manga-extensions/gh-pages/icon/eu.kanade.tachiyomi.extension.ko.newxtoon.png",
     "typeSource": "single",
     "itemType": 2,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "marumaru_novel.js"
@@ -431,7 +431,12 @@ class DefaultExtension extends MProvider {
     }
 
     async json(url) {
-        const res = await this.req(url, this.hdr());
+        let res = await this.req(url, this.hdr());
+        // 0.0.2 (2026-11-22): 회차·본문 서버(api.storagewebtoon.store)는 보낸 곳(Referer)이 옛 주소(marumaru111)면 404 "해당 작품이 없습니다"
+        // (서버에 저장된 응답만 200 이라 들쭉날쭉, 사이트가 112 로 옮긴 뒤 회차 0개였음) → 404 면 Referer 없이 한 번 더
+        if (Number(res.statusCode) === 404 && url.indexOf("storagewebtoon.store") >= 0) {
+            res = await this.req(url, { "User-Agent": MOBILE_UA });
+        }
         const body = fixUtf8(res.body);
         if (!/^\s*[{[]/.test(body)) throw new Error(`사이트 응답을 읽을 수 없습니다 (상태 ${res.statusCode})`);
         return JSON.parse(body);

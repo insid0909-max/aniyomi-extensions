@@ -2,14 +2,14 @@
 const mangayomiSources = [{
     "name": "[시험] 애니마루",
     "lang": "ko",
-    "baseUrl": "https://animaru1.com",
+    "baseUrl": "https://animaru2.com",
     "apiUrl": "",
     "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
     "typeSource": "single",
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/animaru.js"
@@ -20,7 +20,10 @@ const mangayomiSources = [{
 // 작품(회차 포함): /api/anime/{id}?v=playback-url-v1 (item.episodes[].playbackUrl = api.storagewebtoon.store/…/anime/player/N)
 // 재생: 그 재생 화면 글자 안 var s='…/anime/playlist/N/index.m3u8' (암호 없이 그대로 적혀 있음) → 웹뷰 없이 바로.
 // 영상은 HLS 표준 AES-128(키 주소가 재생 목록에 적혀 있고 재생기가 표준대로 처리, 확장은 키를 다루지 않음). 머리글 없이도 열림
-const DEFAULT_BASE_URL = "https://animaru1.com";
+const DEFAULT_BASE_URL = "https://animaru2.com";
+// 0.0.2 (2026-11-22): 사이트가 회차를 새 주소로 옮김 — /api/anime/{id} 의 episodes 는 모두 playable:false·재생 주소 없음(→ 회차 0개였음),
+// 사이트 화면은 이 주소의 episodes[{number,title,published_at(UTC),ready,embed_url=…/anime/player/N}] 를 씀
+const WORKS_API = "https://api.storagewebtoon.store/api/v1/reader/v1/works/";
 const DOMAIN_RE = /^https:\/\/(?:www\.)?animaru\d+\.com$/;
 const HOST_NUM = /animaru(\d+)\.com/;
 // 진짜 사이트 첫 화면 글자 (한글은 글자 설정 없는 응답에서 깨질 수 있어 영어 글자로)
@@ -695,13 +698,47 @@ class DefaultExtension extends MProvider {
         return out.map((x) => x.ep);
     }
 
+    /** 새 회차 자료(사이트 화면과 같은 곳). 못 받으면 [] → 예전 방식 */
+    async worksEpisodes(id) {
+        try {
+            const r = await this.client.get(WORKS_API + id, { "User-Agent": UA, "Accept": "application/json", "Referer": `${this.getBaseUrl()}/` });
+            if (Number(r.statusCode) !== 200) return [];
+            const d = JSON.parse(fixUtf8(r.body));
+            return Array.isArray(d && d.episodes) ? d.episodes.filter((e) => e && str(e, "embed_url") && e.ready !== false) : [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    episodesFromWorks(o, arr) {
+        const movie = str(o, "format") === "Movie" && arr.length === 1;
+        const used = {};
+        const out = [];
+        arr.forEach((e, i) => {
+            let num = Number(e.number);
+            if (!(num > 0)) {
+                const m = /(\d+(?:\.\d+)?)\s*화/.exec(str(e, "title"));
+                num = m ? Number(m[1]) : 0;
+            }
+            const t = Date.parse(str(e, "published_at"));
+            const date = isNaN(t) ? 0 : t;
+            const base = movie ? "본편" : num > 0 ? `${num}화` : str(e, "title") || "특별편";
+            let n = num > 0 ? num : arr.length - i;
+            while (used[n]) n = Math.round((n + 0.01) * 100) / 100;
+            used[n] = true;
+            out.push({ n, ep: { name: base + (date ? ` (${mmdd(date)})` : ""), url: str(e, "embed_url"), dateUpload: date ? String(date) : null } });
+        });
+        out.sort((a, b) => b.n - a.n);
+        return out.map((x) => x.ep);
+    }
+
     async getDetail(url) {
         const id = (/(\d+)(?!.*\d)/.exec(String(url)) || [])[1];
         if (!id) throw new Error("잘못된 작품 주소");
-        const data = await this.api(`/api/anime/${id}?v=playback-url-v1`);
+        const [data, works] = await Promise.all([this.api(`/api/anime/${id}?v=playback-url-v1`), this.worksEpisodes(id)]);
         const o = data.item;
         if (!o) throw new Error("작품 정보를 찾지 못했습니다");
-        const episodes = this.episodes(o);
+        const episodes = works.length ? this.episodesFromWorks(o, works) : this.episodes(o);
         const latest = Math.max(0, ...episodes.map((e) => Number(e.dateUpload) || 0)) || dayMs(str(o, "lastUpdatedAt"));
         const ongoing = str(o, "status") === "방영중";
         const tags = [].concat(Array.isArray(o.genres) ? o.genres : [], Array.isArray(o.tags) ? o.tags : [])
@@ -746,7 +783,9 @@ class DefaultExtension extends MProvider {
             if (!m) return "";
             const d = await this.api(`/api/anime/${m[1]}?v=playback-url-v1`);
             const e = ((d.item || {}).episodes || []).find((x) => str(x, "key") === m[2] || str(x, "number") === m[2]);
-            return e ? str(e, "playbackUrl") : "";
+            if (e && str(e, "playbackUrl")) return str(e, "playbackUrl");
+            const w = (await this.worksEpisodes(m[1])).find((x) => str(x, "number") === m[2]);
+            return w ? str(w, "embed_url") : "";
         };
         if (!player) player = await refind();
         if (!player) throw new Error("이 회차의 재생 주소가 없어요. 회차 목록을 아래로 당겨 새로고침해 주세요");
