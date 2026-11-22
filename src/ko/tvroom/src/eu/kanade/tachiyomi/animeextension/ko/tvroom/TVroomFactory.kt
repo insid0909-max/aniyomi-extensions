@@ -57,11 +57,7 @@ class TVroomFactory : AnimeSourceFactory {
             list.add(ErrorSource("애니야24 오류", e))
         }
         // 미미티비(MimiTV.kt)는 2026-11-22 목록에서 뺌 — 사이트가 티비톡으로 바뀜, 파일은 남김
-        try {
-            list.add(TvTok()) // 티비톡 (2026-11-22, 미미티비 새 이름, 망가요미판 0.1.0 과 같은 규칙)
-        } catch (e: Throwable) {
-            list.add(ErrorSource("티비톡 오류", e))
-        }
+        // 티비톡(TvTok.kt)도 같은 날 뺌 — 사이트에 빠진 회차가 너무 많음(사용자 요청), 파일은 남김
         try {
             list.add(TVwiki()) // 티비위키 (2026-11-10, 망가요미판과 같은 규칙)
         } catch (e: Throwable) {

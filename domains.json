@@ -37,10 +37,6 @@
     "aniweek": {
       "baseUrl": "https://aniweek.com",
       "updated": "2026-11-10"
-    },
-    "tvtok": {
-      "baseUrl": "https://tvtok11.com",
-      "updated": "2026-11-22"
     }
   }
 }

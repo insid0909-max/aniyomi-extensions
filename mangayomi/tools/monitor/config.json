@@ -36,13 +36,6 @@
    "key": "tvwiki",
    "url": "https://tvwikiurl.net/",
    "regex": "tvwiki\\d+\\.net"
-  },
-  {
-   "name": "티비톡",
-   "key": "tvtok",
-   "url": "https://t.me/s/tvtok_url",
-   "regex": "tvtok\\d+\\.com",
-   "verify": "티비톡"
   }
  ],
  "sites": [
@@ -61,30 +54,13 @@
     30
    ],
    "key": "gogotv"
-  },
-  {
-   "name": "티비톡",
-   "currentFrom": {
-    "file": "mangayomi/javascript/anime/src/ko/tvtok.js",
-    "regex": "DEFAULT_BASE_URL = \"(https://tvtok\\d+\\.com)\""
-   },
-   "pattern": "^https://tvtok(\\d+)\\.com$",
-   "format": "https://tvtok{n}.com",
-   "probe": "/",
-   "marker": "티비톡",
-   "range": [
-    -2,
-    10
-   ],
-   "key": "tvtok"
   }
  ],
  "replaceIn": [
   "src/ko/tvroom/src/eu/kanade/tachiyomi/animeextension/ko/tvroom/GogoTV.kt",
   "mangayomi/javascript/anime/src/ko/gogotv.js",
   "mangayomi/anime_index.json",
-  "domains.json",
-  "mangayomi/javascript/anime/src/ko/tvtok.js"
+  "domains.json"
  ],
  "indexFiles": [
   "mangayomi/anime_index.json"
@@ -101,12 +77,6 @@
    "file": "mangayomi/javascript/anime/src/ko/ohli24.js",
    "depth": "detail",
    "key": "ohli24"
-  },
-  {
-   "name": "티비톡 (망가요미)",
-   "file": "mangayomi/javascript/anime/src/ko/tvtok.js",
-   "depth": "detail",
-   "key": "tvtok"
   },
   {
    "name": "실시간스포츠1 (망가요미)",
