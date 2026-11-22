@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/tvtok.js"
@@ -388,6 +388,40 @@ function hlsHint(list) {
 }
 
 
+/**
+ * 회차 이름 읽기 (0.1.1, 작품 288개 회차 모양 점검): "제01회" → 1회, "이혼숙려캠프 제102회" → 102회(앞의 프로그램 이름 뺌),
+ * "제05회 260923" → 5회 + 날짜 26.09.23, "제01회~제04회" → 1~4회, "제23회~최종회" → 23회~최종회, "제8화(완)" → 8화 (완)
+ */
+function epParse(label) {
+    const s = String(label || "").trim();
+    const fmt = (n) => String(Number(n));
+    let m = /^(.*?)(?:제\s*)?(\d+(?:\.\d+)?)\s*(회|화)?\s*[~\-]\s*(?:제\s*)?(\d+(?:\.\d+)?|최종)\s*(회|화)(.*)$/.exec(s);
+    let num = null;
+    let head = "";
+    let rest = "";
+    if (m) {
+        num = Number(m[2]);
+        const unit = m[5];
+        head = `${fmt(m[2])}${m[3] ? m[3] : ""}~${m[4] === "최종" ? "최종" : fmt(m[4])}${unit}`;
+        rest = m[6];
+    } else if ((m = /^(.*?)(?:제\s*)?(\d+(?:\.\d+)?)\s*(회|화)(.*)$/.exec(s))) {
+        num = Number(m[2]);
+        head = `${fmt(m[2])}${m[3]}`;
+        rest = m[4];
+    } else {
+        return { num: null, name: s, ms: 0 };
+    }
+    rest = rest.trim();
+    // 번호 뒤 6자리 날짜(yymmdd)는 날짜로
+    let ms = 0;
+    const dm = /^(\d{2})(\d{2})(\d{2})(?!\d)\s*/.exec(rest);
+    if (dm && +dm[2] >= 1 && +dm[2] <= 12 && +dm[3] >= 1 && +dm[3] <= 31) {
+        ms = Date.UTC(2000 + +dm[1], +dm[2] - 1, +dm[3]) - 9 * 3600000;
+        rest = rest.substring(dm[0].length).trim();
+    }
+    return { num, name: head + (rest ? " " + rest : ""), ms };
+}
+
 class DefaultExtension extends MProvider {
     constructor() {
         super();
@@ -582,20 +616,18 @@ class DefaultExtension extends MProvider {
         const bare = (s) => String(s || "").replace(title, "").replace(/^[\s:·\-–]+/, "").trim();
         const episodes = [];
         let newest = 0;
-        // 회차 차례가 작품마다 다름(신병4 는 최신이 위, 옛 드라마는 1화가 위) → 번호로 방향을 봐 최신이 위로
-        const raw = (d.episodes || []).filter((e) => e && e.id != null);
-        const numOf = (e) => Number((/(?:제\s*)?(\d+(?:\.\d+)?)\s*(?:회|화)/.exec(bare(e.title)) || [])[1]);
-        const nums = raw.map(numOf).filter((n) => !isNaN(n));
-        if (nums.length >= 2 && nums[0] < nums[nums.length - 1]) raw.reverse();
-        for (const e of raw) {
-            const label = bare(e.title) || String(e.title || "").trim();
-            const n = (/(?:제\s*)?(\d+(?:\.\d+)?)\s*(?:회|화)/.exec(label) || [])[1];
-            const ms = dayMs(e.date);
+        // 회차 차례가 작품마다 다름(신병4 는 최신이 위, 옛 드라마는 1화가 위, 메이드 인 코리아 2 는 6·4·3·2·1·05 로 섞임)
+        // → 모두 번호가 있으면 번호 큰 순서로, 번호 없는 회차가 섞이면 방향만 맞춤 (0.1.1)
+        const raw = (d.episodes || []).filter((e) => e && e.id != null)
+            .map((e, i) => ({ e, i, p: epParse(bare(e.title) || String(e.title || "").trim()) }));
+        const numbered = raw.filter((x) => x.p.num != null);
+        if (numbered.length === raw.length && raw.length >= 2) raw.sort((a, b) => b.p.num - a.p.num || a.i - b.i);
+        else if (numbered.length >= 2 && numbered[0].p.num < numbered[numbered.length - 1].p.num) raw.reverse();
+        for (const { e, p } of raw) {
+            const ms = dayMs(e.date) || p.ms;
             if (ms > newest) newest = ms;
             const date = ms ? ` (${pad2(new Date(ms + 9 * 3600000).getUTCMonth() + 1)}.${pad2(new Date(ms + 9 * 3600000).getUTCDate())})` : "";
-            const rest = n ? label.replace(/(?:제\s*)?\d+(?:\.\d+)?\s*(?:회|화)/, "").trim() : label;
-            const name = n ? `${n}회${rest ? " " + rest : ""}${date}` : `${label}${date}`;
-            episodes.push({ name, url: `${path}#ep=${e.id}`, dateUpload: ms ? String(ms) : null });
+            episodes.push({ name: p.name + date, url: `${path}#ep=${e.id}`, dateUpload: ms ? String(ms) : null });
         }
         if (movie && episodes.length === 1) episodes[0].name = "1. 본편";
         const updated = dayMs(d.updated) || newest;

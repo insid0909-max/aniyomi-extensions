@@ -313,26 +313,28 @@ class TvTok : AnimeHttpSource(), ConfigurableAnimeSource {
         val o = json(response, "회차")
         val title = o.str("title")
         val arr = o.optJSONArray("episodes") ?: JSONArray()
-        val raw = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.filter { it.str("id").isNotEmpty() }
-            .distinctBy { it.str("id") }.toMutableList()
         fun bare(s: String) = s.replace(title, "").trim().trimStart(':', '·', '-', '–', ' ').trim()
-        fun numOf(e: JSONObject) = EP_NUM.find(bare(e.str("title")))?.groupValues?.get(1)?.toFloatOrNull()
-        // 회차 차례가 작품마다 다름(신병4 는 최신이 위, 옛 드라마는 1화가 위) → 번호로 방향을 봐 최신이 위로
-        val nums = raw.mapNotNull { numOf(it) }
-        if (nums.size >= 2 && nums.first() < nums.last()) raw.reverse()
+        val items = (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.filter { it.str("id").isNotEmpty() }
+            .distinctBy { it.str("id") }
+            .mapIndexed { i, e -> Triple(e, i, epParse(bare(e.str("title")).ifEmpty { e.str("title") })) }
+            .toMutableList()
+        // 회차 차례가 작품마다 다름(신병4 는 최신이 위, 옛 드라마는 1화가 위, 메이드 인 코리아 2 는 6·4·3·2·1·05 로 섞임)
+        // → 모두 번호가 있으면 번호 큰 순서로, 번호 없는 회차가 섞이면 방향만 맞춤 (망가요미 0.1.1 과 같게)
+        val numbered = items.filter { it.third.num != null }
+        if (numbered.size == items.size && items.size >= 2) {
+            items.sortWith(compareByDescending<Triple<JSONObject, Int, Ep>> { it.third.num!! }.thenBy { it.second })
+        } else if (numbered.size >= 2 && numbered.first().third.num!! < numbered.last().third.num!!) {
+            items.reverse()
+        }
         val used = HashSet<Float>()
-        val list = raw.mapIndexed { i, e ->
-            val label = bare(e.str("title")).ifEmpty { e.str("title") }
-            val n = numOf(e)
-            val ms = dayMs(e.str("date"))
+        val list = items.mapIndexed { i, (e, _, p) ->
+            val ms = dayMs(e.str("date")).takeIf { it > 0 } ?: p.ms
             val date = if (ms > 0) " (${MMDD_FMT.get()!!.format(ms)})" else ""
-            val rest = if (n != null) label.replace(EP_NUM_FULL, "").trim() else label
-            val shown = n?.let { if (it % 1f == 0f) it.toInt().toString() else it.toString() }
-            var num = n ?: (raw.size - i).toFloat()
+            var num = p.num ?: (items.size - i).toFloat()
             while (!used.add(num)) num += 0.01f
             SEpisode.create().apply {
                 url = "$path?ep=${e.str("id")}"
-                name = if (shown != null) "${shown}회${if (rest.isNotEmpty()) " $rest" else ""}$date" else "$label$date"
+                name = p.name + date
                 episode_number = num
                 if (ms > 0) date_upload = ms
             }
@@ -411,6 +413,48 @@ class TvTok : AnimeHttpSource(), ConfigurableAnimeSource {
         HlsQuality.addPreference(screen)
     }
 
+    private class Ep(val num: Float?, val name: String, val ms: Long)
+
+    /**
+     * 회차 이름 읽기 (작품 288개 회차 모양 점검, 망가요미 epParse 와 같음): "제01회" → 1회, "이혼숙려캠프 제102회" → 102회,
+     * "제05회 260923" → 5회 + 날짜 26.09.23, "제01회~제04회" → 1~4회, "제23회~최종회" → 23회~최종회, "제8화(완)" → 8화 (완)
+     */
+    private fun epParse(label: String): Ep {
+        val s = label.trim()
+        fun fmt(n: String) = n.toBigDecimal().stripTrailingZeros().toPlainString()
+        val head: String
+        var rest: String
+        val num: Float
+        val r = EP_RANGE.find(s)
+        val one = if (r == null) EP_ONE.find(s) else null
+        when {
+            r != null -> {
+                val g = r.groupValues
+                num = g[2].toFloat()
+                head = "${fmt(g[2])}${g[3]}~${if (g[4] == "최종") "최종" else fmt(g[4])}${g[5]}"
+                rest = g[6]
+            }
+            one != null -> {
+                val g = one.groupValues
+                num = g[2].toFloat()
+                head = "${fmt(g[2])}${g[3]}"
+                rest = g[4]
+            }
+            else -> return Ep(null, s, 0L)
+        }
+        rest = rest.trim()
+        // 번호 뒤 6자리 날짜(yymmdd)는 날짜로
+        var ms = 0L
+        YYMMDD.find(rest)?.let { d ->
+            val (y, mo, da) = d.destructured
+            if (mo.toInt() in 1..12 && da.toInt() in 1..31) {
+                ms = dayMs("20$y-$mo-$da")
+                rest = rest.substring(d.value.length).trim()
+            }
+        }
+        return Ep(num, head + if (rest.isNotEmpty()) " $rest" else "", ms)
+    }
+
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
         private const val PREF_AUTO_DOMAIN = "pref_auto_domain"
@@ -431,8 +475,9 @@ class TvTok : AnimeHttpSource(), ConfigurableAnimeSource {
         private val PASTE_HOST = Regex("""^(?:https?://)?((?:www\.)?tvtok\d*\.[a-z]{2,6})(?:/|$)""", RegexOption.IGNORE_CASE)
         private val WATCH_PATH = Regex("""/watch/([a-z_]+)/(\d+)""")
         private val EP_PARAM = Regex("""[?&]ep=(\d+)""")
-        private val EP_NUM = Regex("""(?:제\s*)?(\d+(?:\.\d+)?)\s*(?:회|화)""")
-        private val EP_NUM_FULL = Regex("""(?:제\s*)?\d+(?:\.\d+)?\s*(?:회|화)""")
+        private val EP_RANGE = Regex("""^(.*?)(?:제\s*)?(\d+(?:\.\d+)?)\s*(회|화)?\s*[~\-]\s*(?:제\s*)?(\d+(?:\.\d+)?|최종)\s*(회|화)(.*)$""")
+        private val EP_ONE = Regex("""^(.*?)(?:제\s*)?(\d+(?:\.\d+)?)\s*(회|화)(.*)$""")
+        private val YYMMDD = Regex("""^(\d{2})(\d{2})(\d{2})(?!\d)\s*""")
         private val DATE_RE = Regex("""(\d{4})-(\d{1,2})-(\d{1,2})""")
         private val YEAR_IN_TITLE = Regex("""\((?:19|20)\d{2}\)""")
 
