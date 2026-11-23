@@ -134,7 +134,7 @@
   {
     "name": "애니24",
     "id": 1543270631,
-    "baseUrl": "https://www.ohli24.net",
+    "baseUrl": "https://a101.ohli24.net",
     "lang": "ko",
     "typeSource": "single",
     "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
@@ -144,7 +144,7 @@
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/mangayomi/javascript/anime/src/ko/ohli24.js",
     "apiUrl": "",
-    "version": "0.1.26",
+    "version": "0.1.27",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
