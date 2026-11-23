@@ -449,7 +449,7 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
         val host = c.optString("host")
         val contentId = c.optString("contentId")
         val pathType = c.optString("pathType")
-        // 영상 서버는 poorcdn.com 의 어느 서버든(every10 등, 2026-11-10 리처만 안 되던 것), 경로 종류는 한 글자, 영상 번호는 16~64자
+        // 영상 서버는 poorcdn.com 의 어느 서버든(every10 등, 2026-11-10 리처만 안 되던 것), 경로 종류는 한 글자, 영상 번호는 8~64자(스포트라이트 14자, 2026-11-23)
         if (c.optString("id").isEmpty() || !PATH_TYPE.matches(pathType) || !CAST_HOST.matches(host) || !CONTENT_ID.matches(contentId)) {
             throw Exception("지원하지 않는 재생 설정 [경로 ${pathType.take(8).ifEmpty { "-" }} · 서버 ${host.take(40).ifEmpty { "-" }} · 번호 ${contentId.length}자]")
         }
@@ -643,7 +643,7 @@ class TVwiki : AnimeHttpSource(), ConfigurableAnimeSource {
         private val PATH_TYPE = Regex("""^[a-z]$""")
         private val SID = Regex("""[?&]sid=""")
         private val MP4 = Regex("""\.mp4(?:[?#]|$)""", RegexOption.IGNORE_CASE)
-        private val CONTENT_ID = Regex("""^[A-Za-z0-9_-]{16,64}$""")
+        private val CONTENT_ID = Regex("""^[A-Za-z0-9_-]{8,64}$""")
         private val TOKEN = Regex("""^p1\.[A-Za-z0-9_.-]+$""")
         private val DATA_M3U8 = Regex("""data-m3u8=["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE)
         private val ANY_M3U8 = Regex("""https?://[^"'\s<>\\]+\.m3u8[^"'\s<>\\]*""", RegexOption.IGNORE_CASE)
