@@ -37,6 +37,10 @@
     "aniweek": {
       "baseUrl": "https://aniweek.com",
       "updated": "2026-11-10"
+    },
+    "ohli24": {
+      "baseUrl": "https://a101.ohli24.net",
+      "updated": "2026-11-23"
     }
   }
 }

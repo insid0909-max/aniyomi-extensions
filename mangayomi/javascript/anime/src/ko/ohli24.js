@@ -1,14 +1,14 @@
 const mangayomiSources = [{
     "name": "애니24",
     "lang": "ko",
-    "baseUrl": "https://www.ohli24.net",
+    "baseUrl": "https://a101.ohli24.net",
     "apiUrl": "",
     "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
     "typeSource": "single",
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.26",
+    "version": "0.1.27",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/ohli24.js"
@@ -19,9 +19,11 @@ const mangayomiSources = [{
 //   (방영중·완결·극장판, 응답은 callback({"msg":"목록 HTML"}))
 // 검색: /search/keyword-{검색어}[-parent_id-0-page-N].html, 작품: /{번호}/{제목}.html (회차 .eps-box, 날짜 .eps-date),
 // 회차: /{번호}/{제목}-N화.html 안의 iframe#video(michealcdn.com/video/…) 플레이어
-const DEFAULT_BASE_URL = "https://www.ohli24.net";
-const DOMAIN_RE = /^https:\/\/(?:www\.)?ohli\d*24\.[a-z]{2,6}$/;
-const HOST_RE = /^https?:\/\/(?:www\.)?ohli\d*24\.[a-z]{2,6}(?=\/|$)/;
+// 2026-11-23 사이트가 a101.ohli24.net 으로 옮김(화면 구조는 그대로) → 앞에 글자+번호가 붙은 주소(aN.)도 받음, 옛 www 주소는 무시
+const DEFAULT_BASE_URL = "https://a101.ohli24.net";
+const OLD_BASE_RE = /^https:\/\/(?:www\.)?ohli24\.net$/;
+const DOMAIN_RE = /^https:\/\/(?:www\.|[a-z]\d+\.)?ohli\d*24\.[a-z]{2,6}$/;
+const HOST_RE = /^https?:\/\/(?:www\.|[a-z]\d+\.)?ohli\d*24\.[a-z]{2,6}(?=\/|$)/;
 const LABEL = "애니24";
 const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
     "Chrome/124.0.0.0 Mobile Safari/537.36";
@@ -375,11 +377,11 @@ class DefaultExtension extends MProvider {
         try {
             const p = new SharedPreferences();
             custom = (p.get("ohli24_domain") || "").trim().replace(/\/+$/, "");
-            if (!DOMAIN_RE.test(custom)) custom = (p.getString("ohli24_auto_domain", "") || "").trim();
+            if (!DOMAIN_RE.test(custom) || OLD_BASE_RE.test(custom)) custom = (p.getString("ohli24_auto_domain", "") || "").trim();
         } catch (e) {
             custom = "";
         }
-        return DOMAIN_RE.test(custom) ? custom : DEFAULT_BASE_URL;
+        return DOMAIN_RE.test(custom) && !OLD_BASE_RE.test(custom) ? custom : DEFAULT_BASE_URL;
     }
 
     getHeaders(url) {
@@ -863,7 +865,7 @@ class DefaultExtension extends MProvider {
                 summary: `비워 두면 기본 주소(${DEFAULT_BASE_URL})를 사용합니다.`,
                 value: "",
                 dialogTitle: "애니24 주소",
-                dialogMessage: "https:// 로 시작하는 애니24 주소 (예: https://www.ohli24.net)",
+                dialogMessage: "https:// 로 시작하는 애니24 주소 (예: https://a101.ohli24.net)",
             },
         }, qualityPreference("ohli24_quality")];
     }

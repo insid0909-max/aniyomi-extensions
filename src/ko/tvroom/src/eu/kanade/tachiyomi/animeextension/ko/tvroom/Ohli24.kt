@@ -70,7 +70,8 @@ class Ohli24 : AnimeHttpSource(), ConfigurableAnimeSource {
     override val baseUrl: String
         get() {
             val custom = prefs()?.getString(PREF_DOMAIN_KEY, "")?.trim()?.trimEnd('/').orEmpty()
-            return if (DOMAIN_REGEX.matches(custom)) custom else DEFAULT_BASE_URL
+            // 2026-11-23 사이트가 a101.ohli24.net 으로 옮김(화면 구조는 그대로) — 예전에 저장된 옛 www 주소는 무시
+            return if (DOMAIN_REGEX.matches(custom) && !OLD_BASE.matches(custom)) custom else DEFAULT_BASE_URL
         }
 
     override val client: OkHttpClient = network.client.newBuilder()
@@ -489,7 +490,7 @@ class Ohli24 : AnimeHttpSource(), ConfigurableAnimeSource {
             title = "애니24 주소 직접 지정 (선택)"
             summary = "빈 값이면 기본 주소($DEFAULT_BASE_URL)를 사용합니다. 사이트가 새 주소로 넘겨 주면 자동으로 저장됩니다.\n현재 주소: $baseUrl"
             dialogTitle = "기본값: $DEFAULT_BASE_URL"
-            dialogMessage = "https:// 로 시작하는 애니24 주소 (예: https://www.ohli24.net)"
+            dialogMessage = "https:// 로 시작하는 애니24 주소 (예: https://a101.ohli24.net)"
             setDefaultValue("")
             setOnPreferenceChangeListener { _, newValue ->
                 val input = (newValue as String).trim().trimEnd('/')
@@ -497,7 +498,7 @@ class Ohli24 : AnimeHttpSource(), ConfigurableAnimeSource {
                     summary = "현재 주소: ${input.ifEmpty { DEFAULT_BASE_URL }}"
                     true
                 } else {
-                    Toast.makeText(ctx, "올바른 주소 형식이 아닙니다 (예: https://www.ohli24.net)", Toast.LENGTH_LONG).show()
+                    Toast.makeText(ctx, "올바른 주소 형식이 아닙니다 (예: https://a101.ohli24.net)", Toast.LENGTH_LONG).show()
                     false
                 }
             }
@@ -508,15 +509,16 @@ class Ohli24 : AnimeHttpSource(), ConfigurableAnimeSource {
 
     companion object {
         private const val PREF_DOMAIN_KEY = "pref_domain_key"
-        private const val DEFAULT_BASE_URL = "https://www.ohli24.net"
+        private const val DEFAULT_BASE_URL = "https://a101.ohli24.net"
+        private val OLD_BASE = Regex("""^https://(?:www\.)?ohli24\.net$""")
         private const val RATE_GAP_MS = 300L
         private const val LABEL = "애니24"
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/124.0.0.0 Mobile Safari/537.36"
 
-        private val DOMAIN_REGEX = Regex("""^https://(?:www\.)?ohli\d*24\.[a-z]{2,6}$""")
-        private val HOST_REGEX = Regex("""^(?:www\.)?ohli\d*24\.[a-z]{2,6}$""")
+        private val DOMAIN_REGEX = Regex("""^https://(?:www\.|[a-z]\d+\.)?ohli\d*24\.[a-z]{2,6}$""")
+        private val HOST_REGEX = Regex("""^(?:www\.|[a-z]\d+\.)?ohli\d*24\.[a-z]{2,6}$""")
         private val PASTE_REGEX = Regex("""ohli\d*24\.[a-z]{2,6}(/\d+/[^?#\s]+\.html)""")
         private val DETAIL_PATH = Regex("""^/\d+/[^/]+\.html$""")
         private val YEAR_REGEX = Regex("""(?:19|20)\d{2}""")
