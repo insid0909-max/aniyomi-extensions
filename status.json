@@ -2,26 +2,26 @@
  "items": {
   "gogotv": {
    "origin": "https://gogotv4.xyz",
-   "domain": "alive",
-   "domainSince": "2026-11-02T02:43:54.905Z",
+   "domain": "dead",
+   "domainSince": "2026-11-23T04:00:06.401Z",
    "ok": true,
    "msg": "목록 24개, 회차 8개, 연재",
-   "checkedAt": "2026-11-23T01:56:29.951Z"
+   "checkedAt": "2026-11-23T04:00:10.852Z"
   },
   "ohli24": {
    "ok": false,
    "msg": "애니24 접속 실패 (HTTP 403). 주소가 바뀌었으면 설정에서 새 주소를 넣어 주세요.",
-   "checkedAt": "2026-11-23T01:56:30.085Z"
+   "checkedAt": "2026-11-23T04:00:11.010Z"
   },
   "livesports1": {
    "ok": true,
-   "msg": "목록 5개",
-   "checkedAt": "2026-11-23T01:56:30.319Z"
+   "msg": "목록 3개",
+   "checkedAt": "2026-11-23T04:00:11.684Z"
   },
   "livesports2": {
    "ok": true,
    "msg": "목록 5개",
-   "checkedAt": "2026-11-23T01:56:30.916Z"
+   "checkedAt": "2026-11-23T04:00:12.336Z"
   }
  }
 }
