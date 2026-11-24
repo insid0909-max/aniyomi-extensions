@@ -23,11 +23,15 @@ import eu.kanade.tachiyomi.animesource.model.SEpisode
 import eu.kanade.tachiyomi.animesource.model.Video
 import eu.kanade.tachiyomi.animesource.online.AnimeHttpSource
 import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.POST
+import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -537,11 +541,20 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         val queue = ArrayDeque<Triple<String, String, Int>>()
         nextTargets(startHtml, startUrl).forEach { queue.add(Triple(it, startUrl, 1)) }
         while (queue.isNotEmpty() && visited.size < 10) {
-            val (url, referer, depth) = queue.removeFirst()
-            if (!visited.add(url)) continue
+            val (target, referer, depth) = queue.removeFirst()
+            if (!visited.add(target)) continue
+            // "POST|주소|본문" 은 자동 제출 폼(method=post)을 그대로 보냄 (send5video go.php → detail.php, 2026-11-24)
+            val post = target.takeIf { it.startsWith("POST|") }?.split("|", limit = 3)
+            val url = post?.get(1) ?: target
             val body = runCatching {
-                client.newCall(GET(url, headersBuilder().set("Referer", referer).build())).execute()
-                    .use { it.body.string() }
+                val h = headersBuilder().set("Referer", referer)
+                val req = if (post != null) {
+                    referer.toHttpUrlOrNull()?.let { h.set("Origin", "${it.scheme}://${it.host}") }
+                    POST(url, h.build(), post[2].toRequestBody("application/x-www-form-urlencoded".toMediaType()))
+                } else {
+                    GET(url, h.build())
+                }
+                client.newCall(req).execute().use { it.body.string() }
             }.getOrNull() ?: continue
             val found = findAllMedia(body)
             if (found.isNotEmpty()) {
@@ -558,11 +571,20 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         fun add(u: String) {
             if (u.startsWith("http")) out.add(u)
         }
-        // 자동 제출 폼 (GET): action + 숨은 입력값
-        doc.select("form[action]").toList().filter { it.attr("method").ifEmpty { "get" }.equals("get", true) }.forEach { f ->
-            val b = f.absUrl("action").toHttpUrlOrNull()?.newBuilder() ?: return@forEach
-            f.select("input[name]").forEach { b.addQueryParameter(it.attr("name"), it.attr("value")) }
-            add(b.build().toString())
+        // 자동 제출 폼: action + 숨은 입력값 (GET 은 주소에 붙이고, POST 는 "POST|주소|본문" 으로 넘김)
+        doc.select("form[action]").forEach { f ->
+            val action = f.absUrl("action").toHttpUrlOrNull() ?: return@forEach
+            if (f.attr("method").equals("post", true)) {
+                val body = FormBody.Builder().apply {
+                    f.select("input[name]").forEach { add(it.attr("name"), it.attr("value")) }
+                }.build()
+                val text = (0 until body.size).joinToString("&") { "${body.encodedName(it)}=${body.encodedValue(it)}" }
+                out.add("POST|$action|$text")
+            } else {
+                val b = action.newBuilder()
+                f.select("input[name]").forEach { b.addQueryParameter(it.attr("name"), it.attr("value")) }
+                add(b.build().toString())
+            }
         }
         Regex("""http-equiv=["']?refresh["']?[^>]+url=([^"'>\s]+)""", RegexOption.IGNORE_CASE).findAll(html)
             .forEach { add(doc.location().toHttpUrlOrNull()?.resolve(it.groupValues[1])?.toString().orEmpty()) }
@@ -573,7 +595,8 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
     }
 
     private fun findAllMedia(text: String): List<String> =
-        MEDIA_REGEX.findAll(text.replace("\\/", "/")).map { it.value }.distinct().toList()
+        MEDIA_REGEX.findAll(text.replace("\\/", "/")).map { it.value }
+            .filterNot { FAKE_MEDIA.containsMatchIn(it) }.distinct().toList()
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun sniffWithWebView(url: String): Pair<String, String>? {
@@ -742,6 +765,8 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         private val PATH_REGEX = Regex("""^https?://[^/]+(/.*)$""")
         private val PAGE_REGEX = Regex("""[?&]page=(\d+)""")
         private val EP_REGEX = Regex("""제\s*(\d+)\s*회|E(\d+)""")
+        // 화면 안 입력칸 예시(placeholder) 같은 가짜 영상 주소
+        private val FAKE_MEDIA = Regex("""^https?://(?:www\.)?example\.(?:com|org|net)/""", RegexOption.IGNORE_CASE)
         private val MEDIA_REGEX = Regex(
             """https?://[^"'\s<>\\]+\.(?:m3u8|mp4)(?:\?[^"'\s<>\\]*)?""",
             RegexOption.IGNORE_CASE,
