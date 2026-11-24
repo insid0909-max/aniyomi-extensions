@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.50",
+    "version": "0.1.51",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -727,10 +727,27 @@ class DefaultExtension extends MProvider {
             const no = /제\s*(\d+)\s*회|E(\d+)/.exec(label);
             const dm = /(\d{2})\/(\d{2})\/(\d{2})/.exec(label);
             const note = label.includes(" - ") ? label.split(" - ").slice(1).join(" - ").trim() : "";
-            const shown = no && dm ? `${Number(no[1] || no[2])}회 (${dm[2]}.${dm[3]})${note ? ` ${note}` : ""}` : label;
-            links.push({ name: shown, url: href, dateUpload: at ? String(at) : null });
+            // 번호 없는 "문무 스페셜 26/11/07" → "문무 스페셜 (11.07)" (번호는 아래에서 붙임)
+            const shown = no && dm ? `${Number(no[1] || no[2])}회 (${dm[2]}.${dm[3]})${note ? ` ${note}` : ""}`
+                : dm ? `${label.split(" - ")[0].replace(dm[0], "").replace(/\s+/g, " ").trim()} (${dm[2]}.${dm[3]})${note ? ` ${note}` : ""}` : label;
+            links.push({ name: shown, url: href, dateUpload: at ? String(at) : null, no: no ? Number(no[1] || no[2]) : null });
             rawLabels.push(label);
         }
+
+        // 번호 없는 회차(스페셜 등)는 앞 회차 번호 뒤 .1·.2… 를 이름 앞에 (오래된 것부터, 맨 앞이면 0.1) —
+        // 망가요미가 날짜 숫자(26)를 번호로 읽어 "26.05. 4회" 처럼 되던 것 (2026-11-24 문무)
+        if (links.some((l) => l.no !== null)) {
+            let last = 0;
+            let k = 0;
+            for (let i = links.length - 1; i >= 0; i--) {
+                const l = links[i];
+                if (l.no !== null) { last = l.no; k = 0; continue; }
+                k++;
+                const v = Math.round((last + (k <= 9 ? k * 0.1 : 0.9 + (k - 9) * 0.01)) * 100) / 100;
+                l.name = `${v}. ${l.name}`;
+            }
+        }
+        for (const l of links) delete l.no;
 
         // 방영 중/종영 판단은 목록 카드와 같은 기준: 가장 최근 회차가 최종회가 아니고 21일 안이면 방영 중
         const period = info.find((t) => t.includes("~"));

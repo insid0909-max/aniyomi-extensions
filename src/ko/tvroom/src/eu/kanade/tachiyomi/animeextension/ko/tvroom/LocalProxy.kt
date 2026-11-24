@@ -19,7 +19,14 @@ import kotlin.concurrent.thread
  * 재생 목록(m3u8)은 안의 주소만 이 중계 주소로 바꾸고, 조각·열쇠는 내용을 바꾸지 않고 그대로 전달 (순정 망가요미 createHlsProxyUrl 과 같은 방식)
  */
 internal object LocalProxy {
-    private class Session(val client: OkHttpClient, val headers: Headers, val at: Long, val diag: Boolean = false)
+    private class Session(val client: OkHttpClient, val headers: Headers, val at: Long, val diag: Boolean = false, val prefetch: Int = 0) {
+        // 미리 받기(prefetch > 0): 재생 목록 속 조각 차례와 미리 받아 둔 조각 (주소 → (형식, 내용))
+        val order = java.util.Collections.synchronizedList(ArrayList<String>())
+        val ahead = ConcurrentHashMap<String, java.util.concurrent.Future<Pair<String, ByteArray>?>>()
+    }
+
+    // 조각 미리 받기 일꾼 (모든 세션 공유, 동시에 4개까지)
+    private val POOL = java.util.concurrent.Executors.newFixedThreadPool(4) { r -> Thread(r, "LocalProxy-ahead").apply { isDaemon = true } }
 
     // [임시 진단] diag 세션의 요청 기록 (2026-11-17 링크애니 조각 403 원인 찾기 — 원인 찾으면 뺄 것)
     private val DIAG = java.util.concurrent.ConcurrentLinkedDeque<String>()
@@ -59,11 +66,11 @@ internal object LocalProxy {
         return s.localPort
     }
 
-    private fun newSession(client: OkHttpClient, headers: Headers, diag: Boolean = false): String {
+    private fun newSession(client: OkHttpClient, headers: Headers, diag: Boolean = false, prefetch: Int = 0): String {
         val now = System.currentTimeMillis()
         SESSIONS.entries.removeIf { now - it.value.at > KEEP_MS }
         val sid = now.toString(36) + (SESSIONS.size + 1)
-        SESSIONS[sid] = Session(client, headers, now, diag)
+        SESSIONS[sid] = Session(client, headers, now, diag, prefetch)
         // 앞 기록은 지우지 않음(회차를 다시 열면 멈춘 기록이 사라졌음) — 구분 줄만
         if (diag) diagAdd("── 회차 열기: 중계 준비 (재생기가 아직 요청 안 함)")
         return sid
@@ -71,6 +78,13 @@ internal object LocalProxy {
 
     /** 원래 재생 목록 주소 → 재생기에 줄 중계 주소 (diag = 요청 기록 남기기) */
     fun playlist(client: OkHttpClient, headers: Headers, url: String, diag: Boolean = false): String = proxied(newSession(client, headers, diag), url, true)
+
+    /**
+     * 재생 목록 중계 + 다음 조각 [count]개를 미리 동시에 받아 둠 (2026-11-24 고고티비 keezip: 조각 하나에 1~15초로 느린 서버 —
+     * 하나씩 받으면 영상보다 느려 끊기고, 4개씩 동시에 받으면 영상보다 빠름. 애니요미 재생기는 조각을 하나씩 차례로 요청함)
+     */
+    fun playlistAhead(client: OkHttpClient, headers: Headers, url: String, count: Int = 4): String =
+        proxied(newSession(client, headers, prefetch = count), url, true)
 
     /** [임시 진단] 재생 목록 + 자막(.vtt)도 같은 중계로 — 자막 요청도 기록 (2026-11-17 링크애니: 조각 2개 받고 멈춤) */
     fun playlistWithSub(client: OkHttpClient, headers: Headers, url: String, sub: String?, diag: Boolean = false): Pair<String, String?> {
@@ -114,7 +128,17 @@ internal object LocalProxy {
                     val tagList = t.startsWith("#EXT-X-MEDIA") || t.startsWith("#EXT-X-I-FRAME-STREAM-INF")
                     URI_ATTR.replace(line) { m -> "URI=\"${proxied(sid, (b.resolve(m.groupValues[1]) ?: return@replace m.value).toString(), tagList)}\"" }
                 }
-                else -> (b.resolve(t)?.let { proxied(sid, it.toString(), nextIsList) } ?: line).also { nextIsList = false }
+                else -> {
+                    val r = b.resolve(t)
+                    val isList = nextIsList
+                    nextIsList = false
+                    if (r == null) {
+                        line
+                    } else {
+                        if (!isList) SESSIONS[sid]?.takeIf { it.prefetch > 0 }?.order?.add(r.toString())
+                        proxied(sid, r.toString(), isList)
+                    }
+                }
             }
         }
     }
@@ -147,6 +171,18 @@ internal object LocalProxy {
                 val listLike = url.substringBefore('?').endsWith(".m3u8") || parts.lastOrNull().orEmpty().endsWith(".m3u8")
                 val subLike = parts.lastOrNull().orEmpty().endsWith(".vtt")
 
+                // 미리 받기 세션: 이 조각 뒤 몇 개를 미리 받기 시작하고, 이 조각을 이미 받아 두었으면 그것을 넘김 (처음부터 받는 요청만)
+                if (sess.prefetch > 0 && !listLike && !subLike && (range == null || range == "bytes=0-")) {
+                    val got = aheadServe(sess, url)
+                    if (got != null) {
+                        val (type, body) = got
+                        val outType = if (type.isEmpty() || type.startsWith("image/") || type.startsWith("text/")) "video/mp2t" else type
+                        out.write("HTTP/1.1 200 OK\r\nContent-Type: $outType\r\nContent-Length: ${body.size}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n".toByteArray())
+                        if (!head) out.write(body)
+                        out.flush()
+                        return@use
+                    }
+                }
                 // 재생 목록에는 Range 를 넘기지 않음. 조각은 Range 로 400·416 이면 Range 없이 한 번 더 (2026-11-09 MissAV "400")
                 fun call(withRange: Boolean) = sess.client.newCall(
                     Request.Builder().url(url).headers(sess.headers)
@@ -219,6 +255,35 @@ internal object LocalProxy {
             }
             else -> reply(out, 404, "text/plain", ByteArray(0), head, "bad-kind")
         }
+    }
+
+    /** 미리 받은 조각 꺼내기 + 뒤 조각 미리 받기 시작. 없거나 실패면 null (그때는 보통처럼 바로 받음) */
+    private fun aheadServe(sess: Session, url: String): Pair<String, ByteArray>? {
+        val idx = sess.order.indexOf(url)
+        if (idx < 0) return null
+        // 지나간 조각은 버림(뒤로 넘기기·건너뛰기)
+        sess.ahead.keys.filter { k -> sess.order.indexOf(k).let { it < idx || it > idx + sess.prefetch } }
+            .forEach { k -> sess.ahead.remove(k)?.cancel(true) }
+        for (i in idx..minOf(idx + sess.prefetch, sess.order.size - 1)) {
+            val u = sess.order[i]
+            sess.ahead.computeIfAbsent(u) { POOL.submit(java.util.concurrent.Callable { fetchWhole(sess, u) }) }
+        }
+        val f = sess.ahead.remove(url) ?: return null
+        return runCatching { f.get(60, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull()
+    }
+
+    private fun fetchWhole(sess: Session, url: String): Pair<String, ByteArray>? {
+        repeat(3) { n ->
+            val r = runCatching {
+                sess.client.newCall(Request.Builder().url(url).headers(sess.headers).build()).execute().use { rs ->
+                    if (rs.isSuccessful) rs.header("Content-Type").orEmpty() to rs.body.bytes() else null
+                }
+            }.getOrNull()
+            if (r != null) return r
+            if (Thread.currentThread().isInterrupted) return null
+            runCatching { Thread.sleep(400L * (n + 1)) }.onFailure { return null }
+        }
+        return null
     }
 
     private fun reply(out: OutputStream, code: Int, type: String, body: ByteArray, head: Boolean, why: String = "OK") {

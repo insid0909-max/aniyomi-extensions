@@ -428,20 +428,42 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         // 회차 주소는 만료되므로 "작품 주소#ep=회차 이름" 으로 저장하고, 재생할 때 작품 페이지에서 새 주소를 받음
         val detailPath = response.request.url.encodedPath
 
+        val nos = links.map { (_, label) -> EP_REGEX.find(label)?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() }?.toFloatOrNull() }
+        // 번호 없는 회차(스페셜 등)는 앞 회차 번호 뒤 .1·.2… (오래된 것부터, 맨 앞이면 0.1) — 1회와 번호가 겹치지 않게 (2026-11-24 문무 스페셜)
+        val nums = FloatArray(links.size)
+        if (nos.any { it != null }) {
+            var last = 0f
+            var k = 0
+            for (i in links.indices.reversed()) {
+                val no = nos[i]
+                if (no != null) {
+                    last = no
+                    k = 0
+                    nums[i] = no
+                } else {
+                    k++
+                    nums[i] = last + if (k <= 9) k * 0.1f else 0.9f + (k - 9) * 0.01f
+                }
+            }
+        } else {
+            for (i in links.indices) nums[i] = (links.size - i).toFloat()
+        }
+
         return links.mapIndexed { i, (href, label) ->
-            val no = EP_REGEX.find(label)?.groupValues?.drop(1)?.firstOrNull { it.isNotEmpty() }?.toFloatOrNull()
+            val no = nos[i]
             val d = CARD_DATE_REGEX.find(label)
             SEpisode.create().apply {
                 url = if (href.startsWith(baseUrl)) href.removePrefix(baseUrl) else "$detailPath#ep=" + URLEncoder.encode(label, "UTF-8")
                 // "제19회 26/10/04 - 최종회" → "19회 (10.04) 최종회" 처럼 보기 좋게 (날짜가 없으면 그대로)
-                name = if (no != null && d != null) {
-                    val note = label.substringAfter(" - ", "").trim()
-                    "${no.toInt()}회 (${d.groupValues[2]}.${d.groupValues[3]})" + if (note.isNotEmpty()) " $note" else ""
-                } else {
-                    label
+                // 번호 없는 "문무 스페셜 26/11/07" → "문무 스페셜 (11.07)"
+                val note = label.substringAfter(" - ", "").trim().let { if (it.isNotEmpty()) " $it" else "" }
+                name = when {
+                    no != null && d != null -> "${no.toInt()}회 (${d.groupValues[2]}.${d.groupValues[3]})$note"
+                    d != null -> label.substringBefore(" - ").replace(d.value, "").trim() + " (${d.groupValues[2]}.${d.groupValues[3]})$note"
+                    else -> label
                 }
                 date_upload = dateOf(label)
-                episode_number = no ?: (links.size - i).toFloat()
+                episode_number = nums[i]
             }
         }
     }
@@ -497,10 +519,10 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
                 yieldAll(crawlMedia(html, pageUrl))
             }.distinctBy { it.first }.take(4).onEach { tried.add(it) }
                 .firstOrNull { (m, r) -> HlsQuality.expandIfWorks(client, m, qualityOf(m), videoHeaders(r))?.also { ready = it } != null }
-            ready?.let { return HlsQuality.sort(prefs(), it) }
+            ready?.let { return ahead(HlsQuality.sort(prefs(), it)) }
             val (m, r) = sniffWithWebView(pageUrl) ?: tried.firstOrNull()
                 ?: throw Exception("영상 주소를 찾지 못했습니다: $pageUrl")
-            return HlsQuality.sort(prefs(), HlsQuality.expand(client, m, qualityOf(m), videoHeaders(r)))
+            return ahead(HlsQuality.sort(prefs(), HlsQuality.expand(client, m, qualityOf(m), videoHeaders(r))))
         }
 
         // 1) 페이지와 그 안 iframe 들에 들어 있는 영상 주소 후보를 모두 모음 (최대 4개)
@@ -518,7 +540,21 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
         val extras = working.filter { it != media }.mapIndexed { i, u ->
             Video(u, "${HlsQuality.withRes(qualityOf(u), u)} (대체 ${i + 1})", u, videoHeaders(pageUrl))
         }
-        return HlsQuality.sort(prefs(), HlsQuality.expand(client, media, quality, vh)) + extras
+        return ahead(HlsQuality.sort(prefs(), HlsQuality.expand(client, media, quality, vh))) + extras
+    }
+
+    /**
+     * 느린 영상 서버(keezip — 조각 하나에 1~15초)는 앱 안 중계로 다음 조각 4개를 미리 동시에 받음 (2026-11-24 문무 끊김:
+     * 애니요미 재생기는 조각을 하나씩 받아 영상보다 느렸고, 망가요미는 끊김 없었음)
+     */
+    private fun ahead(list: List<Video>): List<Video> = list.map { v ->
+        val u = v.videoUrl
+        if (u != null && u.toHttpUrlOrNull()?.host?.contains("keezip") == true && u.substringBefore('?').endsWith(".m3u8")) {
+            val p = LocalProxy.playlistAhead(client, v.headers ?: videoHeaders("$baseUrl/"), u)
+            Video(p, v.quality, p)
+        } else {
+            v
+        }
     }
 
     private fun qualityOf(url: String) = if (url.contains(".m3u8")) "고고티비 (HLS)" else "고고티비"
