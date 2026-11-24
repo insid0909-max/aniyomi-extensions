@@ -23,6 +23,9 @@ internal object LocalProxy {
         // 미리 받기(prefetch > 0): 재생 목록 속 조각 차례와 미리 받아 둔 조각 (주소 → (형식, 내용))
         val order = java.util.Collections.synchronizedList(ArrayList<String>())
         val ahead = ConcurrentHashMap<String, java.util.concurrent.Future<Pair<String, ByteArray>?>>()
+
+        // 미리 받은 재생 목록 (주소 → (최종 주소, 글자)) — 재생기가 요청하면 다시 받지 않고 이것을 씀
+        val lists = ConcurrentHashMap<String, java.util.concurrent.Future<Pair<String, String>?>>()
     }
 
     // 조각 미리 받기 일꾼 (모든 세션 공유, 동시에 4개까지)
@@ -83,8 +86,43 @@ internal object LocalProxy {
      * 재생 목록 중계 + 다음 조각 [count]개를 미리 동시에 받아 둠 (2026-11-24 고고티비 keezip: 조각 하나에 1~15초로 느린 서버 —
      * 하나씩 받으면 영상보다 느려 끊기고, 4개씩 동시에 받으면 영상보다 빠름. 애니요미 재생기는 조각을 하나씩 차례로 요청함)
      */
-    fun playlistAhead(client: OkHttpClient, headers: Headers, url: String, count: Int = 4): String =
-        proxied(newSession(client, headers, prefetch = count), url, true)
+    fun playlistAhead(client: OkHttpClient, headers: Headers, url: String, count: Int = 4, warm: Boolean = false): String {
+        val sid = newSession(client, headers, prefetch = count)
+        // warm: 재생기가 켜지는 동안 재생 목록과 첫 조각들을 미리 받아 둠 (2026-11-24 고고티비 재생 시작 약 10초)
+        if (warm) SESSIONS[sid]?.let { sess -> thread(isDaemon = true, name = "LocalProxy-warm") { runCatching { warmUp(sid, sess, url) } } }
+        return proxied(sid, url, true)
+    }
+
+    private fun fetchList(sess: Session, url: String): Pair<String, String>? =
+        runCatching {
+            sess.lists.computeIfAbsent(url) {
+                POOL.submit(
+                    java.util.concurrent.Callable {
+                        runCatching {
+                            sess.client.newCall(Request.Builder().url(url).headers(sess.headers).build()).execute().use { rs ->
+                                if (rs.isSuccessful) rs.request.url.toString() to rs.body.string() else null
+                            }
+                        }.getOrNull()
+                    },
+                )
+            }.get(30, java.util.concurrent.TimeUnit.SECONDS)
+        }.getOrNull()
+
+    private fun warmUp(sid: String, sess: Session, url: String) {
+        var (base, text) = fetchList(sess, url) ?: return
+        // 화질 목록이면 화질이 하나일 때만 그 목록으로 (여럿이면 재생기가 무엇을 고를지 몰라 건너뜀)
+        if (text.contains("#EXT-X-STREAM-INF")) {
+            val variants = text.lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
+            if (variants.size != 1) return
+            val v = base.toHttpUrlOrNull()?.resolve(variants[0])?.toString() ?: return
+            val got = fetchList(sess, v) ?: return
+            base = got.first
+            text = got.second
+        }
+        rewrite(sid, text, base) // 조각 차례 기록
+        val first = sess.order.toList().take(sess.prefetch)
+        for (u in first) sess.ahead.computeIfAbsent(u) { POOL.submit(java.util.concurrent.Callable { fetchWhole(sess, u) }) }
+    }
 
     /** [임시 진단] 재생 목록 + 자막(.vtt)도 같은 중계로 — 자막 요청도 기록 (2026-11-17 링크애니: 조각 2개 받고 멈춤) */
     fun playlistWithSub(client: OkHttpClient, headers: Headers, url: String, sub: String?, diag: Boolean = false): Pair<String, String?> {
@@ -171,6 +209,14 @@ internal object LocalProxy {
                 val listLike = url.substringBefore('?').endsWith(".m3u8") || parts.lastOrNull().orEmpty().endsWith(".m3u8")
                 val subLike = parts.lastOrNull().orEmpty().endsWith(".vtt")
 
+                // 미리 받아 둔 재생 목록이 있으면 그것을 씀
+                if (listLike) {
+                    sess.lists[url]?.let { f ->
+                        runCatching { f.get(30, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull()?.let { (base, text) ->
+                            return@use reply(out, 200, "application/vnd.apple.mpegurl", rewrite(parts[1], text, base).toByteArray(), head)
+                        }
+                    }
+                }
                 // 미리 받기 세션: 이 조각 뒤 몇 개를 미리 받기 시작하고, 이 조각을 이미 받아 두었으면 그것을 넘김 (처음부터 받는 요청만)
                 if (sess.prefetch > 0 && !listLike && !subLike && (range == null || range == "bytes=0-")) {
                     val got = aheadServe(sess, url)

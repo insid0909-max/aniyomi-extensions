@@ -547,10 +547,11 @@ class GogoTV(private val fixedCat: Int = -1) : AnimeHttpSource(), ConfigurableAn
      * 느린 영상 서버(keezip — 조각 하나에 1~15초)는 앱 안 중계로 다음 조각 4개를 미리 동시에 받음 (2026-11-24 문무 끊김:
      * 애니요미 재생기는 조각을 하나씩 받아 영상보다 느렸고, 망가요미는 끊김 없었음)
      */
-    private fun ahead(list: List<Video>): List<Video> = list.map { v ->
+    private fun ahead(list: List<Video>): List<Video> = list.mapIndexed { i, v ->
         val u = v.videoUrl
         if (u != null && u.toHttpUrlOrNull()?.host?.contains("keezip") == true && u.substringBefore('?').endsWith(".m3u8")) {
-            val p = LocalProxy.playlistAhead(client, v.headers ?: videoHeaders("$baseUrl/"), u)
+            // 맨 앞(재생기가 처음 트는) 화질은 재생기가 켜지는 동안 목록·첫 조각을 미리 받아 둠
+            val p = LocalProxy.playlistAhead(client, v.headers ?: videoHeaders("$baseUrl/"), u, warm = i == 0)
             Video(p, v.quality, p)
         } else {
             v
