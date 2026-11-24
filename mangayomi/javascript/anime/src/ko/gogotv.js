@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": true,
-    "version": "0.1.49",
+    "version": "0.1.50",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/gogotv.js"
@@ -23,6 +23,9 @@ const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, 
     "Chrome/124.0.0.0 Mobile Safari/537.36";
 const PLAYER_HINT = /(?:mode\.php|player|embed|\/v\/|\/e\/|[?&]key=)/i;
 const MEDIA_RE = /https?:\/\/[^"'\s<>\\]+\.(?:m3u8|mp4)(?:\?[^"'\s<>\\]*)?/i;
+// 화면 안 입력칸 예시(placeholder) 같은 가짜 영상 주소
+const FAKE_MEDIA = /^https?:\/\/(?:www\.)?example\.(?:com|org|net)\//i;
+const firstMedia = (t) => (t.match(new RegExp(MEDIA_RE.source, "gi")) || []).find((u) => !FAKE_MEDIA.test(u)) || null;
 
 const CATEGORIES = [
     ["드라마", "list-drama"], ["영화", "list-movie"], ["예능", "list-vraiety"],
@@ -822,7 +825,14 @@ class DefaultExtension extends MProvider {
         // 연결 끊김·시간 초과면 잠깐 쉬고 한 번 더
         for (let attempt = 0; attempt < 2 && body === null; attempt++) {
             try {
-                const res = await this.client.get(url, this.headers(referer));
+                // "POST|주소|본문" 은 자동 제출 폼(method=post)을 그대로 보냄 (send5video go.php → detail.php, 2026-11-24)
+                const post = /^POST\|([^|]+)\|(.*)$/.exec(url);
+                const res = post
+                    ? await this.client.post(post[1], Object.assign(this.headers(referer), {
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Origin": (/^https?:\/\/[^/?#]+/.exec(referer || "") || [""])[0],
+                    }), post[2])
+                    : await this.client.get(url, this.headers(referer));
                 body = String(res.body || "");
                 trail.push(`${this.shortUrl(url)}(${res.statusCode})`);
             } catch (e) {
@@ -836,11 +846,12 @@ class DefaultExtension extends MProvider {
         if (media) {
             const text = body.replace(/\\\//g, "/");
             const all = [media].concat(text.match(new RegExp(MEDIA_RE.source, "gi")) || [])
-                .filter((u, i, a) => a.indexOf(u) === i);
-            return { url: media, all, referer: url };
+                .filter((u, i, a) => a.indexOf(u) === i && !FAKE_MEDIA.test(u));
+            const page = url.startsWith("POST|") ? url.split("|")[1] : url;
+            return { url: media, all, referer: page };
         }
 
-        for (const next of this.nextTargets(body, url)) {
+        for (const next of this.nextTargets(body, url.startsWith("POST|") ? url.split("|")[1] : url)) {
             const found = await this.crawl(next, url, depth + 1, visited, trail);
             if (found) return found;
         }
@@ -882,9 +893,17 @@ class DefaultExtension extends MProvider {
             for (const tag of inputs) {
                 const name = /\sname=["']([^"']+)["']/i.exec(tag);
                 const value = /\svalue=["']([^"']*)["']/i.exec(tag);
-                if (name) params.push(`${encodeURIComponent(name[1])}=${encodeURIComponent((value ? value[1] : "").replace(/&amp;/g, "&"))}`);
+                if (!name) continue;
+                const v = (value ? value[1] : "").replace(/&amp;/g, "&");
+                params.push(`${encodeURIComponent(name[1])}=${encodeURIComponent(v)}`);
             }
             const target = action && action[1] ? action[1] : pageUrl;
+            if (/\smethod=["']?post/i.test(m[1])) {
+                const abs = this.resolveUrl(pageUrl, target.replace(/&amp;/g, "&"));
+                const key = `POST|${abs}|${params.join("&")}`;
+                if (/^https?:\/\//.test(abs) && !out.includes(key)) out.push(key);
+                continue;
+            }
             add(params.length ? `${target}${target.includes("?") ? "&" : "?"}${params.join("&")}` : target);
         }
         // 그래도 없으면 글자 안의 다른 사이트 플레이어 주소(mode.php, player, embed 등)를 후보로
@@ -903,6 +922,7 @@ class DefaultExtension extends MProvider {
     }
 
     shortUrl(u) {
+        if (String(u || "").startsWith("POST|")) return `POST ${this.shortUrl(String(u).split("|")[1])}`;
         const m = /^https?:\/\/([^/?#]+)([^?#]*)/.exec(u || "");
         return m ? (m[1] + m[2]).substring(0, 50) : String(u).substring(0, 50);
     }
@@ -910,8 +930,8 @@ class DefaultExtension extends MProvider {
     findMedia(html) {
         if (!html) return null;
         const text = html.replace(/\\\//g, "/");
-        let m = MEDIA_RE.exec(text);
-        if (m) return m[0];
+        let m = firstMedia(text);
+        if (m) return m;
         // base64로 숨긴 주소 (aHR0c... = "http")
         for (const b64 of text.match(/aHR0c[A-Za-z0-9+/_-]{10,}={0,2}/g) || []) {
             m = MEDIA_RE.exec(this.base64Decode(b64));
