@@ -6,22 +6,22 @@
    "domainSince": "2026-11-24T01:24:19.725Z",
    "ok": true,
    "msg": "목록 24개, 회차 8개, 연재",
-   "checkedAt": "2026-11-24T07:06:11.949Z"
+   "checkedAt": "2026-11-25T02:44:41.740Z"
   },
   "ohli24": {
    "ok": false,
-   "msg": "애니24 접속 실패 (HTTP 403). 주소가 바뀌었으면 설정에서 새 주소를 넣어 주세요.",
-   "checkedAt": "2026-11-24T07:06:12.128Z"
+   "msg": "a101.ohli24.net HTTP 403",
+   "checkedAt": "2026-11-25T02:44:41.841Z"
   },
   "livesports1": {
    "ok": true,
-   "msg": "목록 1개",
-   "checkedAt": "2026-11-24T07:06:12.815Z"
+   "msg": "목록 4개",
+   "checkedAt": "2026-11-25T02:44:42.368Z"
   },
   "livesports2": {
    "ok": true,
-   "msg": "목록 1개",
-   "checkedAt": "2026-11-24T07:06:13.501Z"
+   "msg": "목록 4개",
+   "checkedAt": "2026-11-25T02:44:42.877Z"
   }
  }
 }
