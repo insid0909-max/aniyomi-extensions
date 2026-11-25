@@ -73,6 +73,11 @@
    "key": "gogotv"
   },
   {
+   "name": "애니24 (살아 있는지만)",
+   "depth": "alive",
+   "key": "ohli24"
+  },
+  {
    "name": "실시간스포츠1 (망가요미)",
    "file": "mangayomi/javascript/anime/src/ko/livesports1.js",
    "depth": "list",

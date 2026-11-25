@@ -267,7 +267,36 @@ function prefsFor(name) {
     return state.prefs[name];
 }
 
+// depth "alive": 해외(GitHub)에서 막히는 사이트는 목록까지 볼 수 없으니 "사이트가 살아 있는지"만 봄 (2026-11-25 애니24, 사용자 "2번 진행")
+// 200 이나 해외 차단 응답(Cloudflare 1005 등 403)이 오면 정상(살아 있음), 연결 실패·5xx·그 밖의 코드는 문제
+async function runAlive(item) {
+    let base = item.url || "";
+    try {
+        const d = JSON.parse(fs.readFileSync(path.join(ROOT, "domains.json"), "utf8")).domains[item.key];
+        if (d && d.baseUrl) base = d.baseUrl;
+    } catch (e) {}
+    if (!base) throw new Error("확인할 주소 없음");
+    let res;
+    let body = "";
+    try {
+        res = await fetch(base.replace(/\/$/, "") + "/", {
+            headers: { "User-Agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36" },
+            redirect: "manual",
+            signal: AbortSignal.timeout(20000),
+        });
+        body = (await res.text()).substring(0, 3000);
+    } catch (e) {
+        throw new Error(`연결 실패 (${base.replace(/^https?:\/\//, "")}) ${String(e && e.cause && e.cause.code || e && e.message || e).substring(0, 60)}`);
+    }
+    const host = base.replace(/^https?:\/\//, "");
+    if (res.status === 200) return `${host} 열림 (HTTP 200)`;
+    const blocked = res.status === 403 && /error code: 10(05|06|09|20)|Sorry, you have been blocked|Access denied/i.test(body);
+    if (blocked) return `${host} 살아 있음 (해외 접속 차단 응답 — 목록·회차는 휴대폰에서만 확인 가능)`;
+    throw new Error(`${host} HTTP ${res.status}${res.headers.get("location") ? " → " + res.headers.get("location") : ""}`);
+}
+
 async function runHealth(item) {
+    if (item.depth === "alive") return runAlive(item);
     const { ext } = loadExtension(path.join(ROOT, item.file), prefsFor(item.name));
     const T = 120000;
     const popular = await withTimeout(ext.getPopular(1), T, "목록");
