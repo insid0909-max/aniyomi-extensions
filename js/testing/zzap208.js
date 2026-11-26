@@ -1,6 +1,6 @@
 const mangayomiSources = [{
     "id": 1543279657,
-    "name": "[시험] zzap208",
+    "name": "[시험] 짭플릭스",
     "lang": "ko",
     "baseUrl": "https://zzap208.com",
     "apiUrl": "",
@@ -9,12 +9,13 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.10",
+    "version": "0.0.11",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/zzap208.js"
 }];
 
+// 0.0.11 (2026-11-26): 이름을 짭플릭스로 변경
 // 0.0.10 (2026-11-26): 검색(search.php?sfl=…&sop=and&keyword=)·분류(영화/드라마/숏드/예능/애니)·정렬(인기순) 필터, 인기 탭=vodlist 인기순, 작품 주소(vodview.php)만 카드로
 // 0.0.9 (2026-11-26): 회차가 여러 개인데 1개만 보임(회차 이름 번호가 모두 26 으로 읽혀 합쳐짐) → 이름 앞에 번호 붙임
 // 0.0.8 (2026-11-26): 회차 화면이 HTTP 202·본문 2020자(보안 확인 화면으로 추정) → 오류에 본문 글자·원문 앞부분·AWS 보안확인 여부를 표시(내용 확인용)
@@ -24,7 +25,7 @@ const mangayomiSources = [{
 // 0.0.4 (2026-11-26): 회차 화면이 HTTP 202·본문 0자(x-amz-cf 만)로 와서 재생 실패 → 브라우저와 같은 머리글 추가, 6번까지 점점 늦춰 재시도, 시도별 코드/글자수를 오류에 표시
 // 0.0.3 (2026-11-26): 사용자가 보낸 작품 화면 HTML 로 정확한 칸 반영 — 회차 .episode-content-item li.content-box h1 a (?id=&idd=), 영상은 iframe 주소의 url= 뒤 mp4, 제목/줄거리/분류, 상대주소(?id=) 버그 고침
 // 0.0.2 (2026-11-26): 작품 화면이 HTTP 202 로 와서 실패(목록은 성공) → 202 도 본문이 충분하면 읽고, 아니면 재시도 후 머리글·본문 앞부분을 오류에 표시
-// [시험] zzap208 0.0.1 (2026-11-26 사용자 요청)
+// [시험] 짭플릭스 0.0.1 (2026-11-26 사용자 요청)
 // 주의: 제작 환경(해외)에서는 사이트가 국가 차단(CloudFront 403)이라 화면 구조를 직접 보지 못함.
 // 그래서 특정 칸 이름에 기대지 않고 "그림이 든 링크 = 작품 카드", "같은 모양 주소가 가장 많은 링크 묶음 = 회차",
 // "화면 글자 속 m3u8/mp4 주소·iframe 따라가기 = 영상" 으로 추측해서 읽음. 실패하면 오류 끝과 필터 위쪽에 진단이 남음.
@@ -456,7 +457,7 @@ class DefaultExtension extends MProvider {
             diag = [];
         }
         return [
-            { type_name: "HeaderFilter", name: `[시험] zzap208 ${mangayomiSources[0].version} · 분류·정렬은 검색어 없이 필터 적용 (아래는 최근 진단)` },
+            { type_name: "HeaderFilter", name: `[시험] 짭플릭스 ${mangayomiSources[0].version} · 분류·정렬은 검색어 없이 필터 적용 (아래는 최근 진단)` },
             ...diag.map((name) => ({ type_name: "HeaderFilter", name })),
             { type_name: "SelectFilter", name: F_CAT, state: 0, values: CATS.map((x) => ({ type_name: "SelectOption", name: x[0], value: x[1] })) },
             { type_name: "SelectFilter", name: F_ORDER, state: 0, values: ORDERS.map((x) => ({ type_name: "SelectOption", name: x[0], value: x[1] })) },
