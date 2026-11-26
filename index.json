@@ -244,7 +244,7 @@
  {
   "name": "Blacktoon 웹툰",
   "id": 870214004,
-  "baseUrl": "https://blacktoon510.com",
+  "baseUrl": "https://blacktoon511.com",
   "lang": "ko",
   "typeSource": "single",
   "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-manga-extensions/gh-pages/icon/eu.kanade.tachiyomi.extension.ko.newxtoon.png",
@@ -254,7 +254,7 @@
   "hasCloudflare": true,
   "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-manga-extensions/gh-pages/mangayomi/blacktoon.js",
   "apiUrl": "",
-  "version": "0.3.88",
+  "version": "0.3.89",
   "isManga": true,
   "itemType": 0,
   "isFullData": false,
