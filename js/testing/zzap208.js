@@ -9,12 +9,13 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.3",
+    "version": "0.0.4",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/zzap208.js"
 }];
 
+// 0.0.4 (2026-11-26): 회차 화면이 HTTP 202·본문 0자(x-amz-cf 만)로 와서 재생 실패 → 브라우저와 같은 머리글 추가, 6번까지 점점 늦춰 재시도, 시도별 코드/글자수를 오류에 표시
 // 0.0.3 (2026-11-26): 사용자가 보낸 작품 화면 HTML 로 정확한 칸 반영 — 회차 .episode-content-item li.content-box h1 a (?id=&idd=), 영상은 iframe 주소의 url= 뒤 mp4, 제목/줄거리/분류, 상대주소(?id=) 버그 고침
 // 0.0.2 (2026-11-26): 작품 화면이 HTTP 202 로 와서 실패(목록은 성공) → 202 도 본문이 충분하면 읽고, 아니면 재시도 후 머리글·본문 앞부분을 오류에 표시
 // [시험] zzap208 0.0.1 (2026-11-26 사용자 요청)
@@ -35,7 +36,17 @@ class DefaultExtension extends MProvider {
     }
 
     getHeaders(url) {
-        return { "User-Agent": UA, "Referer": SITE + "/" };
+        return {
+            "User-Agent": UA,
+            "Referer": SITE + "/",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1",
+        };
     }
 
     get supportsLatest() {
@@ -62,19 +73,23 @@ class DefaultExtension extends MProvider {
         let res = null;
         let err = "";
         // 0.0.2: 202(받음, 아직 본문 없음/확인 화면) 은 잠시 뒤 다시 — 두 번째부터 목록 화면을 Referer 로
-        for (let i = 0; i < 4; i++) {
+        const codes = [];
+        const waits = [700, 1500, 2500, 4000, 6000];
+        for (let i = 0; i < 6; i++) {
             try {
                 const h = this.getHeaders(url);
                 h["Referer"] = i >= 1 ? SITE + START : (referer || SITE + "/");
                 res = await this.client.get(url, h);
                 err = "";
+                codes.push(res.statusCode + "/" + String(res.body || "").length);
             } catch (e) {
                 res = null;
+                codes.push("x");
                 err = String((e && e.message) || e).substring(0, 60);
             }
             if (res && res.statusCode === 200) break;
             if (res && res.statusCode === 202 && String(res.body || "").length > 3000 && /<a\s/i.test(String(res.body))) break;
-            if (i < 3) await new Promise((ok) => setTimeout(ok, 900));
+            if (i < 5) await new Promise((ok) => setTimeout(ok, waits[i]));
         }
         if (!res) {
             const m = `사이트에 연결하지 못했어요 [${stage} · ${err} · ${this.shape(url)}]`;
@@ -91,7 +106,7 @@ class DefaultExtension extends MProvider {
                 hd = "";
             }
             const snip = body.replace(/\s+/g, " ").substring(0, 140);
-            const m = `사이트가 응답하지 않아요 [${stage} · HTTP ${res.statusCode} · 본문 ${body.length}자 · ${this.shape(url)} · 머리글 ${hd} · 본문 앞 ${snip}]`;
+            const m = `사이트가 응답하지 않아요 [${stage} · HTTP ${res.statusCode} · 본문 ${body.length}자 · ${this.shape(url)} · 시도 ${codes.join(",")} · 머리글 ${hd} · 본문 앞 ${snip}]`;
             this.diag(m);
             throw new Error(m);
         }
