@@ -9,12 +9,13 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.4",
+    "version": "0.0.5",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/zzap208.js"
 }];
 
+// 0.0.5 (2026-11-26): 참고 파일(tvwiki·tvroom) 반영 — Client 제한시간 설정, 영상 요청에 Origin·Accept 추가, 202 실패 시 웹뷰로 사이트 확인(쿠키 공유) 안내
 // 0.0.4 (2026-11-26): 회차 화면이 HTTP 202·본문 0자(x-amz-cf 만)로 와서 재생 실패 → 브라우저와 같은 머리글 추가, 6번까지 점점 늦춰 재시도, 시도별 코드/글자수를 오류에 표시
 // 0.0.3 (2026-11-26): 사용자가 보낸 작품 화면 HTML 로 정확한 칸 반영 — 회차 .episode-content-item li.content-box h1 a (?id=&idd=), 영상은 iframe 주소의 url= 뒤 mp4, 제목/줄거리/분류, 상대주소(?id=) 버그 고침
 // 0.0.2 (2026-11-26): 작품 화면이 HTTP 202 로 와서 실패(목록은 성공) → 202 도 본문이 충분하면 읽고, 아니면 재시도 후 머리글·본문 앞부분을 오류에 표시
@@ -32,7 +33,7 @@ const F_PAGE = "쪽 번호 변수 이름 (기본 page)";
 class DefaultExtension extends MProvider {
     constructor() {
         super();
-        this.client = new Client();
+        this.client = new Client({ timeout: 20, connectTimeout: 8 });
     }
 
     getHeaders(url) {
@@ -106,7 +107,7 @@ class DefaultExtension extends MProvider {
                 hd = "";
             }
             const snip = body.replace(/\s+/g, " ").substring(0, 140);
-            const m = `사이트가 응답하지 않아요 [${stage} · HTTP ${res.statusCode} · 본문 ${body.length}자 · ${this.shape(url)} · 시도 ${codes.join(",")} · 머리글 ${hd} · 본문 앞 ${snip}]`;
+            const m = `사이트가 응답하지 않아요(보안 확인일 수 있음 — 화면 아래 웹뷰 버튼으로 이 회차를 한 번 열어 둔 뒤 재시도) [${stage} · HTTP ${res.statusCode} · 본문 ${body.length}자 · ${this.shape(url)} · 시도 ${codes.join(",")} · 머리글 ${hd} · 본문 앞 ${snip}]`;
             this.diag(m);
             throw new Error(m);
         }
@@ -334,7 +335,7 @@ class DefaultExtension extends MProvider {
                     url: u,
                     originalUrl: u,
                     quality: `${/\.m3u8/i.test(u) ? "HLS" : "MP4"} ${k + 1}${j ? " (사이트 Referer)" : ""}`,
-                    headers: { "User-Agent": UA, "Referer": rf },
+                    headers: { "User-Agent": UA, "Referer": rf, "Origin": rf.replace(/\/$/, "").replace(/^(https?:\/\/[^/]+).*$/, "$1"), "Accept": "*/*" },
                 })));
                 return res;
             }
