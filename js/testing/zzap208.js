@@ -9,12 +9,13 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.2",
+    "version": "0.0.3",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/zzap208.js"
 }];
 
+// 0.0.3 (2026-11-26): 사용자가 보낸 작품 화면 HTML 로 정확한 칸 반영 — 회차 .episode-content-item li.content-box h1 a (?id=&idd=), 영상은 iframe 주소의 url= 뒤 mp4, 제목/줄거리/분류, 상대주소(?id=) 버그 고침
 // 0.0.2 (2026-11-26): 작품 화면이 HTTP 202 로 와서 실패(목록은 성공) → 202 도 본문이 충분하면 읽고, 아니면 재시도 후 머리글·본문 앞부분을 오류에 표시
 // [시험] zzap208 0.0.1 (2026-11-26 사용자 요청)
 // 주의: 제작 환경(해외)에서는 사이트가 국가 차단(CloudFront 403)이라 화면 구조를 직접 보지 못함.
@@ -104,6 +105,7 @@ class DefaultExtension extends MProvider {
         if (/^https?:\/\//i.test(u)) return u;
         const b = String(base || SITE + START);
         if (u.startsWith("/")) return /^https?:\/\/[^/]+/i.exec(b)[0] + u;
+        if (u.startsWith("?")) return b.replace(/[?#].*$/, "") + u;
         return b.replace(/[?#].*$/, "").replace(/\/[^/]*$/, "/") + u;
     }
 
@@ -202,44 +204,60 @@ class DefaultExtension extends MProvider {
             const m = doc.select(`meta[property='${p}']`);
             return m.length ? String(m[0].attr("content") || "").trim() : "";
         };
-        let name = meta("og:title");
-        if (!name) {
-            const h = doc.select("h1, h2, .title");
-            name = h.length ? h[0].text.trim() : "";
-        }
+        const strip = (t) => String(t || "").replace(/\s*-\s*짭플릭스.*$/, "").replace(/\s+\d{2}\/\d{2}\/\d{2}\s*$/, "").trim();
+        let name = "";
+        const h1 = doc.select(".share-title h1");
+        if (h1.length) name = strip(h1[0].text);
+        if (!name) name = strip(meta("og:title"));
         if (!name) {
             const t = doc.select("title");
-            name = t.length ? t[0].text.trim() : "";
+            name = t.length ? strip(t[0].text) : "";
         }
-        const imageUrl = this.abs(meta("og:image"), link);
-        const description = meta("og:description");
+        const th = doc.select(".episode-content-item .thumb img");
+        const imageUrl = this.abs(th.length ? (th[0].attr("data-src") || th[0].attr("src")) : meta("og:image"), link);
+        const ps = doc.select(".overview p").map((p) => p.text.trim()).filter((t) => t && !/^#/.test(t));
+        const description = ps.length ? ps.join("\n\n") : meta("og:description");
+        const gs = doc.select(".datetime-hit span").map((x) => x.text.trim()).filter((t) => t);
+        const tags = doc.select(".overview .tagline").map((x) => x.text.trim().replace(/^#/, "")).filter((t) => t);
+        const genre = gs.slice(0, 1).concat(tags);
 
-        // 회차: 같은 모양 주소가 가장 많은 링크 묶음 (그림 든 링크·작품 자신 제외)
-        const groups = {};
-        const self = link.replace(/[?#].*$/, "");
-        for (const a of doc.select("a[href]")) {
-            const href = this.abs(a.attr("href"), link);
-            if (!href || !/^https?:\/\/(?:www\.)?zzap208\.com/i.test(href)) continue;
-            const key = this.pattern(href);
-            (groups[key] = groups[key] || []).push({ href, text: a.text.replace(/\s+/g, " ").trim(), title: (a.attr("title") || "").trim() });
-        }
-        let best = [];
-        for (const k of Object.keys(groups)) {
-            const g = groups[k].filter((x) => x.href.replace(/[?#].*$/, "") !== self || x.href.includes("?"));
-            const uniq = new Set(g.map((x) => x.href));
-            if (uniq.size >= 2 && uniq.size > new Set(best.map((x) => x.href)).size) best = g;
-        }
         const chapters = [];
         const seen = {};
-        for (const x of best) {
-            if (seen[x.href]) continue;
-            seen[x.href] = true;
-            chapters.push({ name: x.text || x.title || `${chapters.length + 1}화`, url: x.href, dateUpload: null });
+        for (const a of doc.select(".episode-content-item li.content-box h1 a")) {
+            const href = this.abs(a.attr("href"), link);
+            if (!href || seen[href]) continue;
+            seen[href] = true;
+            const nm = a.text.replace(/\s+/g, " ").trim() || `${chapters.length + 1}화`;
+            const dm = /(\d{2})\/(\d{2})\/(\d{2})\s*$/.exec(nm);
+            const at = dm ? Date.UTC(2000 + Number(dm[1]), Number(dm[2]) - 1, Number(dm[3])) - 9 * 36e5 : null;
+            chapters.push({ name: nm, url: href, dateUpload: at ? String(at) : null });
+        }
+        let groups = {};
+        if (!chapters.length) {
+            // 예비: 같은 모양 주소가 가장 많은 링크 묶음
+            const self = link.replace(/[?#].*$/, "");
+            for (const a of doc.select("a[href]")) {
+                const href = this.abs(a.attr("href"), link);
+                if (!href || !/^https?:\/\/(?:www\.)?zzap208\.com/i.test(href)) continue;
+                const key = this.pattern(href);
+                (groups[key] = groups[key] || []).push({ href, text: a.text.replace(/\s+/g, " ").trim(), title: (a.attr("title") || "").trim() });
+            }
+            let best = [];
+            for (const k of Object.keys(groups)) {
+                const g = groups[k].filter((x) => x.href.replace(/[?#].*$/, "") !== self || x.href.includes("?"));
+                const uniq = new Set(g.map((x) => x.href));
+                if (uniq.size >= 2 && uniq.size > new Set(best.map((x) => x.href)).size) best = g;
+            }
+            for (const x of best) {
+                if (seen[x.href]) continue;
+                seen[x.href] = true;
+                chapters.push({ name: x.text || x.title || `${chapters.length + 1}화`, url: x.href, dateUpload: null });
+            }
         }
         // 회차 묶음을 못 찾으면 작품 주소 자체를 1개 회차(영화·단편)로
         if (!chapters.length) chapters.push({ name: "본편", url: link, dateUpload: null });
         this.diag(`작품 읽음 [회차 ${chapters.length} · 묶음 ${Object.keys(groups).length} · ${this.shape(link)}]`);
-        return { name, imageUrl, description, author: "", artist: "", genre: [], status: 5, link, chapters };
+        return { name, imageUrl, description, author: "", artist: "", genre, status: 5, link, chapters };
     }
 
     /** 화면 글자에서 영상 주소 찾기 */
@@ -276,16 +294,34 @@ class DefaultExtension extends MProvider {
                 logs.push(String(e.message || e).substring(0, 100));
                 continue;
             }
-            const found = this.media(body, item.url);
+            const found = [];
+            if (i === 0) {
+                // 짭플릭스: <iframe src="https://…/chaktt.php?url=https://…/영상.mp4"> — 영상 주소가 url= 뒤에 그대로
+                for (const f of new Document(body).select("iframe")) {
+                    const src = String(f.attr("src") || f.attr("data-src") || "").replace(/&amp;/g, "&");
+                    const um = /[?&]url=([^&"'\s]+)/.exec(src);
+                    if (!um) continue;
+                    let v = um[1];
+                    try { v = decodeURIComponent(v); } catch (e) { /* 그대로 */ }
+                    if (/^https?:\/\//i.test(v) && found.indexOf(v) < 0) {
+                        found.push(v);
+                        this.player = /^https?:\/\/[^/]+/i.exec(this.abs(src, item.url))[0] + "/";
+                    }
+                }
+            }
+            if (!found.length) for (const u of this.media(body, item.url)) found.push(u);
             logs.push(`${i === 0 ? "회차" : "플레이어"} ${this.shape(item.url)} · 영상 ${found.length}`);
             if (found.length) {
                 const origin = /^https?:\/\/[^/]+/i.exec(item.url)[0];
-                return found.slice(0, 5).map((u, k) => ({
+                const refs = this.player ? [this.player, item.url] : [item.url];
+                const res = [];
+                found.slice(0, 3).forEach((u, k) => refs.forEach((rf, j) => res.push({
                     url: u,
                     originalUrl: u,
-                    quality: `${/\.m3u8/i.test(u) ? "HLS" : "MP4"} ${k + 1}`,
-                    headers: { "User-Agent": UA, "Referer": item.url, "Origin": origin },
-                }));
+                    quality: `${/\.m3u8/i.test(u) ? "HLS" : "MP4"} ${k + 1}${j ? " (사이트 Referer)" : ""}`,
+                    headers: { "User-Agent": UA, "Referer": rf },
+                })));
+                return res;
             }
             const doc = new Document(body);
             for (const f of doc.select("iframe").slice(0, 6)) {
