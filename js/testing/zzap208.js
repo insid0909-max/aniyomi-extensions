@@ -9,12 +9,13 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.5",
+    "version": "0.0.6",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/zzap208.js"
 }];
 
+// 0.0.6 (2026-11-26): 재생 아이콘 뒤 무한 로딩 → 영상 주소를 Referer 3가지로 앞 2바이트 받아 보고(화질 이름에 [상태] 표시, 열리는 것 먼저), 플레이어 화면 안의 다른 영상 주소도 후보로, 결과는 필터 위쪽 진단에
 // 0.0.5 (2026-11-26): 참고 파일(tvwiki·tvroom) 반영 — Client 제한시간 설정, 영상 요청에 Origin·Accept 추가, 202 실패 시 웹뷰로 사이트 확인(쿠키 공유) 안내
 // 0.0.4 (2026-11-26): 회차 화면이 HTTP 202·본문 0자(x-amz-cf 만)로 와서 재생 실패 → 브라우저와 같은 머리글 추가, 6번까지 점점 늦춰 재시도, 시도별 코드/글자수를 오류에 표시
 // 0.0.3 (2026-11-26): 사용자가 보낸 작품 화면 HTML 로 정확한 칸 반영 — 회차 .episode-content-item li.content-box h1 a (?id=&idd=), 영상은 iframe 주소의 url= 뒤 mp4, 제목/줄거리/분류, 상대주소(?id=) 버그 고침
@@ -329,15 +330,55 @@ class DefaultExtension extends MProvider {
             logs.push(`${i === 0 ? "회차" : "플레이어"} ${this.shape(item.url)} · 영상 ${found.length}`);
             if (found.length) {
                 const origin = /^https?:\/\/[^/]+/i.exec(item.url)[0];
-                const refs = this.player ? [this.player, item.url] : [item.url];
+                const refs = this.player ? [this.player, item.url, ""] : [item.url, ""];
+                // 0.0.6: 플레이어 화면(chaktt.php)이 따로 가리키는 영상 주소도 후보에 추가
+                let pbody = "";
+                if (this.player) {
+                    try {
+                        const pu = this.abs((/<iframe[^>]+src=["']([^"']*chaktt[^"']*)/i.exec(body) || [])[1], item.url);
+                        const pr = await this.client.get(pu, { "User-Agent": UA, "Referer": item.url, "Accept": "text/html,*/*" });
+                        pbody = String(pr.body || "");
+                        logs.push(`플레이어화면 HTTP ${pr.statusCode} ${pbody.length}자`);
+                        for (const u of this.media(pbody, pu)) if (found.indexOf(u) < 0 && !/chaktt\.php/.test(u)) found.push(u);
+                    } catch (e) {
+                        logs.push(`플레이어화면 실패 ${String((e && e.message) || e).substring(0, 40)}`);
+                    }
+                }
                 const res = [];
-                found.slice(0, 3).forEach((u, k) => refs.forEach((rf, j) => res.push({
-                    url: u,
-                    originalUrl: u,
-                    quality: `${/\.m3u8/i.test(u) ? "HLS" : "MP4"} ${k + 1}${j ? " (사이트 Referer)" : ""}`,
-                    headers: { "User-Agent": UA, "Referer": rf, "Origin": rf.replace(/\/$/, "").replace(/^(https?:\/\/[^/]+).*$/, "$1"), "Accept": "*/*" },
-                })));
-                return res;
+                const cand = found.slice(0, 3);
+                for (let k = 0; k < cand.length; k++) {
+                    const u = cand[k];
+                    for (let j = 0; j < refs.length; j++) {
+                        const rf = refs[j];
+                        const headers = { "User-Agent": UA, "Accept": "*/*" };
+                        if (rf) {
+                            headers["Referer"] = rf;
+                            headers["Origin"] = rf.replace(/^(https?:\/\/[^/]+).*$/, "$1");
+                        }
+                        // 실제로 열리는지 앞 2바이트만 받아 봄
+                        let st = "?";
+                        let ct = "";
+                        try {
+                            const pr = await this.client.get(u, { ...headers, "Range": "bytes=0-1" });
+                            st = String(pr.statusCode);
+                            try { ct = String((pr.headers || {})["content-type"] || (pr.headers || {})["Content-Type"] || "").substring(0, 20); } catch (e) { ct = ""; }
+                        } catch (e) {
+                            st = "오류";
+                        }
+                        logs.push(`영상${k + 1} ${j === 0 && this.player ? "플레이어" : rf ? "사이트" : "없음"}Referer → ${st} ${ct}`);
+                        res.push({
+                            url: u,
+                            originalUrl: u,
+                            quality: `${/\.m3u8/i.test(u) ? "HLS" : "MP4"} ${k + 1} · ${rf ? (rf === this.player ? "플레이어" : "사이트") : "Referer 없음"} [${st}]`,
+                            headers,
+                            ok: st === "200" || st === "206",
+                        });
+                    }
+                }
+                this.diag(logs.join(" | "));
+                // 열리는 것을 앞에, 안 열리는 것은 뒤에 (그래도 남겨 둠)
+                res.sort((x, y) => (y.ok ? 1 : 0) - (x.ok ? 1 : 0));
+                return res.map((x) => ({ url: x.url, originalUrl: x.originalUrl, quality: x.quality, headers: x.headers }));
             }
             const doc = new Document(body);
             for (const f of doc.select("iframe").slice(0, 6)) {
