@@ -5,8 +5,16 @@
  "domainChanges": [
   {
    "name": "후후티비",
-   "from": "https://ft.hoohootv483.xyz",
-   "to": "https://fw.hoohootv483.xyz",
+   "from": "https://fw.hoohootv483.xyz",
+   "to": "https://gq.hoohootv483.xyz",
+   "files": [
+    "domains.json"
+   ]
+  },
+  {
+   "name": "코티비씨",
+   "from": "https://k08.kotbc2.com",
+   "to": "https://k09.kotbc2.com",
    "files": [
     "domains.json"
    ]

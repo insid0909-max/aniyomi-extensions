@@ -5,23 +5,23 @@
    "domain": "alive",
    "domainSince": "2026-11-24T01:24:19.725Z",
    "ok": true,
-   "msg": "목록 24개, 회차 8개, 연재",
-   "checkedAt": "2026-11-25T05:40:43.222Z"
+   "msg": "목록 24개, 회차 10개, 연재",
+   "checkedAt": "2026-11-26T04:04:55.904Z"
   },
   "ohli24": {
    "ok": false,
    "msg": "a101.ohli24.net HTTP 403",
-   "checkedAt": "2026-11-25T05:40:43.285Z"
+   "checkedAt": "2026-11-26T04:04:55.983Z"
   },
   "livesports1": {
    "ok": true,
-   "msg": "목록 2개",
-   "checkedAt": "2026-11-25T05:40:44.110Z"
+   "msg": "목록 5개",
+   "checkedAt": "2026-11-26T04:04:56.433Z"
   },
   "livesports2": {
    "ok": true,
-   "msg": "목록 3개",
-   "checkedAt": "2026-11-25T05:40:44.767Z"
+   "msg": "목록 5개",
+   "checkedAt": "2026-11-26T04:04:56.928Z"
   }
  }
 }
