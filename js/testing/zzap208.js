@@ -9,12 +9,13 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/zzap208.js"
 }];
 
+// 0.0.2 (2026-11-26): 작품 화면이 HTTP 202 로 와서 실패(목록은 성공) → 202 도 본문이 충분하면 읽고, 아니면 재시도 후 머리글·본문 앞부분을 오류에 표시
 // [시험] zzap208 0.0.1 (2026-11-26 사용자 요청)
 // 주의: 제작 환경(해외)에서는 사이트가 국가 차단(CloudFront 403)이라 화면 구조를 직접 보지 못함.
 // 그래서 특정 칸 이름에 기대지 않고 "그림이 든 링크 = 작품 카드", "같은 모양 주소가 가장 많은 링크 묶음 = 회차",
@@ -59,27 +60,41 @@ class DefaultExtension extends MProvider {
     async page(url, stage, referer) {
         let res = null;
         let err = "";
-        for (let i = 0; i < 2 && !res; i++) {
+        // 0.0.2: 202(받음, 아직 본문 없음/확인 화면) 은 잠시 뒤 다시 — 두 번째부터 목록 화면을 Referer 로
+        for (let i = 0; i < 4; i++) {
             try {
                 const h = this.getHeaders(url);
-                if (referer) h["Referer"] = referer;
+                h["Referer"] = i >= 1 ? SITE + START : (referer || SITE + "/");
                 res = await this.client.get(url, h);
+                err = "";
             } catch (e) {
+                res = null;
                 err = String((e && e.message) || e).substring(0, 60);
-                if (i === 0) await new Promise((ok) => setTimeout(ok, 600));
             }
+            if (res && res.statusCode === 200) break;
+            if (res && res.statusCode === 202 && String(res.body || "").length > 3000 && /<a\s/i.test(String(res.body))) break;
+            if (i < 3) await new Promise((ok) => setTimeout(ok, 900));
         }
         if (!res) {
             const m = `사이트에 연결하지 못했어요 [${stage} · ${err} · ${this.shape(url)}]`;
             this.diag(m);
             throw new Error(m);
         }
-        if (res.statusCode !== 200) {
-            const m = `사이트가 응답하지 않아요 [${stage} · HTTP ${res.statusCode} · ${this.shape(url)}]`;
+        const body = String(res.body || "");
+        if (res.statusCode !== 200 && !(res.statusCode === 202 && body.length > 3000 && /<a\s/i.test(body))) {
+            let hd = "";
+            try {
+                const h = res.headers || {};
+                hd = Object.keys(h).filter((k) => /waf|cf-|server|content-type|location|set-cookie|refresh/i.test(k)).map((k) => `${k}=${String(h[k]).substring(0, 40)}`).join(";");
+            } catch (e) {
+                hd = "";
+            }
+            const snip = body.replace(/\s+/g, " ").substring(0, 140);
+            const m = `사이트가 응답하지 않아요 [${stage} · HTTP ${res.statusCode} · 본문 ${body.length}자 · ${this.shape(url)} · 머리글 ${hd} · 본문 앞 ${snip}]`;
             this.diag(m);
             throw new Error(m);
         }
-        return String(res.body || "");
+        return body;
     }
 
     abs(u, base) {
