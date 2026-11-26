@@ -9,12 +9,13 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.9",
+    "version": "0.0.10",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/zzap208.js"
 }];
 
+// 0.0.10 (2026-11-26): 검색(search.php?sfl=…&sop=and&keyword=)·분류(영화/드라마/숏드/예능/애니)·정렬(인기순) 필터, 인기 탭=vodlist 인기순, 작품 주소(vodview.php)만 카드로
 // 0.0.9 (2026-11-26): 회차가 여러 개인데 1개만 보임(회차 이름 번호가 모두 26 으로 읽혀 합쳐짐) → 이름 앞에 번호 붙임
 // 0.0.8 (2026-11-26): 회차 화면이 HTTP 202·본문 2020자(보안 확인 화면으로 추정) → 오류에 본문 글자·원문 앞부분·AWS 보안확인 여부를 표시(내용 확인용)
 // 0.0.7 (2026-11-26): 영상 서버는 mp4 직접 재생이 막혀 있고(403), 플레이어 화면(chaktt.php, Referer 가 작품 화면일 때만 열림)의 phpsiteEc 를 풀면 wiselife.blog/hls/…m3u8?t&n&s 주소가 나옴 → 이것을 1순위 HLS 로 (주소는 요청마다 새로 만들어지므로 재생 직전에 풀어야 함)
@@ -33,6 +34,12 @@ const START = "/mobile/";
 const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
 const F_PATH = "목록 주소 (비우면 /mobile/)";
 const F_PAGE = "쪽 번호 변수 이름 (기본 page)";
+const F_CAT = "분류";
+const F_ORDER = "정렬";
+// 0.0.10: 사용자가 보낸 카테고리·검색 화면 기준 — 분류 vodlist.php?type_id_1=N&order_type=, 인기 order_type=vod_hits, 검색 search.php?sfl=…&sop=and&keyword=
+const CATS = [["전체", ""], ["영화", "1"], ["드라마", "2"], ["숏드", "39"], ["예능프로그램", "3"], ["애니", "4"]];
+const ORDERS = [["기본(최신)", ""], ["인기순", "vod_hits"]];
+const SEARCH_PATH = "/mobile/search.php?sfl=" + encodeURIComponent("common_title||season_title||tag_title") + "&sop=and&keyword=";
 
 class DefaultExtension extends MProvider {
     constructor() {
@@ -154,10 +161,12 @@ class DefaultExtension extends MProvider {
             seen[link] = true;
             list.push({ name: name.substring(0, 120), imageUrl: img, link });
         }
-        return list;
+        // 작품 주소(vodview.php)가 있으면 그것만 (광고·메뉴 그림 링크 빼기)
+        const only = list.filter((x) => /vodview\.php/i.test(x.link));
+        return only.length ? only : list;
     }
 
-    async listing(path, page, pageVar) {
+    async listing(path, page, pageVar, opts) {
         let p = String(path || "").trim() || START;
         if (!p.startsWith("/") && !/^https?:\/\//i.test(p)) p = "/" + p;
         let url = /^https?:\/\//i.test(p) ? p : SITE + p;
@@ -168,11 +177,15 @@ class DefaultExtension extends MProvider {
             this.diag(m);
             throw new Error(m);
         }
-        return { list, hasNextPage: list.length >= 8 };
+        return { list, hasNextPage: list.length >= (opts && opts.minNext ? opts.minNext : 8) };
+    }
+
+    vodlist(cat, order) {
+        return `/mobile/vodlist.php?type_id_1=${cat || ""}&order_type=${order || ""}`;
     }
 
     async getPopular(page) {
-        return this.listing(START, page, "page");
+        return this.listing(this.vodlist("", "vod_hits"), page, "page");
     }
 
     async getLatestUpdates(page) {
@@ -181,36 +194,26 @@ class DefaultExtension extends MProvider {
 
     async search(query, page, filters) {
         const q = String(query || "").trim();
-        const f = (filters || []).find((x) => x && x.name === F_PATH);
-        const pv = (filters || []).find((x) => x && x.name === F_PAGE);
+        const fl = filters || [];
+        const get = (n) => fl.find((x) => x && x.name === n);
+        const f = get(F_PATH);
+        const pv = get(F_PAGE);
         const pageVar = pv && String(pv.state || "").trim() ? String(pv.state).trim() : "page";
         if (/^https?:\/\/(?:www\.)?zzap208\.com\//i.test(q)) {
             const d = await this.getDetail(q);
             return { list: [{ name: d.name, imageUrl: d.imageUrl, link: q }], hasNextPage: false };
         }
         if (q) {
-            // 검색 주소를 모르므로 흔한 모양을 차례로 시도 (사용자가 목록 주소 칸에 {q} 로 직접 쓸 수도 있음)
-            const custom = f ? String(f.state || "").trim() : "";
-            const tries = custom.includes("{q}") ? [custom.replace("{q}", encodeURIComponent(q))] : [
-                `${START}search.php?q=${encodeURIComponent(q)}`,
-                `${START}?s=${encodeURIComponent(q)}`,
-                `${START}?q=${encodeURIComponent(q)}`,
-                `/search?q=${encodeURIComponent(q)}`,
-                `/?s=${encodeURIComponent(q)}`,
-            ];
-            let last = null;
-            for (const t of tries) {
-                try {
-                    const r = await this.listing(t, page, pageVar);
-                    if (r.list.length) return r;
-                } catch (e) {
-                    last = e;
-                }
-            }
-            if (last) throw last;
-            return { list: [], hasNextPage: false };
+            return this.listing(SEARCH_PATH + encodeURIComponent(q), page, pageVar, { minNext: 20 });
         }
-        return this.listing(f ? f.state : "", page, pageVar);
+        const custom = f ? String(f.state || "").trim() : "";
+        if (custom) return this.listing(custom, page, pageVar);
+        const c = get(F_CAT);
+        const o = get(F_ORDER);
+        const ci = c ? Number(c.state) || 0 : 0;
+        const oi = o ? Number(o.state) || 0 : 0;
+        if (!ci && !oi) return this.listing(START, page, pageVar);
+        return this.listing(this.vodlist((CATS[ci] || CATS[0])[1], (ORDERS[oi] || ORDERS[0])[1]), page, pageVar);
     }
 
     pattern(href) {
@@ -453,8 +456,10 @@ class DefaultExtension extends MProvider {
             diag = [];
         }
         return [
-            { type_name: "HeaderFilter", name: `[시험] zzap208 ${mangayomiSources[0].version} · 사이트 구조 미확인 추측판 (아래는 최근 진단)` },
+            { type_name: "HeaderFilter", name: `[시험] zzap208 ${mangayomiSources[0].version} · 분류·정렬은 검색어 없이 필터 적용 (아래는 최근 진단)` },
             ...diag.map((name) => ({ type_name: "HeaderFilter", name })),
+            { type_name: "SelectFilter", name: F_CAT, state: 0, values: CATS.map((x) => ({ type_name: "SelectOption", name: x[0], value: x[1] })) },
+            { type_name: "SelectFilter", name: F_ORDER, state: 0, values: ORDERS.map((x) => ({ type_name: "SelectOption", name: x[0], value: x[1] })) },
             { type_name: "TextFilter", name: F_PATH, state: "" },
             { type_name: "TextFilter", name: F_PAGE, state: "page" },
             ...[1, 2, 3].map(() => ({ type_name: "HeaderFilter", name: "　" })),
