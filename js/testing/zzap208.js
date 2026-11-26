@@ -9,12 +9,13 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.6",
+    "version": "0.0.7",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/zzap208.js"
 }];
 
+// 0.0.7 (2026-11-26): 영상 서버는 mp4 직접 재생이 막혀 있고(403), 플레이어 화면(chaktt.php, Referer 가 작품 화면일 때만 열림)의 phpsiteEc 를 풀면 wiselife.blog/hls/…m3u8?t&n&s 주소가 나옴 → 이것을 1순위 HLS 로 (주소는 요청마다 새로 만들어지므로 재생 직전에 풀어야 함)
 // 0.0.6 (2026-11-26): 재생 아이콘 뒤 무한 로딩 → 영상 주소를 Referer 3가지로 앞 2바이트 받아 보고(화질 이름에 [상태] 표시, 열리는 것 먼저), 플레이어 화면 안의 다른 영상 주소도 후보로, 결과는 필터 위쪽 진단에
 // 0.0.5 (2026-11-26): 참고 파일(tvwiki·tvroom) 반영 — Client 제한시간 설정, 영상 요청에 Origin·Accept 추가, 202 실패 시 웹뷰로 사이트 확인(쿠키 공유) 안내
 // 0.0.4 (2026-11-26): 회차 화면이 HTTP 202·본문 0자(x-amz-cf 만)로 와서 재생 실패 → 브라우저와 같은 머리글 추가, 6번까지 점점 늦춰 재시도, 시도별 코드/글자수를 오류에 표시
@@ -297,6 +298,39 @@ class DefaultExtension extends MProvider {
         return out;
     }
 
+    /** 플레이어 화면의 phpsiteEc 를 풀어 HLS 주소로 (common.js: base64 → "phpsite01" 반복 XOR → base64) */
+    b64(data) {
+        const T = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+        data = String(data || "");
+        let out = "";
+        let i = 0;
+        while (i < data.length) {
+            const h1 = T.indexOf(data.charAt(i++));
+            const h2 = T.indexOf(data.charAt(i++));
+            const h3 = T.indexOf(data.charAt(i++));
+            const h4 = T.indexOf(data.charAt(i++));
+            const bits = (h1 << 18) | (h2 << 12) | (h3 << 6) | h4;
+            const o1 = (bits >> 16) & 0xff;
+            const o2 = (bits >> 8) & 0xff;
+            const o3 = bits & 0xff;
+            if (h3 === 64) out += String.fromCharCode(o1);
+            else if (h4 === 64) out += String.fromCharCode(o1, o2);
+            else out += String.fromCharCode(o1, o2, o3);
+        }
+        return out;
+    }
+
+    decodePlayer(html) {
+        const e = /phpsiteEc\s*=\s*["']([^"']+)["']/.exec(html);
+        const k = /phpsitekey\s*=\s*["']([^"']+)["']/.exec(html);
+        if (!e || !k) return "";
+        const raw = this.b64(e[1]);
+        let x = "";
+        for (let i = 0; i < raw.length; i++) x += String.fromCharCode(raw.charCodeAt(i) ^ k[1].charCodeAt(i % k[1].length));
+        const u = this.b64(x).trim();
+        return /^https?:\/\//i.test(u) ? u : "";
+    }
+
     async getVideoList(url) {
         const link = this.abs(url);
         const logs = [];
@@ -339,6 +373,9 @@ class DefaultExtension extends MProvider {
                         const pr = await this.client.get(pu, { "User-Agent": UA, "Referer": item.url, "Accept": "text/html,*/*" });
                         pbody = String(pr.body || "");
                         logs.push(`플레이어화면 HTTP ${pr.statusCode} ${pbody.length}자`);
+                        const hls = this.decodePlayer(pbody);
+                        logs.push(`HLS 해독 ${hls ? "성공" : "실패"}`);
+                        if (hls) found.unshift(hls);
                         for (const u of this.media(pbody, pu)) if (found.indexOf(u) < 0 && !/chaktt\.php/.test(u)) found.push(u);
                     } catch (e) {
                         logs.push(`플레이어화면 실패 ${String((e && e.message) || e).substring(0, 40)}`);
@@ -346,10 +383,12 @@ class DefaultExtension extends MProvider {
                 }
                 const res = [];
                 const cand = found.slice(0, 3);
+                const hlsRefs = this.player ? [this.player, ""] : [""];
                 for (let k = 0; k < cand.length; k++) {
                     const u = cand[k];
                     for (let j = 0; j < refs.length; j++) {
                         const rf = refs[j];
+                        if (/\.m3u8/i.test(u) && hlsRefs.indexOf(rf) < 0) continue;
                         const headers = { "User-Agent": UA, "Accept": "*/*" };
                         if (rf) {
                             headers["Referer"] = rf;
