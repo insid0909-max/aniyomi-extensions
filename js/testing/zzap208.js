@@ -9,12 +9,13 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.7",
+    "version": "0.0.8",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/zzap208.js"
 }];
 
+// 0.0.8 (2026-11-26): 회차 화면이 HTTP 202·본문 2020자(보안 확인 화면으로 추정) → 오류에 본문 글자·원문 앞부분·AWS 보안확인 여부를 표시(내용 확인용)
 // 0.0.7 (2026-11-26): 영상 서버는 mp4 직접 재생이 막혀 있고(403), 플레이어 화면(chaktt.php, Referer 가 작품 화면일 때만 열림)의 phpsiteEc 를 풀면 wiselife.blog/hls/…m3u8?t&n&s 주소가 나옴 → 이것을 1순위 HLS 로 (주소는 요청마다 새로 만들어지므로 재생 직전에 풀어야 함)
 // 0.0.6 (2026-11-26): 재생 아이콘 뒤 무한 로딩 → 영상 주소를 Referer 3가지로 앞 2바이트 받아 보고(화질 이름에 [상태] 표시, 열리는 것 먼저), 플레이어 화면 안의 다른 영상 주소도 후보로, 결과는 필터 위쪽 진단에
 // 0.0.5 (2026-11-26): 참고 파일(tvwiki·tvroom) 반영 — Client 제한시간 설정, 영상 요청에 Origin·Accept 추가, 202 실패 시 웹뷰로 사이트 확인(쿠키 공유) 안내
@@ -108,7 +109,8 @@ class DefaultExtension extends MProvider {
             } catch (e) {
                 hd = "";
             }
-            const snip = body.replace(/\s+/g, " ").substring(0, 140);
+            const waf = /awswaf|aws-waf|challenge|captcha|AwsWaf/i.test(body) ? "AWS 보안확인 화면 · " : "";
+            const snip = waf + body.replace(/<script[\s\S]*?<\/script>/gi, " [script] ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().substring(0, 90) + " ⟨원문앞⟩ " + body.replace(/\s+/g, " ").substring(0, 140);
             const m = `사이트가 응답하지 않아요(보안 확인일 수 있음 — 화면 아래 웹뷰 버튼으로 이 회차를 한 번 열어 둔 뒤 재시도) [${stage} · HTTP ${res.statusCode} · 본문 ${body.length}자 · ${this.shape(url)} · 시도 ${codes.join(",")} · 머리글 ${hd} · 본문 앞 ${snip}]`;
             this.diag(m);
             throw new Error(m);
@@ -342,7 +344,7 @@ class DefaultExtension extends MProvider {
             try {
                 body = await this.page(item.url, i === 0 ? "회차" : "플레이어", item.referer);
             } catch (e) {
-                logs.push(String(e.message || e).substring(0, 100));
+                logs.push(String(e.message || e).substring(0, 420));
                 continue;
             }
             const found = [];
@@ -429,7 +431,7 @@ class DefaultExtension extends MProvider {
             }
             logs.push(`iframe ${doc.select("iframe").length}`);
         }
-        const msg = `영상 주소를 찾지 못했어요 [${logs.join(" | ")}]`.substring(0, 600);
+        const msg = `영상 주소를 찾지 못했어요 [${logs.join(" | ")}]`.substring(0, 900);
         this.diag(msg);
         throw new Error(msg);
     }
