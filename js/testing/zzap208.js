@@ -9,12 +9,13 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.8",
+    "version": "0.0.9",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/zzap208.js"
 }];
 
+// 0.0.9 (2026-11-26): 회차가 여러 개인데 1개만 보임(회차 이름 번호가 모두 26 으로 읽혀 합쳐짐) → 이름 앞에 번호 붙임
 // 0.0.8 (2026-11-26): 회차 화면이 HTTP 202·본문 2020자(보안 확인 화면으로 추정) → 오류에 본문 글자·원문 앞부분·AWS 보안확인 여부를 표시(내용 확인용)
 // 0.0.7 (2026-11-26): 영상 서버는 mp4 직접 재생이 막혀 있고(403), 플레이어 화면(chaktt.php, Referer 가 작품 화면일 때만 열림)의 phpsiteEc 를 풀면 wiselife.blog/hls/…m3u8?t&n&s 주소가 나옴 → 이것을 1순위 HLS 로 (주소는 요청마다 새로 만들어지므로 재생 직전에 풀어야 함)
 // 0.0.6 (2026-11-26): 재생 아이콘 뒤 무한 로딩 → 영상 주소를 Referer 3가지로 앞 2바이트 받아 보고(화질 이름에 [상태] 표시, 열리는 것 먼저), 플레이어 화면 안의 다른 영상 주소도 후보로, 결과는 필터 위쪽 진단에
@@ -273,6 +274,14 @@ class DefaultExtension extends MProvider {
                 seen[x.href] = true;
                 chapters.push({ name: x.text || x.title || `${chapters.length + 1}화`, url: x.href, dateUpload: null });
             }
+        }
+        // 0.0.9: 망가요미는 회차 이름에서 읽은 번호가 같으면 한 개로 합쳐 보여 줌 — 이름이 "작품명 26/11/26"·"26/11/19" 처럼 날짜뿐이라
+        // 번호가 모두 26 으로 읽혀 1개만 남았음 → 맨 앞에 오래된 순 번호(1., 2., …)를 붙여 서로 다르게 함 (목록은 최신순이라 위가 큰 번호)
+        if (chapters.length > 1) {
+            const total = chapters.length;
+            chapters.forEach((c, i) => {
+                c.name = `${total - i}. ${c.name.replace(/^\s*\d+\.\s+/, "")}`;
+            });
         }
         // 회차 묶음을 못 찾으면 작품 주소 자체를 1개 회차(영화·단편)로
         if (!chapters.length) chapters.push({ name: "본편", url: link, dateUpload: null });
