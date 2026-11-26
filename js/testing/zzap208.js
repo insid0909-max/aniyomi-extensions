@@ -1,0 +1,309 @@
+const mangayomiSources = [{
+    "id": 1543279657,
+    "name": "[시험] zzap208",
+    "lang": "ko",
+    "baseUrl": "https://zzap208.com",
+    "apiUrl": "",
+    "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
+    "typeSource": "single",
+    "itemType": 1,
+    "isNsfw": true,
+    "hasCloudflare": false,
+    "version": "0.0.1",
+    "dateFormat": "",
+    "dateFormatLocale": "",
+    "pkgPath": "anime/src/ko/zzap208.js"
+}];
+
+// [시험] zzap208 0.0.1 (2026-11-26 사용자 요청)
+// 주의: 제작 환경(해외)에서는 사이트가 국가 차단(CloudFront 403)이라 화면 구조를 직접 보지 못함.
+// 그래서 특정 칸 이름에 기대지 않고 "그림이 든 링크 = 작품 카드", "같은 모양 주소가 가장 많은 링크 묶음 = 회차",
+// "화면 글자 속 m3u8/mp4 주소·iframe 따라가기 = 영상" 으로 추측해서 읽음. 실패하면 오류 끝과 필터 위쪽에 진단이 남음.
+// → 휴대폰에서 시험한 결과(오류 진단 글)를 보고 정확한 칸으로 고칠 것.
+const SITE = "https://zzap208.com";
+const START = "/mobile/";
+const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36";
+const F_PATH = "목록 주소 (비우면 /mobile/)";
+const F_PAGE = "쪽 번호 변수 이름 (기본 page)";
+
+class DefaultExtension extends MProvider {
+    constructor() {
+        super();
+        this.client = new Client();
+    }
+
+    getHeaders(url) {
+        return { "User-Agent": UA, "Referer": SITE + "/" };
+    }
+
+    get supportsLatest() {
+        return true;
+    }
+
+    diag(msg) {
+        try {
+            const prefs = new SharedPreferences();
+            const old = String(prefs.get("diag") || "").split("\n").filter((x) => x);
+            old.push(String(msg).substring(0, 160));
+            while (old.length > 8) old.shift();
+            prefs.set("diag", old.join("\n"));
+        } catch (e) {
+            // 저장 못 해도 계속
+        }
+    }
+
+    shape(url) {
+        return String(url).replace(/^https?:\/\//, "").substring(0, 70);
+    }
+
+    async page(url, stage, referer) {
+        let res = null;
+        let err = "";
+        for (let i = 0; i < 2 && !res; i++) {
+            try {
+                const h = this.getHeaders(url);
+                if (referer) h["Referer"] = referer;
+                res = await this.client.get(url, h);
+            } catch (e) {
+                err = String((e && e.message) || e).substring(0, 60);
+                if (i === 0) await new Promise((ok) => setTimeout(ok, 600));
+            }
+        }
+        if (!res) {
+            const m = `사이트에 연결하지 못했어요 [${stage} · ${err} · ${this.shape(url)}]`;
+            this.diag(m);
+            throw new Error(m);
+        }
+        if (res.statusCode !== 200) {
+            const m = `사이트가 응답하지 않아요 [${stage} · HTTP ${res.statusCode} · ${this.shape(url)}]`;
+            this.diag(m);
+            throw new Error(m);
+        }
+        return String(res.body || "");
+    }
+
+    abs(u, base) {
+        u = String(u || "").trim().replace(/&amp;/g, "&");
+        if (!u || u.startsWith("#") || /^(?:javascript|mailto|tel):/i.test(u)) return "";
+        if (u.startsWith("//")) return "https:" + u;
+        if (/^https?:\/\//i.test(u)) return u;
+        const b = String(base || SITE + START);
+        if (u.startsWith("/")) return /^https?:\/\/[^/]+/i.exec(b)[0] + u;
+        return b.replace(/[?#].*$/, "").replace(/\/[^/]*$/, "/") + u;
+    }
+
+    imgOf(el, base) {
+        const imgs = el.select("img");
+        if (!imgs.length) return "";
+        return this.abs(imgs[0].attr("data-src") || imgs[0].attr("data-original") || imgs[0].attr("data-lazy-src") || imgs[0].attr("src"), base);
+    }
+
+    /** 목록 화면 → 카드: 그림이 든 링크 */
+    cards(html, base) {
+        const doc = new Document(html);
+        const list = [];
+        const seen = {};
+        const self = base.replace(/[?#].*$/, "");
+        for (const a of doc.select("a[href]")) {
+            const link = this.abs(a.attr("href"), base);
+            if (!link || seen[link] || link.replace(/[?#].*$/, "") === self) continue;
+            if (!/^https?:\/\/(?:www\.)?zzap208\.com/i.test(link)) continue;
+            const img = this.imgOf(a, base);
+            if (!img) continue;
+            const imgs = a.select("img");
+            let name = (a.attr("title") || "").trim() || (imgs.length ? (imgs[0].attr("alt") || "").trim() : "") || a.text.replace(/\s+/g, " ").trim();
+            if (!name) name = link.split(/[/?=&]/).filter((x) => x).pop();
+            seen[link] = true;
+            list.push({ name: name.substring(0, 120), imageUrl: img, link });
+        }
+        return list;
+    }
+
+    async listing(path, page, pageVar) {
+        let p = String(path || "").trim() || START;
+        if (!p.startsWith("/") && !/^https?:\/\//i.test(p)) p = "/" + p;
+        let url = /^https?:\/\//i.test(p) ? p : SITE + p;
+        if (page > 1) url += (url.includes("?") ? "&" : "?") + (pageVar || "page") + "=" + page;
+        const list = this.cards(await this.page(url, "목록"), url);
+        if (!list.length) {
+            const m = `작품 카드를 못 찾았어요 [목록 · 카드 0 · ${this.shape(url)}]`;
+            this.diag(m);
+            throw new Error(m);
+        }
+        return { list, hasNextPage: list.length >= 8 };
+    }
+
+    async getPopular(page) {
+        return this.listing(START, page, "page");
+    }
+
+    async getLatestUpdates(page) {
+        return this.listing(START, page, "page");
+    }
+
+    async search(query, page, filters) {
+        const q = String(query || "").trim();
+        const f = (filters || []).find((x) => x && x.name === F_PATH);
+        const pv = (filters || []).find((x) => x && x.name === F_PAGE);
+        const pageVar = pv && String(pv.state || "").trim() ? String(pv.state).trim() : "page";
+        if (/^https?:\/\/(?:www\.)?zzap208\.com\//i.test(q)) {
+            const d = await this.getDetail(q);
+            return { list: [{ name: d.name, imageUrl: d.imageUrl, link: q }], hasNextPage: false };
+        }
+        if (q) {
+            // 검색 주소를 모르므로 흔한 모양을 차례로 시도 (사용자가 목록 주소 칸에 {q} 로 직접 쓸 수도 있음)
+            const custom = f ? String(f.state || "").trim() : "";
+            const tries = custom.includes("{q}") ? [custom.replace("{q}", encodeURIComponent(q))] : [
+                `${START}search.php?q=${encodeURIComponent(q)}`,
+                `${START}?s=${encodeURIComponent(q)}`,
+                `${START}?q=${encodeURIComponent(q)}`,
+                `/search?q=${encodeURIComponent(q)}`,
+                `/?s=${encodeURIComponent(q)}`,
+            ];
+            let last = null;
+            for (const t of tries) {
+                try {
+                    const r = await this.listing(t, page, pageVar);
+                    if (r.list.length) return r;
+                } catch (e) {
+                    last = e;
+                }
+            }
+            if (last) throw last;
+            return { list: [], hasNextPage: false };
+        }
+        return this.listing(f ? f.state : "", page, pageVar);
+    }
+
+    pattern(href) {
+        return href.replace(/[?#].*$/, "").replace(/\d+/g, "#") + "?" + (/\?(.*)$/.exec(href) || ["", ""])[1].replace(/=[^&]*/g, "=");
+    }
+
+    async getDetail(url) {
+        const link = this.abs(url);
+        const html = await this.page(link, "작품");
+        const doc = new Document(html);
+        const meta = (p) => {
+            const m = doc.select(`meta[property='${p}']`);
+            return m.length ? String(m[0].attr("content") || "").trim() : "";
+        };
+        let name = meta("og:title");
+        if (!name) {
+            const h = doc.select("h1, h2, .title");
+            name = h.length ? h[0].text.trim() : "";
+        }
+        if (!name) {
+            const t = doc.select("title");
+            name = t.length ? t[0].text.trim() : "";
+        }
+        const imageUrl = this.abs(meta("og:image"), link);
+        const description = meta("og:description");
+
+        // 회차: 같은 모양 주소가 가장 많은 링크 묶음 (그림 든 링크·작품 자신 제외)
+        const groups = {};
+        const self = link.replace(/[?#].*$/, "");
+        for (const a of doc.select("a[href]")) {
+            const href = this.abs(a.attr("href"), link);
+            if (!href || !/^https?:\/\/(?:www\.)?zzap208\.com/i.test(href)) continue;
+            const key = this.pattern(href);
+            (groups[key] = groups[key] || []).push({ href, text: a.text.replace(/\s+/g, " ").trim(), title: (a.attr("title") || "").trim() });
+        }
+        let best = [];
+        for (const k of Object.keys(groups)) {
+            const g = groups[k].filter((x) => x.href.replace(/[?#].*$/, "") !== self || x.href.includes("?"));
+            const uniq = new Set(g.map((x) => x.href));
+            if (uniq.size >= 2 && uniq.size > new Set(best.map((x) => x.href)).size) best = g;
+        }
+        const chapters = [];
+        const seen = {};
+        for (const x of best) {
+            if (seen[x.href]) continue;
+            seen[x.href] = true;
+            chapters.push({ name: x.text || x.title || `${chapters.length + 1}화`, url: x.href, dateUpload: null });
+        }
+        // 회차 묶음을 못 찾으면 작품 주소 자체를 1개 회차(영화·단편)로
+        if (!chapters.length) chapters.push({ name: "본편", url: link, dateUpload: null });
+        this.diag(`작품 읽음 [회차 ${chapters.length} · 묶음 ${Object.keys(groups).length} · ${this.shape(link)}]`);
+        return { name, imageUrl, description, author: "", artist: "", genre: [], status: 5, link, chapters };
+    }
+
+    /** 화면 글자에서 영상 주소 찾기 */
+    media(body, base) {
+        const t = String(body || "").replace(/\\u0026/g, "&").replace(/\\\//g, "/").replace(/&amp;/g, "&");
+        const out = [];
+        const re = /(?:https?:)?\/\/[^\s"'<>\\()]+?\.(?:m3u8|mp4)(?:\?[^\s"'<>\\()]*)?/gi;
+        let m;
+        while ((m = re.exec(t))) {
+            const u = this.abs(m[0], base);
+            if (u && out.indexOf(u) < 0) out.push(u);
+        }
+        const re2 = /(?:file|src|source|video_url|videoUrl|hls)\s*[:=]\s*["']([^"']+)["']/gi;
+        while ((m = re2.exec(t))) {
+            if (/\.(?:m3u8|mp4)(?:$|\?)/i.test(m[1])) {
+                const u = this.abs(m[1], base);
+                if (u && out.indexOf(u) < 0) out.push(u);
+            }
+        }
+        return out;
+    }
+
+    async getVideoList(url) {
+        const link = this.abs(url);
+        const logs = [];
+        const queue = [{ url: link, referer: SITE + "/" }];
+        const queued = { [link]: true };
+        for (let i = 0; i < queue.length && i < 6; i++) {
+            const item = queue[i];
+            let body;
+            try {
+                body = await this.page(item.url, i === 0 ? "회차" : "플레이어", item.referer);
+            } catch (e) {
+                logs.push(String(e.message || e).substring(0, 100));
+                continue;
+            }
+            const found = this.media(body, item.url);
+            logs.push(`${i === 0 ? "회차" : "플레이어"} ${this.shape(item.url)} · 영상 ${found.length}`);
+            if (found.length) {
+                const origin = /^https?:\/\/[^/]+/i.exec(item.url)[0];
+                return found.slice(0, 5).map((u, k) => ({
+                    url: u,
+                    originalUrl: u,
+                    quality: `${/\.m3u8/i.test(u) ? "HLS" : "MP4"} ${k + 1}`,
+                    headers: { "User-Agent": UA, "Referer": item.url, "Origin": origin },
+                }));
+            }
+            const doc = new Document(body);
+            for (const f of doc.select("iframe").slice(0, 6)) {
+                const u = this.abs(f.attr("data-src") || f.attr("src"), item.url);
+                if (u && !queued[u]) {
+                    queued[u] = true;
+                    queue.push({ url: u, referer: item.url });
+                }
+            }
+            logs.push(`iframe ${doc.select("iframe").length}`);
+        }
+        const msg = `영상 주소를 찾지 못했어요 [${logs.join(" | ")}]`.substring(0, 600);
+        this.diag(msg);
+        throw new Error(msg);
+    }
+
+    getFilterList() {
+        let diag = [];
+        try {
+            diag = String(new SharedPreferences().get("diag") || "").split("\n").filter((x) => x);
+        } catch (e) {
+            diag = [];
+        }
+        return [
+            { type_name: "HeaderFilter", name: `[시험] zzap208 ${mangayomiSources[0].version} · 사이트 구조 미확인 추측판 (아래는 최근 진단)` },
+            ...diag.map((name) => ({ type_name: "HeaderFilter", name })),
+            { type_name: "TextFilter", name: F_PATH, state: "" },
+            { type_name: "TextFilter", name: F_PAGE, state: "page" },
+            ...[1, 2, 3].map(() => ({ type_name: "HeaderFilter", name: "　" })),
+        ];
+    }
+
+    getSourcePreferences() {
+        return [];
+    }
+}
