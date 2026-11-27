@@ -9,7 +9,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.4",
+    "version": "0.0.5",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/yatoon_video.js"
@@ -24,6 +24,7 @@ const mangayomiSources = [{
 const DEFAULT_BASE_URL = "https://yatoon279.asia";
 const DOMAIN_RE = /^https:\/\/(?:www\.)?yatoon\d*\.[a-z]{2,8}$/i;
 const LABEL = "야툰 영상";
+const UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36";
 const CATEGORIES = [["", "전체"], ["subtitle", "자막"], ["uncensored", "무수정"], ["uhd", "초고화질"], ["mosaic", "모자이크"]];
 const SORTS = [["", "최신순"], ["popular", "인기순"], ["weekly", "주간 인기"], ["likes", "좋아요순"]];
 const TAGS = ["고화질", "단독 작품", "DMM 독점", "질내사정", "거유", "유부녀", "구강성교", "여고생", "분출", "4K", "능욕", "파이즈리", "다자 플레이", "불륜", "여성상위", "음탕녀", "드라마", "아이돌", "난교"];
@@ -167,7 +168,7 @@ class DefaultExtension extends MProvider {
         const origin = (/^https?:\/\/[^/]+/.exec(player) || [""])[0];
         let list = [], why = "", diag = "";
         try {
-            const res = await this.client.get(player, this.getHeaders());
+            const res = await this.client.get(player, { "User-Agent": UA, "Referer": this.getBaseUrl() + "/", "Origin": this.getBaseUrl(), "Accept": "text/html,*/*" });
             if (res.statusCode >= 400) why = `플레이어 HTTP ${res.statusCode}`;
             else list = this.findMedia(res.body);
             if (!list.length && !why) why = "플레이어 화면에 영상 주소 없음";
@@ -181,7 +182,7 @@ class DefaultExtension extends MProvider {
             }
         }
         if (!list.length) throw new Error(`영상 주소를 못 찾았어요 [${why}${diag}]`);
-        const headers = { "Referer": origin + "/", "Origin": origin };
+        const headers = { "User-Agent": UA, "Referer": origin + "/", "Origin": origin, "Accept": "*/*" };
         const all = list;
         list = list.filter((u) => !/(^|[/_.-])(ads?|adv|vast|promo|banner|preroll)([/_.?-]|$)/i.test(u));
         if (!list.length) list = all;
