@@ -9,7 +9,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.6",
+    "version": "0.0.7",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/yatoon_video.js"
@@ -127,10 +127,10 @@ class DefaultExtension extends MProvider {
         const script = "(function(){var n=0;function found(){var r=performance.getEntriesByType('resource'),o=[];" +
             "for(var i=0;i<r.length;i++){var u=r[i].name;if((/\\.(m3u8|mp4|m4v|webm)(\\?|$)|\\/(hls|playlist|manifest|master)[^\\/]*$/.test(u)||r[i].initiatorType==='video')&&!/_preview\\.mp4/.test(u)&&o.indexOf(u)<0)o.push(u);}" +
             "var v=document.querySelector('video');var s=v&&(v.currentSrc||v.src);if(s&&/^https?:/.test(s)&&o.indexOf(s)<0)o.push(s);return o;}" +
-            "var t=setInterval(function(){n++;var o=found();if((o.length&&n>=96)||n>=100){clearInterval(t);" +
+            "var t=setInterval(function(){n++;var o=found();var v0=document.querySelector('video');var du=v0?v0.duration:0;if((o.length&&n>=2&&du>=120)||(o.length&&n>=40&&!(du>0))||(o.length&&n>=96)||n>=100){clearInterval(t);" +
             "if(!o.length){var h=document.documentElement.outerHTML.replace(/\\\\\\//g,'/').match(/https?:[^\"'\\s<>\\\\]+?\\.(m3u8|mp4)[^\"'\\s<>\\\\]*/g)||[];for(var k=0;k<h.length;k++)if(!/_preview\\.mp4/.test(h[k])&&o.indexOf(h[k])<0)o.push(h[k]);}" +
             "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({list:o,href:location.href,title:document.title,len:document.documentElement.outerHTML.length,ifr:document.querySelectorAll('iframe').length,vid:document.querySelectorAll('video').length,vs:String((document.querySelector('video')||{}).currentSrc||(document.querySelector('video')||{}).src||'').substring(0,120),rs:performance.getEntriesByType('resource').map(function(x){return x.initiatorType+':'+x.name}).filter(function(x){return !/\\.(css|js|png|jpe?g|gif|svg|woff2?|ico)(\\?|$)/.test(x)}).slice(-6)}));return;}" +
-            "if(n===8||n===20||n===40||n===80){var v=document.querySelector('video');if(v){v.muted=true;try{v.play();}catch(e){}}" +
+            "if(n===2||n===6||n===12||n===20||n===40||n===80){var v=document.querySelector('video');if(v){v.muted=true;try{v.play();}catch(e){}}" +
             "var b=document.querySelector('.vjs-big-play-button,.plyr__control--overlaid,.jw-icon-display,.art-state,[class*=play]');if(b)b.click();}},250);})();";
         const timeout = new Promise((r) => setTimeout(() => r(null), 40000));
         try {
@@ -167,9 +167,9 @@ class DefaultExtension extends MProvider {
         if (!player) throw new Error("플레이어 주소를 못 찾았어요");
         const origin = (/^https?:\/\/[^/]+/.exec(player) || [""])[0];
         let list = [], why = "", diag = "";
-        try {
+        if (!DefaultExtension.skipDirect) try {
             const res = await this.client.get(player, { "User-Agent": UA, "Referer": this.getBaseUrl() + "/", "Origin": this.getBaseUrl(), "Accept": "text/html,*/*" });
-            if (res.statusCode >= 400) why = `플레이어 HTTP ${res.statusCode}`;
+            if (res.statusCode >= 400) { why = `플레이어 HTTP ${res.statusCode}`; if (res.statusCode === 403) DefaultExtension.skipDirect = true; }
             else list = this.findMedia(res.body);
             if (!list.length && !why) why = "플레이어 화면에 영상 주소 없음";
         } catch (e) { why = "플레이어 접속 실패"; }
