@@ -5,8 +5,8 @@
  "domainChanges": [
   {
    "name": "후후티비",
-   "from": "https://fw.hoohootv483.xyz",
-   "to": "https://gs.hoohootv483.xyz",
+   "from": "https://gs.hoohootv483.xyz",
+   "to": "https://hn.hoohootv483.xyz",
    "files": [
     "domains.json"
    ]
