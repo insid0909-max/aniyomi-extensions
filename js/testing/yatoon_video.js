@@ -9,7 +9,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.5",
+    "version": "0.0.6",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/yatoon_video.js"
@@ -125,11 +125,11 @@ class DefaultExtension extends MProvider {
     async capture(player) {
         if (typeof evaluateJavascriptViaWebview !== "function") return null;
         const script = "(function(){var n=0;function found(){var r=performance.getEntriesByType('resource'),o=[];" +
-            "for(var i=0;i<r.length;i++){var u=r[i].name;if(/\\.(m3u8|mp4)(\\?|$)/.test(u)&&!/_preview\\.mp4/.test(u)&&o.indexOf(u)<0)o.push(u);}" +
+            "for(var i=0;i<r.length;i++){var u=r[i].name;if((/\\.(m3u8|mp4|m4v|webm)(\\?|$)|\\/(hls|playlist|manifest|master)[^\\/]*$/.test(u)||r[i].initiatorType==='video')&&!/_preview\\.mp4/.test(u)&&o.indexOf(u)<0)o.push(u);}" +
             "var v=document.querySelector('video');var s=v&&(v.currentSrc||v.src);if(s&&/^https?:/.test(s)&&o.indexOf(s)<0)o.push(s);return o;}" +
             "var t=setInterval(function(){n++;var o=found();if((o.length&&n>=96)||n>=100){clearInterval(t);" +
             "if(!o.length){var h=document.documentElement.outerHTML.replace(/\\\\\\//g,'/').match(/https?:[^\"'\\s<>\\\\]+?\\.(m3u8|mp4)[^\"'\\s<>\\\\]*/g)||[];for(var k=0;k<h.length;k++)if(!/_preview\\.mp4/.test(h[k])&&o.indexOf(h[k])<0)o.push(h[k]);}" +
-            "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({list:o,href:location.href,title:document.title,len:document.documentElement.outerHTML.length,ifr:document.querySelectorAll('iframe').length,vid:document.querySelectorAll('video').length}));return;}" +
+            "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({list:o,href:location.href,title:document.title,len:document.documentElement.outerHTML.length,ifr:document.querySelectorAll('iframe').length,vid:document.querySelectorAll('video').length,vs:String((document.querySelector('video')||{}).currentSrc||(document.querySelector('video')||{}).src||'').substring(0,120),rs:performance.getEntriesByType('resource').map(function(x){return x.initiatorType+':'+x.name}).filter(function(x){return !/\\.(css|js|png|jpe?g|gif|svg|woff2?|ico)(\\?|$)/.test(x)}).slice(-6)}));return;}" +
             "if(n===8||n===20||n===40||n===80){var v=document.querySelector('video');if(v){v.muted=true;try{v.play();}catch(e){}}" +
             "var b=document.querySelector('.vjs-big-play-button,.plyr__control--overlaid,.jw-icon-display,.art-state,[class*=play]');if(b)b.click();}},250);})();";
         const timeout = new Promise((r) => setTimeout(() => r(null), 40000));
@@ -178,7 +178,7 @@ class DefaultExtension extends MProvider {
             list = ((info && info.list) || []).filter((u) => /^https?:\/\//.test(u));
             if (!list.length) {
                 why += info ? " · 웹뷰도 주소 못 찾음" : " · 웹뷰 응답 없음";
-                if (info) diag = ` · 웹뷰 화면 제목="${String(info.title || "").substring(0, 30)}" 길이=${info.len} iframe=${info.ifr} video=${info.vid}`;
+                if (info) diag = ` · 웹뷰 화면 제목="${String(info.title || "").substring(0, 30)}" 길이=${info.len} iframe=${info.ifr} video=${info.vid} src=${info.vs || "없음"} 요청=${(info.rs || []).map((x) => String(x).substring(0, 90)).join(" | ")}`;
             }
         }
         if (!list.length) throw new Error(`영상 주소를 못 찾았어요 [${why}${diag}]`);
