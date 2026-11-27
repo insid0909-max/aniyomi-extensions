@@ -9,7 +9,7 @@ const mangayomiSources = [{
     "itemType": 0,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "manga/src/ko/mangatoki.js"
@@ -92,7 +92,7 @@ class DefaultExtension extends MProvider {
         p = String(p || "");
         if (!p) return "";
         if (/^https?:/.test(p)) return p;
-        return IMG_BASE + encodeURI(p).replace(/%25/g, "%");
+        return IMG_BASE + p.split("/").map((x) => encodeURIComponent(x)).join("/");
     }
 
     blocked(tags) { return (tags || []).some((t) => BLOCK.test(String(t))); }
@@ -159,7 +159,7 @@ class DefaultExtension extends MProvider {
         if (this.blocked(d.tags)) throw new Error("미성년자 성적 묘사 태그가 있는 작품은 열지 않습니다.");
         const imgs = (d.images || []).map((p) => this.img(p)).filter(Boolean);
         if (!imgs.length) throw new Error(`${LABEL} 그림이 없어요 [${id}]`);
-        return imgs.map((u) => ({ url: u, headers: { "Referer": this.getBaseUrl() + "/" } }));
+        return imgs.map((u) => ({ url: u }));
     }
 
     getFilterList() {
