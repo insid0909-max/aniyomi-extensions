@@ -9,7 +9,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.1",
+    "version": "0.0.2",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/yatoon_video.js"
@@ -107,7 +107,7 @@ class DefaultExtension extends MProvider {
             name, link, genre, status: 1,
             imageUrl: this.abs(og),
             description: info.join("\n"),
-            episodes: player ? [{ name: "1. 본편", url: JSON.stringify({ player, code }), dateUpload: String(Date.now()) }] : [],
+            episodes: player ? [{ name: "1. 본편", url: link, dateUpload: String(Date.now()) }] : [],
         };
     }
 
@@ -127,7 +127,8 @@ class DefaultExtension extends MProvider {
             "for(var i=0;i<r.length;i++){var u=r[i].name;if(/\\.(m3u8|mp4)(\\?|$)/.test(u)&&!/_preview\\.mp4/.test(u)&&o.indexOf(u)<0)o.push(u);}" +
             "var v=document.querySelector('video');var s=v&&(v.currentSrc||v.src);if(s&&/^https?:/.test(s)&&o.indexOf(s)<0)o.push(s);return o;}" +
             "var t=setInterval(function(){n++;var o=found();if((o.length&&n>=2)||n>=60){clearInterval(t);" +
-            "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({list:o,href:location.href}));return;}" +
+            "if(!o.length){var h=document.documentElement.outerHTML.replace(/\\\\\\//g,'/').match(/https?:[^\"'\\s<>\\\\]+?\\.(m3u8|mp4)[^\"'\\s<>\\\\]*/g)||[];for(var k=0;k<h.length;k++)if(!/_preview\\.mp4/.test(h[k])&&o.indexOf(h[k])<0)o.push(h[k]);}" +
+            "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({list:o,href:location.href,title:document.title,len:document.documentElement.outerHTML.length,ifr:document.querySelectorAll('iframe').length,vid:document.querySelectorAll('video').length}));return;}" +
             "if(n===8||n===20){var v=document.querySelector('video');if(v){v.muted=true;try{v.play();}catch(e){}}" +
             "var b=document.querySelector('.vjs-big-play-button,.plyr__control--overlaid,.jw-icon-display,.art-state,[class*=play]');if(b)b.click();}},250);})();";
         const timeout = new Promise((r) => setTimeout(() => r(null), 20000));
@@ -138,11 +139,15 @@ class DefaultExtension extends MProvider {
     }
 
     async getVideoList(url) {
-        let d = {};
-        try { d = JSON.parse(url); } catch (e) { d = { player: url }; }
-        const player = d.player;
+        let player = "";
+        if (/^\{/.test(String(url))) { try { player = JSON.parse(url).player; } catch (e) { player = ""; } }
+        if (!player) {
+            const doc = new Document(await this.get(url.replace(/^https?:\/\/[^/]+/, "")));
+            player = this.abs(attr(first(doc, ".video-player iframe") || first(doc, "iframe"), "src"));
+        }
+        if (!player) throw new Error("플레이어 주소를 못 찾았어요");
         const origin = (/^https?:\/\/[^/]+/.exec(player) || [""])[0];
-        let list = [], why = "";
+        let list = [], why = "", diag = "";
         try {
             const res = await this.client.get(player, this.getHeaders());
             if (res.statusCode >= 400) why = `플레이어 HTTP ${res.statusCode}`;
@@ -152,9 +157,12 @@ class DefaultExtension extends MProvider {
         if (!list.length) {
             const info = await this.capture(player);
             list = ((info && info.list) || []).filter((u) => /^https?:\/\//.test(u));
-            if (!list.length) why += info ? " · 웹뷰도 주소 못 찾음" : " · 웹뷰 응답 없음";
+            if (!list.length) {
+                why += info ? " · 웹뷰도 주소 못 찾음" : " · 웹뷰 응답 없음";
+                if (info) diag = ` · 웹뷰 화면 제목="${String(info.title || "").substring(0, 30)}" 길이=${info.len} iframe=${info.ifr} video=${info.vid}`;
+            }
         }
-        if (!list.length) throw new Error(`영상 주소를 못 찾았어요 [${why}]`);
+        if (!list.length) throw new Error(`영상 주소를 못 찾았어요 [${why}${diag}]`);
         const headers = { "Referer": origin + "/", "Origin": origin };
         return list.slice(0, 3).map((u, i) => ({ url: u, originalUrl: u, quality: `${LABEL}${/m3u8/i.test(u) ? " HLS" : " MP4"}${i ? " " + (i + 1) : ""}`, headers, subtitles: [] }));
     }
