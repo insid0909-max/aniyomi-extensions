@@ -200,7 +200,7 @@
   {
     "name": "[시험] 후후티비",
     "id": 1543279662,
-    "baseUrl": "https://hu.hoohootv483.xyz",
+    "baseUrl": "https://hv.hoohootv483.xyz",
     "lang": "ko",
     "typeSource": "single",
     "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
@@ -210,7 +210,7 @@
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/test/js/testing/hoohootv.js",
     "apiUrl": "",
-    "version": "0.0.31",
+    "version": "0.0.32",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
