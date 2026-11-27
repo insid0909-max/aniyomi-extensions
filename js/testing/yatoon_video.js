@@ -9,7 +9,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.3",
+    "version": "0.0.4",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/yatoon_video.js"
@@ -126,12 +126,12 @@ class DefaultExtension extends MProvider {
         const script = "(function(){var n=0;function found(){var r=performance.getEntriesByType('resource'),o=[];" +
             "for(var i=0;i<r.length;i++){var u=r[i].name;if(/\\.(m3u8|mp4)(\\?|$)/.test(u)&&!/_preview\\.mp4/.test(u)&&o.indexOf(u)<0)o.push(u);}" +
             "var v=document.querySelector('video');var s=v&&(v.currentSrc||v.src);if(s&&/^https?:/.test(s)&&o.indexOf(s)<0)o.push(s);return o;}" +
-            "var t=setInterval(function(){n++;var o=found();if((o.length&&n>=120)||n>=200){clearInterval(t);" +
+            "var t=setInterval(function(){n++;var o=found();if((o.length&&n>=96)||n>=100){clearInterval(t);" +
             "if(!o.length){var h=document.documentElement.outerHTML.replace(/\\\\\\//g,'/').match(/https?:[^\"'\\s<>\\\\]+?\\.(m3u8|mp4)[^\"'\\s<>\\\\]*/g)||[];for(var k=0;k<h.length;k++)if(!/_preview\\.mp4/.test(h[k])&&o.indexOf(h[k])<0)o.push(h[k]);}" +
             "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({list:o,href:location.href,title:document.title,len:document.documentElement.outerHTML.length,ifr:document.querySelectorAll('iframe').length,vid:document.querySelectorAll('video').length}));return;}" +
-            "if(n===8||n===20||n===60||n===100){var v=document.querySelector('video');if(v){v.muted=true;try{v.play();}catch(e){}}" +
+            "if(n===8||n===20||n===40||n===80){var v=document.querySelector('video');if(v){v.muted=true;try{v.play();}catch(e){}}" +
             "var b=document.querySelector('.vjs-big-play-button,.plyr__control--overlaid,.jw-icon-display,.art-state,[class*=play]');if(b)b.click();}},250);})();";
-        const timeout = new Promise((r) => setTimeout(() => r(null), 60000));
+        const timeout = new Promise((r) => setTimeout(() => r(null), 40000));
         try {
             const res = await Promise.race([evaluateJavascriptViaWebview(player, this.getHeaders(), [script]), timeout]);
             return res ? JSON.parse(String(res)) : null;
