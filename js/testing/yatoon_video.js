@@ -9,7 +9,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": true,
     "hasCloudflare": false,
-    "version": "0.0.2",
+    "version": "0.0.3",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/yatoon_video.js"
@@ -126,16 +126,34 @@ class DefaultExtension extends MProvider {
         const script = "(function(){var n=0;function found(){var r=performance.getEntriesByType('resource'),o=[];" +
             "for(var i=0;i<r.length;i++){var u=r[i].name;if(/\\.(m3u8|mp4)(\\?|$)/.test(u)&&!/_preview\\.mp4/.test(u)&&o.indexOf(u)<0)o.push(u);}" +
             "var v=document.querySelector('video');var s=v&&(v.currentSrc||v.src);if(s&&/^https?:/.test(s)&&o.indexOf(s)<0)o.push(s);return o;}" +
-            "var t=setInterval(function(){n++;var o=found();if((o.length&&n>=2)||n>=60){clearInterval(t);" +
+            "var t=setInterval(function(){n++;var o=found();if((o.length&&n>=120)||n>=200){clearInterval(t);" +
             "if(!o.length){var h=document.documentElement.outerHTML.replace(/\\\\\\//g,'/').match(/https?:[^\"'\\s<>\\\\]+?\\.(m3u8|mp4)[^\"'\\s<>\\\\]*/g)||[];for(var k=0;k<h.length;k++)if(!/_preview\\.mp4/.test(h[k])&&o.indexOf(h[k])<0)o.push(h[k]);}" +
             "window.flutter_inappwebview.callHandler('setResponse',JSON.stringify({list:o,href:location.href,title:document.title,len:document.documentElement.outerHTML.length,ifr:document.querySelectorAll('iframe').length,vid:document.querySelectorAll('video').length}));return;}" +
-            "if(n===8||n===20){var v=document.querySelector('video');if(v){v.muted=true;try{v.play();}catch(e){}}" +
+            "if(n===8||n===20||n===60||n===100){var v=document.querySelector('video');if(v){v.muted=true;try{v.play();}catch(e){}}" +
             "var b=document.querySelector('.vjs-big-play-button,.plyr__control--overlaid,.jw-icon-display,.art-state,[class*=play]');if(b)b.click();}},250);})();";
-        const timeout = new Promise((r) => setTimeout(() => r(null), 20000));
+        const timeout = new Promise((r) => setTimeout(() => r(null), 60000));
         try {
             const res = await Promise.race([evaluateJavascriptViaWebview(player, this.getHeaders(), [script]), timeout]);
             return res ? JSON.parse(String(res)) : null;
         } catch (e) { return null; }
+    }
+
+
+    // m3u8 총 길이(초). 마스터면 첫 화질 목록으로 들어가 계산. 못 읽으면 -1
+    async duration(u, headers, depth) {
+        try {
+            const res = await this.client.get(u, headers);
+            if (res.statusCode >= 400) return -1;
+            const t = String(res.body || "");
+            if (/#EXT-X-STREAM-INF/.test(t) && !depth) {
+                const m = /#EXT-X-STREAM-INF[^\n]*\n([^\n#][^\n]*)/.exec(t);
+                if (!m) return -1;
+                return this.duration(new URL(m[1].trim(), u).href, headers, 1);
+            }
+            let sum = 0, re = /#EXTINF:([\d.]+)/g, x;
+            while ((x = re.exec(t))) sum += parseFloat(x[1]);
+            return sum > 0 ? sum : -1;
+        } catch (e) { return -1; }
     }
 
     async getVideoList(url) {
@@ -164,7 +182,20 @@ class DefaultExtension extends MProvider {
         }
         if (!list.length) throw new Error(`영상 주소를 못 찾았어요 [${why}${diag}]`);
         const headers = { "Referer": origin + "/", "Origin": origin };
-        return list.slice(0, 3).map((u, i) => ({ url: u, originalUrl: u, quality: `${LABEL}${/m3u8/i.test(u) ? " HLS" : " MP4"}${i ? " " + (i + 1) : ""}`, headers, subtitles: [] }));
+        const all = list;
+        list = list.filter((u) => !/(^|[/_.-])(ads?|adv|vast|promo|banner|preroll)([/_.?-]|$)/i.test(u));
+        if (!list.length) list = all;
+        const rows = [];
+        for (const u of list.slice(0, 8)) {
+            const sec = /m3u8/i.test(u) ? await this.duration(u, headers, 0) : -1;
+            rows.push({ u, sec });
+        }
+        // 긴 것 먼저(광고는 보통 30초 안쪽), 길이를 모르는 것은 뒤로
+        rows.sort((a, b) => b.sec - a.sec);
+        const fmt = (sec) => sec > 0 ? ` ${Math.floor(sec / 60)}분${Math.round(sec % 60)}초` : "";
+        return rows.map((r, i) => ({ url: r.u, originalUrl: r.u,
+            quality: `${LABEL}${/m3u8/i.test(r.u) ? " HLS" : " MP4"}${fmt(r.sec)}${r.sec > 0 && r.sec < 60 ? " (광고?)" : ""}${i ? " #" + (i + 1) : ""}`,
+            headers, subtitles: [] }));
     }
 
     getFilterList() {
