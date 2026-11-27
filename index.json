@@ -196,5 +196,27 @@
     "additionalParams": "",
     "sourceCodeLanguage": 1,
     "notes": ""
+  },
+  {
+    "name": "[시험] 후후티비",
+    "id": 1543279662,
+    "baseUrl": "https://hs.hoohootv483.xyz",
+    "lang": "ko",
+    "typeSource": "single",
+    "iconUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/src/ko/tvroom/res/mipmap-xxhdpi/tv_icon.png",
+    "dateFormat": "",
+    "dateFormatLocale": "",
+    "isNsfw": false,
+    "hasCloudflare": false,
+    "sourceCodeUrl": "https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/test/js/testing/hoohootv.js",
+    "apiUrl": "",
+    "version": "0.0.7",
+    "isManga": false,
+    "itemType": 1,
+    "isFullData": false,
+    "appMinVerReq": "0.5.0",
+    "additionalParams": "",
+    "sourceCodeLanguage": 1,
+    "notes": "후후티비 웹뷰 보강 재생 시험"
   }
 ]
