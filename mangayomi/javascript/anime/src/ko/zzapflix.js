@@ -8,7 +8,7 @@ const mangayomiSources = [{
     "itemType": 1,
     "isNsfw": false,
     "hasCloudflare": false,
-    "version": "0.1.0",
+    "version": "0.1.1",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/ko/zzapflix.js"
@@ -103,6 +103,7 @@ class DefaultExtension extends MProvider {
             }
             if (res && res.statusCode === 200) break;
             if (res && res.statusCode === 202 && String(res.body || "").length > 3000 && /<a\s/i.test(String(res.body))) break;
+            if (res && res.statusCode === 403 && i >= 1) break; // 0.1.1: 403 은 두 번만 (여러 번 보내면 앱이 인증 알림을 계속 띄움)
             if (i < 5) await new Promise((ok) => setTimeout(ok, waits[i]));
         }
         if (!res) {
@@ -710,7 +711,7 @@ function zzAdopt(origin) {
 async function zzFollowWork(client) {
     const cur = zzHost(SITE);
     // ① 1시간에 한 번: 지금 주소가 다른 번호 주소로 넘겨 주면(301·302) 진짜 사이트일 때 그 주소로
-    if (Date.now() - (Number(zzGet("zzap_moved_at", "0")) || 0) >= 3600000) {
+    if (Date.now() - (Number(zzGet("zzap_moved_at", "0")) || 0) >= 86400000) {
         zzSet("zzap_moved_at", Date.now());
         try {
             const c = new Client({ useDartHttpClient: true, followRedirects: false, timeout: 4, connectTimeout: 3 });
