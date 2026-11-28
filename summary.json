@@ -1,16 +1,5 @@
 {
- "changedFiles": [
-  "domains.json"
- ],
- "domainChanges": [
-  {
-   "name": "후후티비",
-   "from": "https://hv.hoohootv483.xyz",
-   "to": "https://ij.hoohootv483.xyz",
-   "files": [
-    "domains.json"
-   ]
-  }
- ],
+ "changedFiles": [],
+ "domainChanges": [],
  "notes": []
 }

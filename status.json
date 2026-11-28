@@ -6,22 +6,22 @@
    "domainSince": "2026-11-24T01:24:19.725Z",
    "ok": true,
    "msg": "목록 24개, 회차 10개, 연재",
-   "checkedAt": "2026-11-28T04:55:13.895Z"
+   "checkedAt": "2026-11-28T04:57:55.333Z"
   },
   "ohli24": {
    "ok": false,
    "msg": "a101.ohli24.net HTTP 403",
-   "checkedAt": "2026-11-28T04:55:13.972Z"
+   "checkedAt": "2026-11-28T04:57:55.375Z"
   },
   "livesports1": {
    "ok": true,
    "msg": "목록 5개",
-   "checkedAt": "2026-11-28T04:55:14.307Z"
+   "checkedAt": "2026-11-28T04:57:56.202Z"
   },
   "livesports2": {
    "ok": true,
-   "msg": "목록 5개",
-   "checkedAt": "2026-11-28T04:55:14.859Z"
+   "msg": "목록 6개",
+   "checkedAt": "2026-11-28T04:57:56.804Z"
   }
  }
 }
