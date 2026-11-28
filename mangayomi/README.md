@@ -19,6 +19,12 @@ Aniyomi 확장 중 망가요미에서 돌릴 수 있는 소스를 자바스크�
 https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/mangayomi/anime_index.json
 ```
 
+만화 확장은 아래 주소를 추가합니다.
+
+```
+https://raw.githubusercontent.com/insid0909-max/aniyomi-extensions/master/mangayomi/manga_index.json
+```
+
 ## 수정할 때
 
-소스 파일 맨 위 `mangayomiSources`의 `version`을 올리고, `anime_index.json`의 같은 소스 `version`도 똑같이 올려야 앱에 업데이트가 뜹니다.
+소스 파일 맨 위 `mangayomiSources`의 `version`을 올리고, `anime_index.json`(만화는 `manga_index.json`)의 같은 소스 `version`도 똑같이 올려야 앱에 업데이트가 뜹니다.
