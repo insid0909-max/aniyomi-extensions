@@ -6,22 +6,22 @@
    "domainSince": "2026-11-24T01:24:19.725Z",
    "ok": true,
    "msg": "목록 24개, 회차 10개, 연재",
-   "checkedAt": "2026-11-27T05:22:03.698Z"
+   "checkedAt": "2026-11-28T04:55:13.895Z"
   },
   "ohli24": {
-   "ok": true,
-   "msg": "a101.ohli24.net 살아 있음 (해외 접속 차단 응답 — 목록·회차는 휴대폰에서만 확인 가능)",
-   "checkedAt": "2026-11-27T05:22:03.823Z"
+   "ok": false,
+   "msg": "a101.ohli24.net HTTP 403",
+   "checkedAt": "2026-11-28T04:55:13.972Z"
   },
   "livesports1": {
    "ok": true,
-   "msg": "목록 1개",
-   "checkedAt": "2026-11-27T05:22:04.284Z"
+   "msg": "목록 5개",
+   "checkedAt": "2026-11-28T04:55:14.307Z"
   },
   "livesports2": {
    "ok": true,
-   "msg": "목록 4개",
-   "checkedAt": "2026-11-27T05:22:04.849Z"
+   "msg": "목록 5개",
+   "checkedAt": "2026-11-28T04:55:14.859Z"
   }
  }
 }
